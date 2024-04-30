@@ -1,0 +1,16 @@
+## Ignore Visual Studio, Visual Micro, and Arduino temporary files, build results, etc.
+
+.vs/
+_vm/
+__vm/
+obj/
+src/
+examples/
+audio_samples/
+documentation/
+extras/
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+~AutoRecover.*
+*.wav
