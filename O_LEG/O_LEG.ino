@@ -1,4 +1,4 @@
-// O_LEG.INO Rev: 02/01/21.
+// O_LEG.INO Rev: 05/03/24.
 // LEG controls physical trains via the Train Progress and Delayed Action tables, and also controls accessories.
 // LEG also monitors the control panel track-power toggle switches, to turn the four PowerMasters on and off at any time.
 // 04/02/24: LEG Conductor/Engineer and Train Progress will always assume that Turnouts are being thrown elsewhere and won't worry
@@ -63,7 +63,7 @@
 #include <Train_Consts_Global.h>
 #include <Train_Functions.h>
 const byte THIS_MODULE = ARDUINO_LEG;  // Global needed by Train_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "LEG 04/15/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "LEG 05/03/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 
 // *** SERIAL LCD DISPLAY CLASS ***
 // #include <Display_2004.h> is already in <Train_Functions.h> so not needed here.
@@ -400,7 +400,7 @@ void LEGManualMode() {
 }
 
 void checkIfPowerMasterOnOffPressed() {
-  // Rev: 03/09/23.  Based on old code from A-LEG.  Complete but needs to be tested ***************************************************************************************************
+  // Rev: 03/09/23.  Based on old code from A-LEG.  Complete but needs to be tested ***********************************************
   // When operator holds one of the four PowerMaster toggle switches in either the on or off position, create a Delayed Action
   // command to be executed as soon as possible.  This function handles debounce for both press and release, and pauses until the
   // operator has released the switch.

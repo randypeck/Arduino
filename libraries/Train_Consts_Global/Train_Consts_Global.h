@@ -178,6 +178,7 @@ const byte LEGACY_SOUND_COCK_CLEAR_OFF = 37;  // 9-byte.  Steam only. This is a 
 const byte LEGACY_DIALOGUE             = 41;  // Separate function.  For any of the 38 Legacy Dialogues (9-byte 0x72), which will be passed as a parm.
 const byte TMCC_DIALOGUE               = 42;  // Separate function.  For any of the 6 TMCC StationSounds Diner cmds, which will be passed as a parm.
 const byte LEGACY_NUMERIC_PRESS        = 43;  // 3-byte.  Need for vol up/down
+const byte TMCC_ACTION_ABS_SPEED       = 44;  // 3-byte.
 
 // LEGACY HORN COMMAND *PATTERNS* (used by Conductor class to pass horn patterns to Delayed_Action class.)
 const byte LEGACY_PATTERN_SHORT_TOOT   =  1;  // S    (Used informally i.e. to tell operator "I'm here" when registering)

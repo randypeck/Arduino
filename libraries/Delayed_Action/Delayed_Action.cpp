@@ -1,4 +1,4 @@
-// DELAYED_ACTION.CPP Rev: 03/09/23.  TESTED AND WORKING with a few exceptions such as PowerMasters and Accessory activation.
+// DELAYED_ACTION.CPP Rev: 05/03/24.  TESTED AND WORKING with a few exceptions such as PowerMasters and Accessory activation.
 // Part of O_LEG (Conductor and Engineer.)
 // One set of functions POPULATES the Delayed Action table (for Conductor)
 // Another set of functions DE-POPULATES the Delayed Action table (for Engineer)
@@ -65,7 +65,7 @@ void Delayed_Action::initialize() {  // Size will always be HEAP_RECS_DELAYED_AC
 
 void Delayed_Action::populateLocoCommand(const unsigned long t_startTime, const byte t_devNum, const byte t_devCommand,
                                          const byte t_devParm1, const byte t_devParm2) {
-  // Rev: 02/20/23.  TESTED AND WORKING.
+  // Rev: 05/03/24.
   // populateLocoCommand() adds just about any of the DISCRETE, LOCO commands, such as LEGACY_ACTION_STARTUP_SLOW,
   // LEGACY_ACTION_REVERSE, LEGACY_ACTION_ABS_SPEED, LEGACY_SOUND_BELL_ON and LEGACY_DIALOGUE.
   // Some commands, such as LEGACY_DIALOGUE, require parm1 such as LEGACY_DIALOGUE_E2T_ARRIVING.
@@ -101,21 +101,22 @@ void Delayed_Action::populateLocoCommand(const unsigned long t_startTime, const 
   //   LEGACY_ACTION_ACCESSORY_ON / _OFF
   //   PA_SYSTEM_ANNOUNCE
 
-  // If we're moving, and call populateLocoCommand to do any ABS_SPEED, STOP_IMMED, or EMERG_STOP, we'll first call
+  // If we're moving and we're a loco, and asking to do any ABS_SPEED, STOP_IMMED, or EMERG_STOP, we'll first call
   // Delayed_Action::wipeLocoSpeedCommands() to ensure there are no residual speed commands in Delayed Action (just as we do with
   // populateLocoSpeedChange() and populateLocoSlowToStop().)
   // If it's a command that will affect the loco's speed, then erase any pre-existing not-yet-ripe Delayed Action speed commands.
+  // Note that we can exclude PowerMasters and any other device with a deviceNum > TOTAL_TRAINs.
   if ((t_devCommand == LEGACY_ACTION_ABS_SPEED) ||
       (t_devCommand == LEGACY_ACTION_STOP_IMMED) ||
       (t_devCommand == LEGACY_ACTION_EMERG_STOP)) {
-    // Yep, it's a speed-affecting command; wipe any existing speed commands for this loco from Delayed Action.
-    if (wipeLocoSpeedCommands(t_devNum)) {  // Returns true if there were commands that were wiped, so display a bit of info.
-      sprintf(lcdString, "PLC DEV NUM %2i", t_devNum); pLCD2004->println(lcdString); Serial.println(lcdString);
-      sprintf(lcdString, "PLC CMD NUM %3i", t_devCommand); pLCD2004->println(lcdString); Serial.println(lcdString);
-      sprintf(lcdString, "PLC CMD PRM %3i", t_devParm1); pLCD2004->println(lcdString); Serial.println(lcdString);
-      sprintf(lcdString, "PLC START@ %8lu", t_startTime); pLCD2004->println(lcdString); Serial.println(lcdString);
+    if (t_devNum <= TOTAL_TRAINS) {  // I.e. not a PowerMaster (devNum 91..94)
+      // It's a speed-affecting loco command; wipe any existing speed commands for this loco from Delayed Action.
+      if (wipeLocoSpeedCommands(t_devNum)) {  // Returns true if there were commands that were wiped, so display a bit of info.
+        sprintf(lcdString, "PLC D%2i C%3i P%3i", t_devNum, t_devCommand, t_devParm1); pLCD2004->println(lcdString); Serial.println(lcdString);
+      }
     }
   }
+
   // If this was a speed-related command and there were any un-ripe Delayed Action speed commands, they've now been erased.
   // We may still be moving or not; the caller needs to be responsible for dealing with the consequences in this case.
   // In any event, whatever the command is, let's add it to Delayed Action now.
@@ -130,7 +131,7 @@ void Delayed_Action::populateAccessoryCommand(const unsigned long t_startTime, c
   // ALL DEVICES INCLUDING ACCESSORIES START AT 1, not 0.
   m_DelayedActionRecord.status = 'A';  // Active
   m_DelayedActionRecord.timeToExecute = t_startTime;
-  m_DelayedActionRecord.deviceType = DEV_TYPE_ACCESSORY;  // 'A'
+  m_DelayedActionRecord.deviceType = DEV_TYPE_ACCESSORY;  // 'A'; note we can have an accessory vs loco with the same devNum.
   m_DelayedActionRecord.deviceNum = t_devNum;
   m_DelayedActionRecord.deviceCommand = t_devCommand;
   m_DelayedActionRecord.deviceParm1 = t_devParm1;
@@ -627,8 +628,10 @@ void Delayed_Action::populateDelayedAction(const unsigned long t_startTime, cons
   // I could also have done this in Loco_Reference but I'd rather keep it isolated as much as possible.  Another option would have
   // been to number them within our 1..50 legitimate locoNums.
   if ((t_devNum >= LOCO_ID_POWERMASTER_1) && (t_devNum <= LOCO_ID_POWERMASTER_4)) {
-    m_DelayedActionRecord.deviceType = DEV_TYPE_LEGACY_ENGINE;  // Hard code PowerMasters as Legacy Engines
+    m_DelayedActionRecord.deviceType = DEV_TYPE_TMCC_ENGINE;  // Hard code PowerMasters as 'N' TMCC Engines
+sprintf(lcdString, "Powermaster"); pLCD2004->println(lcdString); // ********************************************************************************************
   } else {
+sprintf(lcdString, "NOT Powermaster"); pLCD2004->println(lcdString); // ********************************************************************************************
     m_DelayedActionRecord.deviceType = m_pLoco->devType(t_devNum);  // Look up the loco's type in Loco Reference i.e. E|T|N|R
   }
   m_DelayedActionRecord.deviceNum = t_devNum;

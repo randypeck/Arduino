@@ -61,8 +61,11 @@ void Loco_Reference::alphaDesc(const byte t_locoNum, char* t_alphaDesc, const by
   return;
 }
 
-char Loco_Reference::devType(const byte t_locoNum) {
-  // Rev: 02/15/23.
+char Loco_Reference::devType(const byte t_locoNum) {  // E|T|N|R but don't call this if PowerMaster or if devType is Accessory.
+  // Rev: 05/03/24.
+  if ((t_locoNum >= LOCO_ID_POWERMASTER_1) && (t_locoNum <= LOCO_ID_POWERMASTER_4)) {
+    return DEV_TYPE_TMCC_ENGINE;
+  }
   if (t_locoNum != m_locoReference.locoNum) {
     Loco_Reference::getLocoReference(t_locoNum);
   }
