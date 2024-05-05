@@ -300,11 +300,14 @@ void loop() {
   // We will wait until a mode starts (MANUAL, REGISTER, or AUTO/PARK) and then process that mode until the mode ends.
   msgType = pMessage->available();
   switch (msgType) {
-    case ' ' :  // No message; move along, nothing to see here.
-      break;
 
-    // *** NEW MODE MESSAGE IS VALID IN ANY MODE ***
-    case 'M' :  // New mode/state message in incoming RS485 buffer *** VALID IN ANY MODE ***
+    case ' ':  // No message; move along, nothing to see here.
+    {
+      break;
+    }
+
+    case 'M':  // New mode/state message in incoming RS485 buffer *** VALID IN ANY MODE ***
+    {
       pMessage->getMAStoALLModeState(&modeCurrent, &stateCurrent);
 
       if ((modeCurrent == MODE_MANUAL) && (stateCurrent == STATE_RUNNING)) {
@@ -331,10 +334,13 @@ void loop() {
 
       }  // *** AUTO/PARK MODE COMPLETE! ***
       break;
+    }
 
-    // *** ANY OTHER MESSAGE WE SEE HERE IS A BUG ***
-    default:
-      sprintf(lcdString, "ERR MSG TYPE!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
+    default:  // *** ANY OTHER MESSAGE WE SEE HERE IS A BUG ***
+    {
+      sprintf(lcdString, "ERR MSG TYPE %c", msgType); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
+    }
+
   }
 }
 
@@ -360,17 +366,21 @@ void OCCManualMode() {
     }
     pOccupancyLEDs->updateSensorStatus(sensorNum, trippedOrCleared);  // Update status but don't paint
   }
+
   // Okay, we've received all TOTAL_SENSORS sensor status updates, and updated the Occupancy_LEDs class.
   // Now go ahead and paint all the WHITE LEDs.
   pOccupancyLEDs->paintAllOccupancySensorLEDs(modeCurrent, stateCurrent);
   // In Manual, all RED/BLUE Block Occupancy LEDs must be turned off.
   pOccupancyLEDs->paintOneBlockOccupancyLED(0);  // Sending 0 will turn off all RED/BLUE LEDs
-  // I think that's all for OCC to do when Manual mode starts.
 
   // Now operate in Manual until mode stopped
-  // Just monitor for Sensor updates and keep the Control Panel WHITE LEDs updated, until the mode stops.
+  // Just watch the Emergency Stop (halt) line, and monitor for messages:
+  // * Sensor updates, which require us to refresh the Control Panel WHITE LEDs.
+  // * Mode update, in which case we're done and return to the main loop.
   do {
+
     haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, release relays and just stop
+
     msgType = pMessage->available();  // Could be ' ', 'S', or 'M'
     if (msgType == 'S') {  // Got a sensor message in Manual mode; update the WHITE LEDs
       pMessage->getSNStoALLSensorStatus(&sensorNum, &trippedOrCleared);
@@ -395,7 +405,6 @@ void OCCManualMode() {
       sprintf(lcdString, "MAN MODE MSG ERR!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
     }
   } while (stateCurrent != STATE_STOPPED);  // We'll just assume mode is still Manual
-
 }
 
 // ********************************************************************************************************************************
@@ -806,6 +815,12 @@ void OCCAutoParkMode() {
   pOccupancyLEDs->paintOneBlockOccupancyLED(0);   // Sending 0 will turn off all RED/BLUE LEDs
 
 }
+
+// ********************************************************************************************************************************
+// ********************************************************************************************************************************
+// ********************************************************************************************************************************
+
+
 
 // These are the possible values of any given Train Progress record that we may want to deal with...
 //      const byte ER =  2;  // End-Of-Route

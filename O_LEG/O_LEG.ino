@@ -1,4 +1,4 @@
-// O_LEG.INO Rev: 05/03/24.
+// O_LEG.INO Rev: 05/04/24.
 // LEG controls physical trains via the Train Progress and Delayed Action tables, and also controls accessories.
 // LEG also monitors the control panel track-power toggle switches, to turn the four PowerMasters on and off at any time.
 // 04/02/24: LEG Conductor/Engineer and Train Progress will always assume that Turnouts are being thrown elsewhere and won't worry
@@ -38,8 +38,6 @@
 // LEG at any time, and LEG can just hold off on sending it to the Delayed Action table until all previous actions (such as
 // departure announcements) have been completed.
 
-// TO DO: ANY MODE: Monitor the four control panel toggle switches to turn brown/blue/red/#4 track power circuits on or off.
-//        This is done by calling checkIfPowerMasterOnOffPressed(), and populating the Delayed Action table if so.
 // TO DO: REGISTRATION: As each loco is registered, run fast or slow startup and then toot the horn, turn smoke on if appropriate,
 //        and set Legacy built-in momentum to zero (all done via Delayed Action.)
 // TO DO: AUTO (and maybe PARK): Conductor should add loco dialogue commands to Delayed Action table for Engineer to request okay
@@ -250,6 +248,12 @@ void setup() {
 void loop() {
 
   haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, release relays and just stop
+  // IMPORTANT: If a control panel track power switch is held, this function delays until 20ms after it is released,
+  // so if the operator holds a power switch on while a train is moving and/or there are commands in Delayed Action,
+  // no events will be seen while switch is held and sensor trips/releases may be missed.  For this reason, it's best
+  // to only check for PowerMaster switches when RUNNING in MANUAL mode, or better yet when NOT in any mode.
+  checkIfPowerMasterOnOffPressed();  // Turn track power on or off if operator is holding a track-power switch.
+  pEngineer->executeConductorCommand();  // Run oldest ripe command in Legacy command buffer, if possible.
 
   // **************************************************************
   // ***** SUMMARY OF MESSAGES RECEIVED & SENT BY THIS MODULE *****
@@ -297,44 +301,49 @@ void loop() {
   // We will wait until a mode starts (MANUAL, REGISTER, or AUTO/PARK) and then process that mode until the mode ends.
   msgType = pMessage->available();
   switch (msgType) {
-  case ' ':  // No message; move along, nothing to see here.
-    break;
 
-    // *** NEW MODE MESSAGE IS VALID IN ANY MODE ***
-  case 'M':  // New mode/state message in incoming RS485 buffer *** VALID IN ANY MODE ***
-    pMessage->getMAStoALLModeState(&modeCurrent, &stateCurrent);
+    case ' ':  // No message; move along, nothing to see here.
+    {
+      break;
+    }
 
-    if ((modeCurrent == MODE_MANUAL) && (stateCurrent == STATE_RUNNING)) {
+    case 'M':  // New mode/state message in incoming RS485 buffer *** VALID IN ANY MODE ***
+    {
+      pMessage->getMAStoALLModeState(&modeCurrent, &stateCurrent);
 
-      // Run in Manual mode until stopped.
-      LEGManualMode();
-      // Now, modeCurrent == MODE_MANUAL and stateCurrent == STATE_STOPPED
+      if ((modeCurrent == MODE_MANUAL) && (stateCurrent == STATE_RUNNING)) {
 
-    }  // *** MANUAL MODE COMPLETE! ***
+        // Run in Manual mode until stopped.
+        LEGManualMode();
+        // Now, modeCurrent == MODE_MANUAL and stateCurrent == STATE_STOPPED
 
-    if ((modeCurrent == MODE_REGISTER) && (stateCurrent == STATE_RUNNING)) {
+      }  // *** MANUAL MODE COMPLETE! ***
 
-      // Run in Register mode until complete.
-      LEGRegistrationMode();
-      // Now, modeCurrent == MODE_REGISTER and stateCurrent == STATE_STOPPED
+      if ((modeCurrent == MODE_REGISTER) && (stateCurrent == STATE_RUNNING)) {
 
-    }  // *** REGISTER MODE COMPLETE! ***
+        // Run in Register mode until complete.
+        LEGRegistrationMode();
+        // Now, modeCurrent == MODE_REGISTER and stateCurrent == STATE_STOPPED
 
-    if (((modeCurrent == MODE_AUTO) || (modeCurrent == MODE_PARK)) && (stateCurrent == STATE_RUNNING)) {
+      }  // *** REGISTER MODE COMPLETE! ***
 
-      // Run in Auto/Park mode until complete.
-      LEGAutoParkMode();
-      // Now, modeCurrent == MODE_AUTO or MODE_PARK, and stateCurrent == STATE_STOPPED
+      if (((modeCurrent == MODE_AUTO) || (modeCurrent == MODE_PARK)) && (stateCurrent == STATE_RUNNING)) {
 
-    }  // *** AUTO/PARK MODE COMPLETE! ***
-    break;
+        // Run in Auto/Park mode until complete.
+        LEGAutoParkMode();
+        // Now, modeCurrent == MODE_AUTO or MODE_PARK, and stateCurrent == STATE_STOPPED
 
-    // *** ANY OTHER MESSAGE WE SEE HERE IS A BUG ***
-  default:
-    sprintf(lcdString, "ERR MSG TYPE!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
+      }  // *** AUTO/PARK MODE COMPLETE! ***
+      break;
+    }
+
+    default:  // *** ANY OTHER MESSAGE WE SEE HERE IS A BUG ***
+    {
+      sprintf(lcdString, "ERR MSG TYPE %c", msgType); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
+    }
+
   }
 }
-
 
 // ********************************************************************************************************************************
 // ********************************************************* FUNCTIONS ************************************************************
@@ -357,21 +366,22 @@ void LEGManualMode() {
       sprintf(lcdString, "SNS NUM MISMATCH M"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
     }
   }
-  // Okay, we've received all TOTAL_SENSORS sensor status updates
-  // Now operate in Manual until mode stopped
-  // Just monitor for Sensor updates and keep the Control Panel WHITE LEDs updated, until the mode stops.
-  do {
-    haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, release relays and just stop
 
-// THE FOLLOWING IS COPIED FROM OCC AND MAY NOT BE CORRECT FOR LEG... *********************************************
+  // Okay, we've received all TOTAL_SENSORS sensor status updates
+  // Now operate in Manual until mode stopped.
+  // Just watch the Emergency Stop (halt) line, and monitor for messages:
+  // * Sensor updates, though nothing to do with them in Manual mode.
+  // * Mode update, in which case we're done and return to the main loop.
+  do {
+
+    haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, release relays and just stop
 
     msgType = pMessage->available();  // Could be ' ', 'S', or 'M'
     if (msgType == 'S') {  // Got a sensor message in Manual mode; update the WHITE LEDs
       pMessage->getSNStoALLSensorStatus(&sensorNum, &trippedOrCleared);
       if (trippedOrCleared == SENSOR_STATUS_TRIPPED) {
         sprintf(lcdString, "Sensor %2d Tripped.", sensorNum); pLCD2004->println(lcdString); Serial.println(lcdString);
-      }
-      else {
+      } else {
         sprintf(lcdString, "Sensor %2d Cleared.", sensorNum); pLCD2004->println(lcdString); Serial.println(lcdString);
       }
     } else if (msgType == 'M') {  // If we get a Mode message it can only be Manual Stopped.
@@ -384,98 +394,23 @@ void LEGManualMode() {
       // WE HAVE A BIG PROBLEM with an unexpected message type at this point
       sprintf(lcdString, "MAN MODE MSG ERR!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
     }
-
-    // IMPORTANT: If a control panel track power switch is held, this function delays until 20ms after it is released,
-    // so if the operator holds a power switch on while a train is moving and/or there are commands in Delayed Action,
-    // no events will be seen while switch is held and sensor trips/releases may be missed.  For this reason, it's best
-    // to only check for PowerMaster switches when RUNNING in MANUAL mode.
-    checkIfPowerMasterOnOffPressed();  // Turn track power on or off if operator is holding a track-power switch.
-    pEngineer->executeConductorCommand();  // Run oldest ripe command in Legacy command buffer, if possible.
-
   } while (stateCurrent != STATE_STOPPED);  // We'll just assume mode is still Manual
-
-
-
-
 }
 
-void checkIfPowerMasterOnOffPressed() {
-  // Rev: 03/09/23.  Based on old code from A-LEG.  Complete but needs to be tested ***********************************************
-  // When operator holds one of the four PowerMaster toggle switches in either the on or off position, create a Delayed Action
-  // command to be executed as soon as possible.  This function handles debounce for both press and release, and pauses until the
-  // operator has released the switch.
-  // Although we insert a new Delayed Action record ready for immediate execution, WE DO NOT EXECUTE THE COMMAND.  Instead, the
-  // caller must do the usual Engineer::executeConductorCommand() to retrieve the Delayed Action record and send it on to the
-  // Legacy Command Buffer / Legacy base.
-
-  const byte POWERMASTER_OFF = 0;  // Turn PowerMaster #n OFF with Legacy Engine # Absolute Speed 0.
-  const byte POWERMASTER_ON  = 1;  // Turn PowerMaster #n ON  with Legacy Engine # Absolute Speed 1.
-
-  // Check the four control panel "PowerMaster" on/off switches and turn power on or off as needed via Legacy commands.
-  // Note that the four power LEDs are driven directly by track power, so no need to turn them on or off in code.
-  // Create Delayed Action cmd to set Legacy Engine LOCO_ID_POWERMASTER_n to Absolute Speed POWERMASTER_OFF or POWERMASTER_ON.
-  // This amounts to Legacy Engine 91..94 to Abs Speed 0 or 1.
-  // There is custom code in Delayed_Action::populateDelayedAction() to handle PowerMasters since their locoNum is out of range.
-
-  // Is the operator holding the control panel BROWN TRACK POWER switch in the ON position at this moment?
-  if (digitalRead(PIN_IN_PANEL_BROWN_ON) == LOW)  {
-    // Insert a Delayed Action command to execute PowerMaster #1 "on" as soon as possible.
-    pDelayedAction->populateLocoCommand(millis(), LOCO_ID_POWERMASTER_1, LEGACY_ACTION_ABS_SPEED, POWERMASTER_ON, 0);
-    // Note that this command won't be executed until operator RELEASES the switch AND we call Engineer::executeConductorCommand().
-    delay(20);  // wait for press debounce
-    while (digitalRead(PIN_IN_PANEL_BROWN_ON) == LOW) { }   // Pause everything while held
-    delay(20);  // wait for release debounce
-  }
-  // Continue checking all other Track Power switches/positions...
-  if (digitalRead(PIN_IN_PANEL_BROWN_OFF) == LOW)  {
-    pDelayedAction->populateLocoCommand(millis(), LOCO_ID_POWERMASTER_1, LEGACY_ACTION_ABS_SPEED, POWERMASTER_OFF, 0);
-    delay(20);  // wait for press debounce
-    while (digitalRead(PIN_IN_PANEL_BROWN_OFF) == LOW) { }   // Pause everything while held
-    delay(20);  // wait for release debounce
-  }
-  if (digitalRead(PIN_IN_PANEL_BLUE_ON) == LOW)  {
-    pDelayedAction->populateLocoCommand(millis(), LOCO_ID_POWERMASTER_2, LEGACY_ACTION_ABS_SPEED, POWERMASTER_ON, 0);
-    delay(20);  // wait for press debounce
-    while (digitalRead(PIN_IN_PANEL_BLUE_ON) == LOW) { }   // Pause everything while held
-    delay(20);  // wait for release debounce
-  }
-  if (digitalRead(PIN_IN_PANEL_BLUE_OFF) == LOW)  {
-    pDelayedAction->populateLocoCommand(millis(), LOCO_ID_POWERMASTER_2, LEGACY_ACTION_ABS_SPEED, POWERMASTER_OFF, 0);
-    delay(20);  // wait for press debounce
-    while (digitalRead(PIN_IN_PANEL_BLUE_OFF) == LOW) { }   // Pause everything while held
-    delay(20);  // wait for release debounce
-  }
-  if (digitalRead(PIN_IN_PANEL_RED_ON) == LOW)  {
-    pDelayedAction->populateLocoCommand(millis(), LOCO_ID_POWERMASTER_3, LEGACY_ACTION_ABS_SPEED, POWERMASTER_ON, 0);
-    delay(20);  // wait for press debounce
-    while (digitalRead(PIN_IN_PANEL_RED_ON) == LOW) { }   // Pause everything while held
-    delay(20);  // wait for release debounce
-  }
-  if (digitalRead(PIN_IN_PANEL_RED_OFF) == LOW)  {
-    pDelayedAction->populateLocoCommand(millis(), LOCO_ID_POWERMASTER_3, LEGACY_ACTION_ABS_SPEED, POWERMASTER_OFF, 0);
-    delay(20);  // wait for press debounce
-    while (digitalRead(PIN_IN_PANEL_RED_OFF) == LOW) { }   // Pause everything while held
-    delay(20);  // wait for release debounce
-  }
-  if (digitalRead(PIN_IN_PANEL_4_ON) == LOW)  {
-    pDelayedAction->populateLocoCommand(millis(), LOCO_ID_POWERMASTER_4, LEGACY_ACTION_ABS_SPEED, POWERMASTER_ON, 0);
-    delay(20);  // wait for press debounce
-    while (digitalRead(PIN_IN_PANEL_4_ON) == LOW) { }   // Pause everything while held
-    delay(20);  // wait for release debounce
-  }
-  if (digitalRead(PIN_IN_PANEL_4_OFF) == LOW)  {
-    pDelayedAction->populateLocoCommand(millis(), LOCO_ID_POWERMASTER_4, LEGACY_ACTION_ABS_SPEED, POWERMASTER_OFF, 0);
-    delay(20);  // wait for press debounce
-    while (digitalRead(PIN_IN_PANEL_4_OFF) == LOW) { }   // Pause everything while held
-    delay(20);  // wait for release debounce
-    delay(20);  // wait for release debounce
-  }
-  return;
-}
+// ********************************************************************************************************************************
+// ************************************************ OPERATE IN REGISTRATION MODE **************************************************
+// ********************************************************************************************************************************
 
 void LEGRegistrationMode() {
 
+  sprintf(lcdString, "REG MODE!"); pLCD2004->println(lcdString); Serial.println(lcdString);
+  delay(5000);
+
 }
+
+// ********************************************************************************************************************************
+// ************************************************** OPERATE IN AUTO/PARK MODE ***************************************************
+// ********************************************************************************************************************************
 
 void LEGAutoParkMode() {
 
@@ -487,3 +422,82 @@ void LEGAutoParkMode() {
 
 
 }
+
+// ********************************************************************************************************************************
+// ********************************************************************************************************************************
+// ********************************************************************************************************************************
+
+void checkIfPowerMasterOnOffPressed() {
+  // Rev: 03/09/23.  Based on old code from A-LEG.  Complete but needs to be tested ***********************************************
+  // When operator holds one of the four PowerMaster toggle switches in either the on or off position, create a Delayed Action
+  // command to be executed as soon as possible.  This function handles debounce for both press and release, and pauses until the
+  // operator has released the switch.
+  // Although we insert a new Delayed Action record ready for immediate execution, WE DO NOT EXECUTE THE COMMAND.  Instead, the
+  // caller must do the usual Engineer::executeConductorCommand() to retrieve the Delayed Action record and send it on to the
+  // Legacy Command Buffer / Legacy base.
+
+  const byte POWERMASTER_OFF = 0;  // Turn PowerMaster #n OFF with Legacy Engine # Absolute Speed 0.
+  const byte POWERMASTER_ON = 1;  // Turn PowerMaster #n ON  with Legacy Engine # Absolute Speed 1.
+
+  // Check the four control panel "PowerMaster" on/off switches and turn power on or off as needed via Legacy commands.
+  // Note that the four power LEDs are driven directly by track power, so no need to turn them on or off in code.
+  // Create Delayed Action cmd to set Legacy Engine LOCO_ID_POWERMASTER_n to Absolute Speed POWERMASTER_OFF or POWERMASTER_ON.
+  // This amounts to Legacy Engine 91..94 to Abs Speed 0 or 1.
+  // There is custom code in Delayed_Action::populateDelayedAction() to handle PowerMasters since their locoNum is out of range.
+
+  // Is the operator holding the control panel BROWN TRACK POWER switch in the ON position at this moment?
+  if (digitalRead(PIN_IN_PANEL_BROWN_ON) == LOW) {
+    // Insert a Delayed Action command to execute PowerMaster #1 "on" as soon as possible.
+    pDelayedAction->populateLocoCommand(millis(), LOCO_ID_POWERMASTER_1, LEGACY_ACTION_ABS_SPEED, POWERMASTER_ON, 0);
+    // Note that this command won't be executed until operator RELEASES the switch AND we call Engineer::executeConductorCommand().
+    delay(20);  // wait for press debounce
+    while (digitalRead(PIN_IN_PANEL_BROWN_ON) == LOW) {}   // Pause everything while held
+    delay(20);  // wait for release debounce
+  }
+  // Continue checking all other Track Power switches/positions...
+  if (digitalRead(PIN_IN_PANEL_BROWN_OFF) == LOW) {
+    pDelayedAction->populateLocoCommand(millis(), LOCO_ID_POWERMASTER_1, LEGACY_ACTION_ABS_SPEED, POWERMASTER_OFF, 0);
+    delay(20);  // wait for press debounce
+    while (digitalRead(PIN_IN_PANEL_BROWN_OFF) == LOW) {}   // Pause everything while held
+    delay(20);  // wait for release debounce
+  }
+  if (digitalRead(PIN_IN_PANEL_BLUE_ON) == LOW) {
+    pDelayedAction->populateLocoCommand(millis(), LOCO_ID_POWERMASTER_2, LEGACY_ACTION_ABS_SPEED, POWERMASTER_ON, 0);
+    delay(20);  // wait for press debounce
+    while (digitalRead(PIN_IN_PANEL_BLUE_ON) == LOW) {}   // Pause everything while held
+    delay(20);  // wait for release debounce
+  }
+  if (digitalRead(PIN_IN_PANEL_BLUE_OFF) == LOW) {
+    pDelayedAction->populateLocoCommand(millis(), LOCO_ID_POWERMASTER_2, LEGACY_ACTION_ABS_SPEED, POWERMASTER_OFF, 0);
+    delay(20);  // wait for press debounce
+    while (digitalRead(PIN_IN_PANEL_BLUE_OFF) == LOW) {}   // Pause everything while held
+    delay(20);  // wait for release debounce
+  }
+  if (digitalRead(PIN_IN_PANEL_RED_ON) == LOW) {
+    pDelayedAction->populateLocoCommand(millis(), LOCO_ID_POWERMASTER_3, LEGACY_ACTION_ABS_SPEED, POWERMASTER_ON, 0);
+    delay(20);  // wait for press debounce
+    while (digitalRead(PIN_IN_PANEL_RED_ON) == LOW) {}   // Pause everything while held
+    delay(20);  // wait for release debounce
+  }
+  if (digitalRead(PIN_IN_PANEL_RED_OFF) == LOW) {
+    pDelayedAction->populateLocoCommand(millis(), LOCO_ID_POWERMASTER_3, LEGACY_ACTION_ABS_SPEED, POWERMASTER_OFF, 0);
+    delay(20);  // wait for press debounce
+    while (digitalRead(PIN_IN_PANEL_RED_OFF) == LOW) {}   // Pause everything while held
+    delay(20);  // wait for release debounce
+  }
+  if (digitalRead(PIN_IN_PANEL_4_ON) == LOW) {
+    pDelayedAction->populateLocoCommand(millis(), LOCO_ID_POWERMASTER_4, LEGACY_ACTION_ABS_SPEED, POWERMASTER_ON, 0);
+    delay(20);  // wait for press debounce
+    while (digitalRead(PIN_IN_PANEL_4_ON) == LOW) {}   // Pause everything while held
+    delay(20);  // wait for release debounce
+  }
+  if (digitalRead(PIN_IN_PANEL_4_OFF) == LOW) {
+    pDelayedAction->populateLocoCommand(millis(), LOCO_ID_POWERMASTER_4, LEGACY_ACTION_ABS_SPEED, POWERMASTER_OFF, 0);
+    delay(20);  // wait for press debounce
+    while (digitalRead(PIN_IN_PANEL_4_OFF) == LOW) {}   // Pause everything while held
+    delay(20);  // wait for release debounce
+    delay(20);  // wait for release debounce
+  }
+  return;
+}
+

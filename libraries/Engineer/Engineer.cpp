@@ -1,6 +1,7 @@
-// ENGINEER.CPP Rev: 03/02/23. COMPLETE AND SEEMS TO WORK BUT NEEDS RIGOROUS TESTING.
+// ENGINEER.CPP Rev: 05/04/24.
 // Part of O_LEG.
-// 03/02/23: Complete and generally works but needs more rigorous testing, including Accessories.
+// 05/04/24: Adding support for TMCC Abs Speed.  Already have support for TMCC Dialogue though not tested at all.
+// 03/02/23: No support for TMCC else complete and generally works but needs more rigorous testing, including Accessories.
 
 // The Engineer class requests pending/ripe Legacy/TMCC commands from Conductor, via the Delayed Action table, and sends those
 // commands to the loco or other appropriate equipment (usually the locomotive, but also potentially StationSounds Diner cars,
@@ -105,20 +106,17 @@ void Engineer::executeConductorCommand() {
 
 void Engineer::getDelayedActionCommand() {
   // Rev: 05/03/24.
-  // Translates a ripe Delayed Action command to a Delayed Action Legacy/TMCC command or Accessory Relay activation/deactivation.
-  // For Legacy/TMCC commands, enqueues the command into the Legacy Command Buffer for almost immediate execution.
-  // If the command affects a loco's speed, also update the loco's Train Progress Speed-and-Time and Stopped/Time Stopped fields.
-  // devType can be [E|T|N|R|A] DEV_TYPE LEGACY/TMCC ENGINE/TRAIN or DEV_TYPE_ACCESSORY.
-  // This function must be called as frequently as possible (every time through loop) by Engineer to keep "ripe" commands that are
-  // in the Delayed Action table moving out and into the Legacy Command Buffer (for loco commands) or accessory etc.
   // Retrieve a ripe record (if any) from the Delayed Action table (human-readable version), then:
   //   a. If the record is an Accessory-control command, then activate or deactivate a relay
   //   b. If the record is a Legacy or TMCC, Engine orTrain command, then:
   //      1) Translate from human-readable to actual 3-, 6-, or 9-byte Legacy/TMCC formatted command, then
   //      2) Enqueue it in the Legacy Command Buffer (for almost-immediate transmission to Legacy Base/loco), then
-  //      3) If it is a speed command, update loco's "current speed" via Train_Progress::setSpeedAndTime().
+  //      3) If it is a speed command, update loco's various speed and time fields in Train Progress.
   // Even though we must still transmit the speed command from the Legacy Cmd Buf to the Legacy Base (and then loco) before the
   // train will actually be moving at that speed, this will happen within milliseconds of updating Train Progress's current speed.
+  // devType can be [E|T|N|R|A] DEV_TYPE LEGACY/TMCC ENGINE/TRAIN or DEV_TYPE_ACCESSORY.
+  // This function must be called as frequently as possible (every time through loop) by Engineer to keep "ripe" commands that are
+  // in the Delayed Action table moving out and into the Legacy Command Buffer (for loco commands) or accessory etc.
 
   // Create a set of local variables that Delayed Action can populate with ripe data, if any.
   char m_devType = ' ';
@@ -134,7 +132,7 @@ void Engineer::getDelayedActionCommand() {
 
   // Got a Delayed Action record; it could be an Accessory, or a 3/6/9-byte Legacy or TMCC command...
   // t_devType must be [E|T|N|R|A]: Engine (Legacy), or Train (Legacy), eNgine (TMCC), tRain (TMCC), Accessory
-  // Note that the PowerMasters are stored as TMCC Engine absolute speed commands (0 = off, 1 = on.)
+  // Note that the PowerMasters are stored as Legacy Engine absolute speed commands (0 = off, 1 = on.)
 
   // Is this a LEGACY Engine or Train command?
   if ((m_devType == DEV_TYPE_LEGACY_ENGINE) || (m_devType == DEV_TYPE_LEGACY_TRAIN)) {
@@ -144,16 +142,20 @@ void Engineer::getDelayedActionCommand() {
     m_legacyCommandRecord = translateToLegacy(m_devNum, m_devCommand, m_devParm1, m_devParm2);
     // Then we'll enqueue it into the Legacy/TMCC command buffer (to be executed within milliseconds, we presume.)
     commandBufEnqueue(m_legacyCommandRecord);  // Insert Legacy command into the circular buffer.
-    // If this is a loco speed adjustment, update Train Progress' loco current speed and at what time.
-    if ((m_devCommand == LEGACY_ACTION_ABS_SPEED) ||
-        (m_devCommand == LEGACY_ACTION_STOP_IMMED) ||
+    // If this is a loco speed adjustment, and not a PowerMaster, update Train Progress' loco speed and time header fields.
+    if ((m_devCommand == LEGACY_ACTION_STOP_IMMED) ||
         (m_devCommand == LEGACY_ACTION_EMERG_STOP)) {
-      Serial.print("Engineer setting Train Progress speed, and transmitting to device: "); Serial.print(m_devNum); Serial.print(", Speed: "); Serial.println(m_devParm1);
+      Serial.print("Engineer setting Train Progress speed to zero (stop immed or emerg stop): m_devNum: "); Serial.print(m_devNum);
+      m_pTrainProgress->setSpeedAndTime(m_devNum, 0, millis());
+      m_pTrainProgress->setStopped(m_devNum, true);
+      m_pTrainProgress->setTimeStopped(m_devNum, millis());
+    } else if ((m_devCommand == LEGACY_ACTION_ABS_SPEED) &&
+               (m_devNum <= TOTAL_TRAINS)) {  // TOTAL_TRAINS = 50; PowerMasters are 91..94 so they're excluded here.
+      Serial.print("Engineer setting Train Progress speed for m_devNum: "); Serial.print(m_devNum); Serial.print(", Speed: "); Serial.println(m_devParm1);
       m_pTrainProgress->setSpeedAndTime(m_devNum, m_devParm1, millis());
-      // NOTE 3/5/23: Not sure where I want to set Train Progress "stopped", "time stopped", and "time starting" fields, or what I'll use
-      // them for.  For sure, I need MAS Dispatcher to send time to start when it sends an EXTENSION route.  Time to start is not even
-      // relevant when it sends an INITIAL route or a CONTINUATION route.
-      // So interpreting "timeToStart" as "time to start" is useful for:
+      // NOTE 3/5/23: Not sure where I want to set Train Progress "stopped", "time stopped", and "time starting" fields, or what
+      // I'll use them for.  For sure, I need MAS Dispatcher to send time to start when it sends an EXTENSION route.
+      // Time to Start (not updated here, by the way) is useful for:
       //   * LEG Conductor to trigger pre-departure loco/tower comms i.e. get permission to depart
       //   * LEG Conductor to get the train moving
       //   * OCC Station Announcer to make pre-departure announcements
@@ -161,57 +163,43 @@ void Engineer::getDelayedActionCommand() {
       // Thus, we'll update various Train Progress fields such as isStopped, timeStopped, currentSpeed, and currentSpeedTime.
       if (m_devParm1 == 0) {  // If the train is being stopped (or IMMED or EMERG), set isStopped true and timeStopped.
         Serial.println("Setting train STOPPED.");
-        // We should probably have a function to combine setStopped and setTimeStopped, like we do with setSpeedAndTime.        m_pTrainProgress->setStopped(m_devNum, true);
+        // Maybe we should have a function to combine setStopped and setTimeStopped, like we do with setSpeedAndTime, but when we
+        // set Stopped to false (i.e. when we start moving) I don't think we'll want to update time stopped.
         m_pTrainProgress->setStopped(m_devNum, true);
         m_pTrainProgress->setTimeStopped(m_devNum, millis());
-      } else {  // If the speed is changing but not stopping, update isStopped false.
+      } else {  // If the speed is changing but not stopping, update isStopped false (in case we were previously stopped.)
         Serial.println("Setting train NOT stopped.");
         m_pTrainProgress->setStopped(m_devNum, false);
       }
-      // Regardless of what type of speed adjustment (i.e. if we are stopping or not), update currentSpeed and currentSpeedTime
-      m_pTrainProgress->setSpeedAndTime(m_devNum, m_devParm1, millis());  // Updates currentSpeed and currentSpeedTime
     }
-    return;
+    return;  // If LEGACY_ENGINE or LEGACY_TRAIN command, we're done.
   }
 
   // Is it a TMCC Engine or Train?
   if ((m_devType == DEV_TYPE_TMCC_ENGINE) || (m_devType == DEV_TYPE_TMCC_TRAIN)) {
-  Serial.println("Found TMCC command in Delayed Action...");
+    Serial.println("Found TMCC command in Delayed Action...");
     // We have a new TMCC Engine or Train command from Delayed Action.
-    // First we must translate the Delayed Action data into a 3-byte TMCC command.
+    // First we must translate the Delayed Action data into a 3- or 6-byte TMCC command.
     m_legacyCommandRecord = translateToTMCC(m_devNum, m_devCommand, m_devParm1, m_devParm2);
     // Then we'll enqueue it into the Legacy/TMCC command buffer (to be executed within milliseconds, we presume.)
     commandBufEnqueue(m_legacyCommandRecord);  // Insert TMCC command into the circular buffer.
-    // If this is a loco speed adjustment, and not a PowerMaster, update Train Progress' loco current speed and at what time.
+    // If this is a loco speed adjustment, update Train Progress' loco speed and time header fields.
     // Note that TMCC doesn't support Stop Immediate, and Emerg Stop is handled as Legacy, above.
-    if ((m_devCommand == TMCC_ACTION_ABS_SPEED) &&
-        (m_devNum <= TOTAL_TRAINS)) {  // TOTAL_TRAINS = 50; PowerMasters are 91..94.
-      Serial.print("Engineer setting Train Progress speed, and transmitting to device: "); Serial.print(m_devNum); Serial.print(", Speed: "); Serial.println(m_devParm1);
+    if (m_devCommand == LEGACY_ACTION_ABS_SPEED) {
+      Serial.print("Engineer setting Train Progress speed for m_devNum: "); Serial.print(m_devNum); Serial.print(", Speed: "); Serial.println(m_devParm1);
       m_pTrainProgress->setSpeedAndTime(m_devNum, m_devParm1, millis());
-      // DUPLICATE OF COMMENT FROM ABOVE LEGACY CODE BLOCK:
-      // NOTE 3/5/23: Not sure where I want to set Train Progress "stopped", "time stopped", and "time starting" fields, or what I'll use
-      // them for.  For sure, I need MAS Dispatcher to send time to start when it sends an EXTENSION route.  Time to start is not even
-      // relevant when it sends an INITIAL route or a CONTINUATION route.
-      // So interpreting "timeToStart" as "time to start" is useful for:
-      //   * LEG Conductor to trigger pre-departure loco/tower comms i.e. get permission to depart
-      //   * LEG Conductor to get the train moving
-      //   * OCC Station Announcer to make pre-departure announcements
       // For speed adjustments, we can assume that these will be executed almost immediately because they're ripe now.
       // Thus, we'll update various Train Progress fields such as isStopped, timeStopped, currentSpeed, and currentSpeedTime.
-      if (m_devParm1 == 0) {  // If the new speed is zero (stopped), set isStopped true and timeStopped = now.
+      if (m_devParm1 == 0) {  // If the train is being stopped, set isStopped true and timeStopped.
         Serial.println("Setting train STOPPED.");
-        // We should probably have a function to combine setStopped and setTimeStopped, like we do with setSpeedAndTime.
         m_pTrainProgress->setStopped(m_devNum, true);
         m_pTrainProgress->setTimeStopped(m_devNum, millis());
-      }
-      else {  // If the speed is changing but not stopping, update isStopped false.
+      } else {  // If the speed is changing but not stopping, update isStopped false (in case we were previously stopped.)
         Serial.println("Setting train NOT stopped.");
         m_pTrainProgress->setStopped(m_devNum, false);
       }
-      // Regardless of what type of speed adjustment (i.e. if we are stopping or not), update currentSpeed and currentSpeedTime
-      m_pTrainProgress->setSpeedAndTime(m_devNum, m_devParm1, millis());  // Updates currentSpeed and currentSpeedTime
     }
-    return;
+    return;  // If TMCC_ENGINE or TMCC_TRAIN command, we're done.
   }
 
   // Last resort: if it's an Accessory Relay command, execute immediately (just turn relay on or off)...
@@ -234,8 +222,8 @@ void Engineer::getDelayedActionCommand() {
 void Engineer::sendCommandToTrain() {
   // Rev: 06/16/22.
   // This function must be called as frequently as possible (every time through loop) by Engineer to keep things moving.
-  // Dequeues up to one record (if any) from the Legacy/TMCC Command Buffer (not more often than each 30ms).
-  // If a record is found, forward to the Legacy Command Base via the RS-232 interface.
+  // Dequeues up to one "plain English" record, if any, from the Legacy/TMCC Command Buffer (not more often than each 30ms).
+  // If a record is found, translate to Legacy/TMCC hex and forward to the Legacy Command Base via the RS-232 interface.
   // We'll use our class global 9-byte struct variable m_legacyCommandRecord to hold our working command.
 
   // First see if we have a 3/6/9-byte commands in the Legacy circular buffer that can be transmitted...  We'll only get
@@ -269,204 +257,301 @@ void Engineer::controlAccessoryRelay(byte t_RelayNum, byte t_CloseOrOpen) {
   return;
 }
 
-
-
-
-
-
-// 05/03/24: Working on translatetoTMCC, adding abs speed for powermasters...
-
 Engineer::legacyCommandStruct Engineer::translateToTMCC(byte t_devNum, byte t_devCommand, byte t_devParm1, byte t_devParm2) {
-  // Rev: 05/03/24.
-  // Populate a Legacy (actually TMCC) command buffer, 3- to 6-bytes long.
+  // Rev: 05/04/24.
+  // Populate a Legacy (actually TMCC) command buffer, 3- or 6-bytes long.
   // It's necessary to prefix this return type with "Engineer::" because it's a private struct.
-  // 05/03/24: Adding support for TMCC speed commands, specifically so we can support PowerMasters TMCC Engines 91..94.
-  // Not necessary to pass devType parm as we can just look it up; always TMCC Engine or Train.
   // Only gets called when t_devType = TMCC Engine or Train; other device types handled by other functions.
-  // Only TMCC Engine/Train Abs Speed and Dialogue commands are supported, including TMCC Engine PowerMaster 91..94.
-  // Translate a Delayed Action "generic" command into a TMCC 3- or 6-byte command.
+  // Translate a Delayed Action "plain English" command into a TMCC 3- or 6-byte command.
   // We'll use our class global 9-byte struct variable m_legacyCommandRecord to hold our calculated TMCC command bytes.
   // Remember, bytes 1..9 are element 0..8!
-  byte t_devType;
-  if ((t_devNum >= LOCO_ID_POWERMASTER_1) && (t_devNum <= LOCO_ID_POWERMASTER_4)) {
-    t_devType = DEV_TYPE_TMCC_ENGINE;
-  } else {  // Anything other than a PowerMaster look up -- better be DEV_TYPE_TMCC_ENGINE or DEV_TYPE_TMCC_TRAIN.
-    t_devType = m_pLoco->devType(t_devNum);  // N|R else bug in database
-  }
+  // The following TMCC Engine/Train commands (t_devCommand) are supported:
+  //   * LEGACY_ACTION_EMERG_STOP
+  //   * LEGACY_ACTION_ABS_SPEED
+  //   * LEGACY_ACTION_STOP_IMMED (treated as Abs Speed = 0)
+  //   * LEGACY_ACTION_FORWARD
+  //   * LEGACY_ACTION_REVERSE
+  //   * LEGACY_ACTION_FRONT_COUPLER
+  //   * LEGACY_ACTION_REAR_COUPLER
+  //   * LEGACY_SOUND_HORN_NORMAL
+  //   * LEGACY_SOUND_BELL_ON, LEGACY_SOUND_BELL_OFF: Future.  Not sure how they work as there is only one Bell command in TMCC.
+  //   * TMCC_DIALOGUE, StationSounds Diner dialogue commands specified as t_devParm1:
+  //     * TMCC_DIALOGUE_STATION_ARRIVAL         When STOPPED: PA announcement i.e. "The Daylight is now arriving."
+  //     * TMCC_DIALOGUE_STATION_DEPARTURE       When STOPPED: PA announcement i.e. "The Daylight is now departing."
+  //     * TMCC_DIALOGUE_CONDUCTOR_ARRIVAL       When STOPPED: Conductor says i.e. "Watch your step."
+  //     * TMCC_DIALOGUE_CONDUCTOR_DEPARTURE     When STOPPED: Conductor says i.e. "Watch your step." then "All aboard!"
+  //     * TMCC_DIALOGUE_CONDUCTOR_TICKETS_DINER When MOVING: Conductor says "Welcome aboard/Tickets please/1st seating."
+  //     * TMCC_DIALOGUE_CONDUCTOR_STOPPING      When MOVING: Conductor says "Next stop coming up."
+  // NOTE: The above commands are LEGACY_* constants because they're just the "plain English" version of the commands, such as
+  //       LEGACY_ACTION_ABS_SPEED.  Based on the device type (Legacy vs TMCC) we'll call the appropriate "translateToXXX"
+  //       function (here), which by virtue of being called knows what type of device (Legacy vs TMCC, though we'll have to look it
+  //       up in Loco Ref in order to differentiate between Engine vs Train.)
+  //       I'm not clear, as of 5/4/24, how TMCC_DIALOGUE will be specified in Delayed Action, because unlike the rest of the above
+  //       commands, the Conductor (whoever populates Delayed Action) would need to know that it's talking to a TMCC device vs a
+  //       Legacy device.  Of course at this point, ALL StationSounds diner cars, and other devices with dialogue, will be TMCC.
+  // NOTE: I don't think we need to support the TMCC Momentum commands (Low/Med/High -- there is no "off") because momentum is
+  //       handled by the Legacy remote.  I.e. when you set momentum, you see successive speed commands coming from the remote, not
+  //       a single speed command sent to loco and then the loco slows down on its own.  Ditto with Legacy Momentum.
+
+  // First confirm that we have a valid device type and number...
+  byte t_devType;  // Will be TMCC eNgine or tRain (N/R)
+  t_devType = m_pLoco->devType(t_devNum);  // N|R else bug in database
   // We should only be sent commands for TMCC Engines or Trains so confirm this:
   if (outOfRangeTMCCDevType(t_devType)) {
     sprintf(lcdString, "ENG'R TMCC DT ERR!"); pLCD2004->println(lcdString); endWithFlashingLED(5);
   }
-  // TMCC train num can be 1..9, engine num can be 1..50, PowerMaster can be 91..94, and ignore t_devNum for Emergency Stop.
+  // TMCC train num can be 1..9, engine num can be 1..50.
   if (t_devCommand != LEGACY_ACTION_EMERG_STOP) {
     if (outOfRangeDevNum(t_devType, t_devNum)) {
       sprintf(lcdString, "ENG'R TMCC DN ERROR!"); pLCD2004->println(lcdString); endWithFlashingLED(5);
     }
   }
-  // First we should clear out all nine bytes...even though TMCC can use at most 6.
+
+  // Clear out all nine bytes...even though TMCC can use at most 6.
   for (byte j = 0; j < LEGACY_CMD_BYTES; j++) {  // Always 9 bytes, 0..8
     m_legacyCommandRecord.legacyCommandByte[j] = 0;
   }
 
-  // First we'll handle the simplest TMCC case that we support: Set Speed 0..31.
-  if (t_devCommand == TMCC_ACTION_ABS_SPEED) {
-    // Could insert a test to confirm TMCC speed was within allowable range, though we should have done this when we populated D.A.
-    // Define binary device types for creating the 2nd and 3rd bytes of the TMCC command
-    byte binaryDeviceType = 0;
-    if (t_devType == DEV_TYPE_TMCC_ENGINE) {
-      binaryDeviceType = B00000000;  // 1..99
-    }
-    else if (t_devType == DEV_TYPE_TMCC_TRAIN) {
-      binaryDeviceType = B11001000;  // 1..9
-    }
-    else {
-      // Other device types not supported.  If we ever want to support Switches, they are binaryDeviceType = B01000000.
-      sprintf(lcdString, "ENG'R TMCC DT ERR 2!"); pLCD2004->println(lcdString); endWithFlashingLED(5);
-    }
-    // Byte 1 is ALWAYS 0xFE for TMCC commands:
-    m_legacyCommandRecord.legacyCommandByte[0] = 0xFE;  // 254
-    // Byte 2 is combination of device type field and first 7 bit of TMCC address:
-    m_legacyCommandRecord.legacyCommandByte[1] = (binaryDeviceType | (t_devNum >> 1));
-    // Byte 3 is last bit of TMCC address, command field (2 bits), plus data field:
-    m_legacyCommandRecord.legacyCommandByte[2] = (t_devNum << 7) | (commandField << 5) | dataField;
+  // We ALWAYS know what byte 0 will be for TMCC:
+  m_legacyCommandRecord.legacyCommandByte[0] = 0xFE;  // 254
 
-    Where these are the deviceTypes :
-
-    
-
-
-
-
-
-
-
-    if (t_devType == DEV_TYPE_TMCC_ENGINE) {
-      m_legacyCommandRecord.legacyCommandByte[0] = 0xF8;
-    } else {  // Must be a TMCC TRAIN
-      m_legacyCommandRecord.legacyCommandByte[0] = 0xF9;
-    }
-    m_legacyCommandRecord.legacyCommandByte[1] = t_devNum * 2;  // Shift left one bit, fill with zero
-    m_legacyCommandRecord.legacyCommandByte[2] = t_devParm1;    // 
-    sprintf(lcdString, "%c %i A.S. %i", actionElement.deviceType, actionElement.deviceNum, actionElement.parm1);
-    sendToLCD(lcdString);
-    Serial.println(lcdString);
-
-
-
-
-    return m_legacyCommandRecord;  // We're done with TMCC so exit this function
+  // We ALWAYS know what byte 1 (second byte) will be for TMCC (except emergency stop, which we'll override when needed)
+  // 05/05/24: HERE IS AN ALTERNATIVE WAY TO BUILD THE SECOND TMCC COMMAND BYTE:
+  // Byte is combination of device type field and first 7 bit of TMCC address:
+  // If TMCC Engine, binaryDeviceType = 0x00.  If TMCC Train, binaryDeviceType = 0xC8.
+  //   m_legacyCommandRecord.legacyCommandByte[1] = (binaryDeviceType | (t_devNum >> 1));
+  if (t_devType == DEV_TYPE_TMCC_ENGINE) {
+    // Bit pattern is 00AA AAAA:
+    //   AA AAAA is everything except the right-most bit of the device number.
+    m_legacyCommandRecord.legacyCommandByte[1] = (t_devNum >> 1);
+  } else {  // Must be TMCC Train
+    // Bit pattern is 1100 1AAA:
+    //   AAA is everything except the right-most bit of the device number.
+    // Hence, it's the same as for a TMCC Engine, except we need to add 1100 1000 which is 0xC8.
+    m_legacyCommandRecord.legacyCommandByte[1] = (0xC8 + (t_devNum >> 1));  // 0xC8 = binary 1100 1000
   }
 
-  // For "TMCC_DIALOGUE", which is for StationSounds Diner cars, t_devParm1 must specify which of the six supported dialogues are
-  // wanted.  Some of these TMCC StationSounds Diner commands are 3 bytes (single keypad numeric key press), and some are 6 bytes
-  // (combo numberic key press of Alt-1 + a numberic.)
-  // NOTE: All of my StationSounds Diners are TMCC; no need for Legacy StationSounds support at this time.
-  if (t_devCommand == TMCC_DIALOGUE) {
-    // These are either 3-byte or 6 bytes commands.
-    // TMCC STATIONSOUNDS DINER DIALOGUE COMMANDS specified as Parm1:
-    //   TMCC_DIALOGUE_STATION_ARRIVAL         = 1;  // 6 bytes: Aux1+7. When STOPPED: PA announcement i.e. "The Daylight is now arriving."
-    //   TMCC_DIALOGUE_STATION_DEPARTURE       = 2;  // 3 bytes: 7.      When STOPPED: PA announcement i.e. "The Daylight is now departing."
-    //   TMCC_DIALOGUE_CONDUCTOR_ARRIVAL       = 3;  // 6 bytes: Aux1+2. When STOPPED: Conductor says i.e. "Watch your step."
-    //   TMCC_DIALOGUE_CONDUCTOR_DEPARTURE     = 4;  // 3 bytes: 2.      When STOPPED: Conductor says i.e. "Watch your step." then "All aboard!"
-    //   TMCC_DIALOGUE_CONDUCTOR_TICKETS_DINER = 5;  // 3 bytes: 2.      When MOVING: Conductor says "Welcome aboard/Tickets please/1st seating."
-    //   TMCC_DIALOGUE_CONDUCTOR_STOPPING      = 6;  // 6 bytes: Aux1+2. When MOVING: Conductor says "Next stop coming up."
-    // So there are FOUR unique possible commands.
-    if (outOfRangeTMCCDialogueNum(t_devParm1)) {  // Must be 1..6
-      sprintf(lcdString, "ENG TMCC BAD DIALOG!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(5);
+  // Byte 2 (third byte) of any TMCC command is the same regardless if this is for an Engine or a Train.
+  // Bit pattern is ACCD DDDD:
+  //   A is the right-most bit of the device number (t_locoNum)
+  //   CC is the two-bit command category -- usually 00, but 01 for momentum commands and 11 for speed commands.
+  //   D DDDD command number, such as 1 1100 for "Blow Horn."
+  // If CC = 00, then add 0x00 = 0000 (all commands except momentum and absolute speed.)
+  // If CC = 01, then add 0x02 = 0010 (momentum commands.)
+  // If CC = 11, then add 0x06 = 0110 (speed commands.)
+  // There are no Command Categories of 10.
+  // 05/05/24: HERE IS AN ALTERNATIVE WAY TO BUILD THE THIRD TMCC COMMAND BYTE (using bitwise OR, rather than addition.)
+  // Byte 3 is last bit of TMCC address, command field (2 bits), plus data field:
+  //   m_legacyCommandRecord.legacyCommandByte[2] = ((t_devNum << 7) | (commandField << 5) | dataField);
+
+  switch (t_devCommand) {
+
+    case LEGACY_ACTION_EMERG_STOP:     //  We'll do System Halt which turns off PowerMasters too!
+    {
+      m_legacyCommandRecord.legacyCommandByte[1] = 0xFF;
+      m_legacyCommandRecord.legacyCommandByte[2] = 0xFF;
+      break;
     }
 
-    // Regardless if it's a 3-byte or a 6-byte TMCC command, bytes 1 and 2 (and 4 and 5 if used) will always be the same.
-    // So we could compress this code, but for readability we're going to assign every byte in every switch-case block.
-    switch (t_devParm1) {  // Which of the six dialogues are desired?
-      case TMCC_DIALOGUE_STATION_ARRIVAL:  // 2 bytes: Aux1 + 7
-        {
-          m_legacyCommandRecord.legacyCommandByte[0] = 0xFE;  // All TMCC commands start with 0xFE
-          if (t_devType == DEV_TYPE_TMCC_ENGINE) {  // 'N' = TMCC Engine
-            m_legacyCommandRecord.legacyCommandByte[1] = (t_devNum >> 1);
-          } else {  // Can only be TMCC Train (which isn't supported but here it is anyway
-            m_legacyCommandRecord.legacyCommandByte[1] = 0xC8 + (t_devNum >> 1);
-          }
-          m_legacyCommandRecord.legacyCommandByte[2] = (t_devNum << 7) + 0x09;  // Third byte is Aux button; same for Train vs Engine.
-          // Since this is a 6-byte command, keep going...
-          m_legacyCommandRecord.legacyCommandByte[3] = m_legacyCommandRecord.legacyCommandByte[0];
-          m_legacyCommandRecord.legacyCommandByte[4] = m_legacyCommandRecord.legacyCommandByte[1];
-          m_legacyCommandRecord.legacyCommandByte[5] = (t_devNum << 7) + 0x17;  // 0x17 = digit 7 on keypad
-          break;
-        }
-      case TMCC_DIALOGUE_STATION_DEPARTURE:  // 1 byte: 7
-        {
-          m_legacyCommandRecord.legacyCommandByte[0] = 0xFE;  // All TMCC commands start with 0xFE
-          if (t_devType == DEV_TYPE_TMCC_ENGINE) {  // TMCC Engine
-            m_legacyCommandRecord.legacyCommandByte[1] = (t_devNum >> 1);
-          } else {  // Can only be TMCC Train (which isn't supported but here it is anyway
-            m_legacyCommandRecord.legacyCommandByte[1] = 0xC8 + (t_devNum >> 1);
-          }
-          m_legacyCommandRecord.legacyCommandByte[2] = (t_devNum << 7) + 0x17;  // 0x17 = digit 7 on keypad
-          break;
-        }
-      case TMCC_DIALOGUE_CONDUCTOR_ARRIVAL:   // 2 bytes: Aux1 + 2
-      case TMCC_DIALOGUE_CONDUCTOR_STOPPING:  // 2 bytes: Aux1 + 2
-        {
-          m_legacyCommandRecord.legacyCommandByte[0] = 0xFE;  // All TMCC commands start with 0xFE
-          if (t_devType == DEV_TYPE_TMCC_ENGINE) {  // TMCC Engine
-            m_legacyCommandRecord.legacyCommandByte[1] = (t_devNum >> 1);
-          } else {  // Can only be TMCC Train (which isn't supported but here it is anyway
-            m_legacyCommandRecord.legacyCommandByte[1] = 0xC8 + (t_devNum >> 1);
-          }
-          m_legacyCommandRecord.legacyCommandByte[2] = (t_devNum << 7) + 0x09;  // Third byte is Aux button; same for Train vs Engine.
-          // Since this is a 6-byte command, keep going...
-          m_legacyCommandRecord.legacyCommandByte[3] = m_legacyCommandRecord.legacyCommandByte[0];
-          m_legacyCommandRecord.legacyCommandByte[4] = m_legacyCommandRecord.legacyCommandByte[1];
-          m_legacyCommandRecord.legacyCommandByte[5] = (t_devNum << 7) + 0x12;  // 0x12 = digit 2 on keypad
-          break;
-        }
-      case TMCC_DIALOGUE_CONDUCTOR_DEPARTURE:      // 1 byte: 2
-      case TMCC_DIALOGUE_CONDUCTOR_TICKETS_DINER:  // 1 byte: 2
-        {
-          m_legacyCommandRecord.legacyCommandByte[0] = 0xFE;  // All TMCC commands start with 0xFE
-          if (t_devType == DEV_TYPE_TMCC_ENGINE) {  // TMCC Engine
-            m_legacyCommandRecord.legacyCommandByte[1] = (t_devNum >> 1);
-          } else {  // Can only be TMCC Train (which isn't supported but here it is anyway
-            m_legacyCommandRecord.legacyCommandByte[1] = 0xC8 + (t_devNum >> 1);
-          }
-          m_legacyCommandRecord.legacyCommandByte[2] = (t_devNum << 7) + 0x12;  // 0x12 = digit 2 on keypad
-          break;
-        }
-      default:  // Bad news if we get here; it means none of the TMCC dialogues was what we passed
-        {
-          sprintf(lcdString, "ENG TMCC DIALOG ERR"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(5);
+    case LEGACY_ACTION_ABS_SPEED:      // Requires Parm1 0..31
+    {
+      // Speed can be 0..31 for TMCC
+      if (outOfRangeLocoSpeed(t_devType, t_devParm1)) {
+        sprintf(lcdString, "ENG'R TMCC SPD ERR!"); pLCD2004->println(lcdString); endWithFlashingLED(5);
+      }
+      // First put the right-most bit of t_devNum as the left-most  bit of byte #3: X000 0000
+      m_legacyCommandRecord.legacyCommandByte[2] = (t_devNum << 7);
+      // For speed commands, the command bits are 11: 0110 0000
+      m_legacyCommandRecord.legacyCommandByte[2] += 0x60;  // Adding binary 0110 0000 = 0x60
+      // Plus the 5-bit speed 0..31.
+      m_legacyCommandRecord.legacyCommandByte[2] += t_devParm1;
+      break;
+    }
+
+    case LEGACY_ACTION_STOP_IMMED:      // We'll treat this as Abs Speed 0 for TMCC
+    {
+      // First put the right-most bit of t_devNum as the left-most  bit of byte #3: X000 0000
+      m_legacyCommandRecord.legacyCommandByte[2] = (t_devNum << 7);
+      // For speed commands, the command bits are 11: 0110 0000
+      m_legacyCommandRecord.legacyCommandByte[2] += 0x60;  // Adding binary 0110 0000 = 0x60
+      // Plus the 5-bit speed, which is zero, so we'll skip this step.
+      break;
+    }
+
+    case LEGACY_ACTION_FORWARD:
+    {
+      break;
+    }
+
+    case LEGACY_ACTION_REVERSE:
+    {
+      break;
+    }
+
+    case LEGACY_ACTION_FRONT_COUPLER:
+    {
+      break;
+    }
+
+    case LEGACY_ACTION_REAR_COUPLER:
+    {
+      break;
+    }
+
+    case LEGACY_SOUND_HORN_NORMAL:
+    {
+      break;
+    }
+
+    case LEGACY_SOUND_BELL_ON:
+    case LEGACY_SOUND_BELL_OFF:
+      {
+        // Unsupported but not an error, so just return a blank command record.
+        m_legacyCommandRecord.legacyCommandByte[0] = 0;
+        m_legacyCommandRecord.legacyCommandByte[1] = 0;
+        break;
+      }
+
+    case TMCC_DIALOGUE:
+      {
+        // For "TMCC_DIALOGUE", which is for StationSounds Diner cars, t_devParm1 must specify which of the six supported dialogues are
+        // wanted.  Some of these TMCC StationSounds Diner commands are 3 bytes (single keypad numeric key press), and some are 6 bytes
+        // (combo numberic key press of Alt-1 + a numberic.)
+        // NOTE: All of my StationSounds Diners are TMCC; no need for Legacy StationSounds support at this time.
+        // These are either 3-byte or 6 bytes commands.
+        // TMCC STATIONSOUNDS DINER DIALOGUE COMMANDS specified as Parm1:
+        //   TMCC_DIALOGUE_STATION_ARRIVAL         = 1;  // 6 bytes: Aux1+7. When STOPPED: PA announcement i.e. "The Daylight is now arriving."
+        //   TMCC_DIALOGUE_STATION_DEPARTURE       = 2;  // 3 bytes: 7.      When STOPPED: PA announcement i.e. "The Daylight is now departing."
+        //   TMCC_DIALOGUE_CONDUCTOR_ARRIVAL       = 3;  // 6 bytes: Aux1+2. When STOPPED: Conductor says i.e. "Watch your step."
+        //   TMCC_DIALOGUE_CONDUCTOR_DEPARTURE     = 4;  // 3 bytes: 2.      When STOPPED: Conductor says i.e. "Watch your step." then "All aboard!"
+        //   TMCC_DIALOGUE_CONDUCTOR_TICKETS_DINER = 5;  // 3 bytes: 2.      When MOVING: Conductor says "Welcome aboard/Tickets please/1st seating."
+        //   TMCC_DIALOGUE_CONDUCTOR_STOPPING      = 6;  // 6 bytes: Aux1+2. When MOVING: Conductor says "Next stop coming up."
+        // So there are FOUR unique possible commands.
+        if (outOfRangeTMCCDialogueNum(t_devParm1)) {  // Must be 1..6
+          sprintf(lcdString, "ENG TMCC BAD DIALOG!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(5);
         }
 
-    }  // End of "switch" which of the six TMCC commands are we decoding?
-    // Okay, we have populated m_legacyCommandRecord[] with the appropriate TMCC command; either 3 or 6 bytes.
-    return m_legacyCommandRecord;  // We're done with TMCC so exit this function
-  }
-  // If we fall thorough to here, we have an unsupported command type
-  sprintf(lcdString, "ENG TMCC BAD CMD!"); pLCD2004->println(lcdString); Serial.println(lcdString);
+        // Regardless if it's a 3-byte or a 6-byte TMCC command, bytes 1 and 2 (and 4 and 5 if used) will always be the same.
+        // So we could compress this code, but for readability we're going to assign every byte in every switch-case block.
+        switch (t_devParm1) {  // Which of the six dialogues are desired?
+
+          case TMCC_DIALOGUE_STATION_ARRIVAL:  // 2 bytes: Aux1 + 7
+            {
+              m_legacyCommandRecord.legacyCommandByte[2] = (t_devNum << 7) + 0x09;  // Aux button; same for Train vs Engine.
+              // Since this is a 6-byte command, keep going...
+              m_legacyCommandRecord.legacyCommandByte[3] = m_legacyCommandRecord.legacyCommandByte[0];
+              m_legacyCommandRecord.legacyCommandByte[4] = m_legacyCommandRecord.legacyCommandByte[1];
+              m_legacyCommandRecord.legacyCommandByte[5] = (t_devNum << 7) + 0x17;  // 0x17 = digit 7 on keypad
+              break;
+            }
+
+          case TMCC_DIALOGUE_STATION_DEPARTURE:  // 1 byte: 7
+            {
+              m_legacyCommandRecord.legacyCommandByte[2] = (t_devNum << 7) + 0x17;  // 0x17 = digit 7 on keypad
+              break;
+            }
+
+          case TMCC_DIALOGUE_CONDUCTOR_ARRIVAL:   // 2 bytes: Aux1 + 2
+          case TMCC_DIALOGUE_CONDUCTOR_STOPPING:  // 2 bytes: Aux1 + 2
+            {
+              m_legacyCommandRecord.legacyCommandByte[2] = (t_devNum << 7) + 0x09;  // Aux button; same for Train vs Engine.
+              // Since this is a 6-byte command, keep going...
+              m_legacyCommandRecord.legacyCommandByte[3] = m_legacyCommandRecord.legacyCommandByte[0];
+              m_legacyCommandRecord.legacyCommandByte[4] = m_legacyCommandRecord.legacyCommandByte[1];
+              m_legacyCommandRecord.legacyCommandByte[5] = (t_devNum << 7) + 0x12;  // 0x12 = digit 2 on keypad
+              break;
+            }
+
+          case TMCC_DIALOGUE_CONDUCTOR_DEPARTURE:      // 1 byte: 2
+          case TMCC_DIALOGUE_CONDUCTOR_TICKETS_DINER:  // 1 byte: 2
+            {
+              m_legacyCommandRecord.legacyCommandByte[2] = (t_devNum << 7) + 0x12;  // 0x12 = digit 2 on keypad
+              break;
+            }
+
+          default:  // Bad news if we get here; it means none of the TMCC dialogues was what we passed
+            {
+              sprintf(lcdString, "ENG'R TMCC DLG ERR!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(5);
+            }
+        }  // End of switch "which of the six TMCC Dialogue commands are we decoding?"
+      }  // End of "it's a TMCC Dialogue command"
+
+    default:  // Uh oh, we didn't recognize the command
+      {
+        sprintf(lcdString, "ENG'R TMCC BAD CMD!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(5);
+      }
+
+  }  // End of "which device command were we sent to decode?"
+
+  // Okay, we have populated m_legacyCommandRecord[] with the appropriate TMCC command; either 3 or 6 bytes.
+  sprintf(lcdString, "TCMD %c %i %i", t_devType, t_devNum, t_devParm1); pLCD2004->println(lcdString); Serial.println(lcdString);
+  sprintf(lcdString, "%X %X %X", m_legacyCommandRecord.legacyCommandByte[0], m_legacyCommandRecord.legacyCommandByte[1],
+          m_legacyCommandRecord.legacyCommandByte[2]); pLCD2004->println(lcdString); Serial.println(lcdString);
+  return m_legacyCommandRecord;  // We're done with TMCC so exit this function
+
 }
 
-
 Engineer::legacyCommandStruct Engineer::translateToLegacy(byte t_devNum, byte t_devCommand, byte t_devParm1, byte t_devParm2) {
-  // Rev: 06/17/22.
+  // Rev: 05/24/24.
   // Populate a Legacy command buffer, 3- to 9-bytes long.
   // It's necessary to prefix this return type with "Engineer::" because it's a private struct.
   // Only gets called when t_devType = Legacy Engine or Train; other device types handled by other functions.
-  // Translate a Delayed Action "generic" command into a Legacy 3-, 6-, or 9-byte command.
+  // Translate a Delayed Action "plain English" command into a Legacy 3-, 6-, or 9-byte command.
   // We'll use our class global 9-byte struct variable m_legacyCommandRecord to hold our calculated Legacy command bytes.
   // Remember, bytes 1..9 are element 0..8!
-  // Not necessary to have devType parm as we can just look it up; always Legacy Engine or Train.
-  byte t_devType = m_pLoco->devType(t_devNum);  // E|T else bug in database
+  // The following Legacy Engine/Train commands (t_devCommand) are supported:
+  //   * LEGACY_ACTION_STARTUP_SLOW
+  //   * LEGACY_ACTION_STARTUP_FAST
+  //   * LEGACY_ACTION_SHUTDOWN_SLOW
+  //   * LEGACY_ACTION_SHUTDOWN_FAST
+  //   * LEGACY_ACTION_SET_SMOKE      (9-byte command)
+  //   * LEGACY_ACTION_EMERG_STOP
+  //   * LEGACY_ACTION_ABS_SPEED (includes support for PowerMaster 91..94 on/off as speed 1/0.)
+  //   * LEGACY_ACTION_MOMENTUM_OFF
+  //   * LEGACY_ACTION_STOP_IMMED
+  //   * LEGACY_ACTION_FORWARD
+  //   * LEGACY_ACTION_REVERSE
+  //   * LEGACY_ACTION_FRONT_COUPLER
+  //   * LEGACY_ACTION_REAR_COUPLER
+  //   * LEGACY_SOUND_HORN_NORMAL
+  //   * LEGACY_SOUND_HORN_QUILLING  Requires intensity 0..15
+  //   * LEGACY_SOUND_REFUEL   With minor dialogue.  Nothing on SP 1440.  Steam only??? *******************
+  //   * LEGACY_SOUND_DIESEL_RPM Diesel only. Requires Parm 0..7
+  //   * LEGACY_SOUND_WATER_INJECT  Steam only.
+  //   * LEGACY_SOUND_ENGINE_LABOR  Diesel only?  Barely discernable on SP 1440. *******************
+  //   * LEGACY_SOUND_BELL_OFF
+  //   * LEGACY_SOUND_BELL_ON
+  //   * LEGACY_SOUND_BRAKE_SQUEAL    Only works when moving.  Short chirp.
+  //   * LEGACY_SOUND_AUGER           Steam only.
+  //   * LEGACY_SOUND_AIR_RELEASE     Can barely hear.  Not sure if it works on steam as well as diesel? **************
+  //   * LEGACY_SOUND_LONG_LETOFF     Diesel and (presumably) steam. Long hiss. *****************
+  //   * LEGACY_SOUND_MSTR_VOL_UP     There are 10 possible volumes (9 excluding "off") i.e. 0..9.
+  //   * LEGACY_SOUND_MSTR_VOL_DOWN   No way to go directly to a master vol level, so we must step up/down as desired.
+  //   * LEGACY_SOUND_BLEND_VOL_UP    Tried this but wasn't able to get any response (same with 9-byte mstr vol up/down)
+  //   * LEGACY_SOUND_BLEND_VOL_DOWN  Tried this but wasn't able to get any response (same with 9-byte mstr vol up/down)
+  //   * LEGACY_SOUND_COCK_CLEAR_ON   Steam only. This is a 9-byte 0x74 Legacy Railsounds FX Trigger
+  //   * LEGACY_SOUND_COCK_CLEAR_OFF  Steam only. This is a 9-byte 0x74 Legacy Railsounds FX Trigger
+  //   * LEGACY_DIALOGUE              Separate function.  For any of 38 Legacy Dialogues, which will be passed as a parm.
+
+  // First confirm that we have a valid device type and number...
+  byte t_devType;  // Will be Legacy Engine or Train (E/T)
+  if ((t_devNum >= LOCO_ID_POWERMASTER_1) && (t_devNum <= LOCO_ID_POWERMASTER_4)) {
+    t_devType = DEV_TYPE_LEGACY_ENGINE;  // E
+  } else {  // Anything other than a PowerMaster look up -- better be DEV_TYPE_LEGACY_ENGINE or DEV_TYPE_LEGACY_TRAIN.
+    t_devType = m_pLoco->devType(t_devNum);  // E|T else bug in database
+  }
   // We should only be sent commands for Legacy Engines or Trains so confirm this:
   if (outOfRangeLegacyDevType(t_devType)) {
     sprintf(lcdString, "ENG'R LEG DT ERR!"); pLCD2004->println(lcdString); endWithFlashingLED(5);
   }
-  // Loco engine and train nums can only be 1..50, but ignore t_devNum for Emergency Stop.
+  // Loco engine and train nums can only be 1..50 (and PowerMasters 91.94), but ignore t_devNum for Emergency Stop.
   if (t_devCommand != LEGACY_ACTION_EMERG_STOP) {
     if (outOfRangeDevNum(t_devType, t_devNum)) {
       sprintf(lcdString, "ENG'R LEG DN ERROR!"); pLCD2004->println(lcdString); endWithFlashingLED(5);
     }
   }
-  // First we should clear out all nine bytes...so we can always check byte 4 (element 3) for 0 to see if it's a 3-byte, and also
+
+  // Clear out all nine bytes...so we can always check byte 4 (element 3) for 0 to see if it's a 3-byte, and also
   // check byte 7 (element 6) for 0 to see if it's a 6-byte command, else it's a 9-byte command.
   for (byte j = 0; j < LEGACY_CMD_BYTES; j++) {  // Always 9 bytes, 0..8
     m_legacyCommandRecord.legacyCommandByte[j] = 0;
@@ -488,24 +573,28 @@ Engineer::legacyCommandStruct Engineer::translateToLegacy(byte t_devNum, byte t_
         m_legacyCommandRecord.legacyCommandByte[2] = 0xFB;
         break;
       }
+
     case LEGACY_ACTION_STARTUP_FAST:   //
       {
         m_legacyCommandRecord.legacyCommandByte[1] = (t_devNum * 2) + 1;  // Shift left one bit, add 1
         m_legacyCommandRecord.legacyCommandByte[2] = 0xFC;
         break;
       }
+
     case LEGACY_ACTION_SHUTDOWN_SLOW:  //
       {
         m_legacyCommandRecord.legacyCommandByte[1] = (t_devNum * 2) + 1;  // Shift left one bit, add 1
         m_legacyCommandRecord.legacyCommandByte[2] = 0xFD;
         break;
       }
+
     case LEGACY_ACTION_SHUTDOWN_FAST:  //
       {
         m_legacyCommandRecord.legacyCommandByte[1] = (t_devNum * 2) + 1;  // Shift left one bit, add 1
         m_legacyCommandRecord.legacyCommandByte[2] = 0xFE;
         break;
       }
+
     case LEGACY_ACTION_EMERG_STOP:     //  E-stop is actually F8/F9 + FF FF; we'll do System Halt instead turns off PowerMasters too!
       {
         m_legacyCommandRecord.legacyCommandByte[0] = 0xFE;
@@ -513,16 +602,18 @@ Engineer::legacyCommandStruct Engineer::translateToLegacy(byte t_devNum, byte t_
         m_legacyCommandRecord.legacyCommandByte[2] = 0xFF;
         break;
       }
+
     case LEGACY_ACTION_ABS_SPEED:      // Requires Parm1 0..199
       {
-        // Speed can be 0..199 for Legacy, or 0..31 for TMCC
+        // Speed can be 0..199 for Legacy
         if (outOfRangeLocoSpeed(t_devType, t_devParm1)) {
-          sprintf(lcdString, "ENG'R SPEED ERROR!"); pLCD2004->println(lcdString); endWithFlashingLED(5);
+          sprintf(lcdString, "ENG'R LEG SPD ERR!"); pLCD2004->println(lcdString); endWithFlashingLED(5);
         }
         m_legacyCommandRecord.legacyCommandByte[1] = (t_devNum * 2);      // Shift loco num left one bit, add 0
         m_legacyCommandRecord.legacyCommandByte[2] = t_devParm1;          // Absolute speed value 0..199
         break;
       }
+
     case LEGACY_ACTION_MOMENTUM_OFF:   // We will never set Momentum to any value but zero.
       {
         byte t_momentum = 0;  // We can set momentum from 0..7 but in this case 0 = momentum OFF
@@ -530,48 +621,56 @@ Engineer::legacyCommandStruct Engineer::translateToLegacy(byte t_devNum, byte t_
         m_legacyCommandRecord.legacyCommandByte[2] = 0xC8 + t_momentum;   // Parm1 better be 0..7
         break;
       }
+
     case LEGACY_ACTION_STOP_IMMED:     // Prefer over Abs Spd 0 b/c overrides momentum if instant stop desired.
       {
         m_legacyCommandRecord.legacyCommandByte[1] = (t_devNum * 2);      // Shift left one bit, add 0
         m_legacyCommandRecord.legacyCommandByte[2] = 0xFB;
         break;
       }
+
     case LEGACY_ACTION_FORWARD:        // Delayed Action table command types
       {
         m_legacyCommandRecord.legacyCommandByte[1] = (t_devNum * 2) + 1;  // Shift left one bit, add 1
         m_legacyCommandRecord.legacyCommandByte[2] = 0x00;
         break;
       }
+
     case LEGACY_ACTION_REVERSE:        //
       {
         m_legacyCommandRecord.legacyCommandByte[1] = (t_devNum * 2) + 1;  // Shift left one bit, add 1
         m_legacyCommandRecord.legacyCommandByte[2] = 0x03;
         break;
       }
+
     case LEGACY_ACTION_FRONT_COUPLER:  //
       {
         m_legacyCommandRecord.legacyCommandByte[1] = (t_devNum * 2) + 1;  // Shift left one bit, add 1
         m_legacyCommandRecord.legacyCommandByte[2] = 0x05;
         break;
       }
+
     case LEGACY_ACTION_REAR_COUPLER:   //
       {
         m_legacyCommandRecord.legacyCommandByte[1] = (t_devNum * 2) + 1;  // Shift left one bit, add 1
         m_legacyCommandRecord.legacyCommandByte[2] = 0x06;
         break;
       }
+
     case LEGACY_NUMERIC_PRESS:
       {
         m_legacyCommandRecord.legacyCommandByte[1] = (t_devNum * 2) + 1;  // Shift left one bit, add 1
         m_legacyCommandRecord.legacyCommandByte[2] = 0x10 + t_devParm1;   // Keypad digit 0..9
         break;
       }
+
     case LEGACY_SOUND_HORN_NORMAL:     //
       {
         m_legacyCommandRecord.legacyCommandByte[1] = (t_devNum * 2) + 1;  // Shift left one bit, add 1
         m_legacyCommandRecord.legacyCommandByte[2] = 0x1C;
         break;
       }
+
     case LEGACY_SOUND_HORN_QUILLING:   // Requires intensity 0..15
       {
         if (outOfRangeQuill(t_devParm1)) {
@@ -581,12 +680,14 @@ Engineer::legacyCommandStruct Engineer::translateToLegacy(byte t_devNum, byte t_
         m_legacyCommandRecord.legacyCommandByte[2] = 0xE0 + t_devParm1;   // Parm1 better be 0..15
         break;
       }
+
     case LEGACY_SOUND_REFUEL:          // With minor dialogue.  Nothing on SP 1440.  Steam only??? *******************
       {
         m_legacyCommandRecord.legacyCommandByte[1] = (t_devNum * 2) + 1;  // Shift left one bit, add 1
         m_legacyCommandRecord.legacyCommandByte[2] = 0x2D;
         break;
       }
+
     case LEGACY_SOUND_DIESEL_RPM:      // Diesel only. Requires Parm 0..7
       {
         if (outOfRangeRPM(t_devParm1)) {
@@ -596,12 +697,14 @@ Engineer::legacyCommandStruct Engineer::translateToLegacy(byte t_devNum, byte t_
         m_legacyCommandRecord.legacyCommandByte[2] = 0xA0 + t_devParm1;   // Parm1 better be 0..7
         break;
       }
+
     case LEGACY_SOUND_WATER_INJECT:    // Steam only.
       {
         m_legacyCommandRecord.legacyCommandByte[1] = (t_devNum * 2) + 1;  // Shift left one bit, add 1
         m_legacyCommandRecord.legacyCommandByte[2] = 0xA8;
         break;
       }
+
     case LEGACY_SOUND_ENGINE_LABOR:    // Diesel only?  Barely discernable on SP 1440. *******************
       {
         if (outOfRangeLabor(t_devParm1)) {
@@ -611,36 +714,42 @@ Engineer::legacyCommandStruct Engineer::translateToLegacy(byte t_devNum, byte t_
         m_legacyCommandRecord.legacyCommandByte[2] = 0xC0 + t_devParm1;   // Parm1 better be 0..31
         break;
       }
+
     case LEGACY_SOUND_BELL_OFF:        //
       {
         m_legacyCommandRecord.legacyCommandByte[1] = (t_devNum * 2) + 1;  // Shift left one bit, add 1
         m_legacyCommandRecord.legacyCommandByte[2] = 0xF4;
         break;
       }
+
     case LEGACY_SOUND_BELL_ON:         //
       {
         m_legacyCommandRecord.legacyCommandByte[1] = (t_devNum * 2) + 1;  // Shift left one bit, add 1
         m_legacyCommandRecord.legacyCommandByte[2] = 0xF5;
         break;
       }
+
     case LEGACY_SOUND_BRAKE_SQUEAL:    // Only works when moving.  Short chirp.
       {
         m_legacyCommandRecord.legacyCommandByte[1] = (t_devNum * 2) + 1;  // Shift left one bit, add 1
         m_legacyCommandRecord.legacyCommandByte[2] = 0xF6;
         break;
       }
+
     case LEGACY_SOUND_AUGER:           // Steam only.
       {
         m_legacyCommandRecord.legacyCommandByte[1] = (t_devNum * 2) + 1;  // Shift left one bit, add 1
         m_legacyCommandRecord.legacyCommandByte[2] = 0xF7;
         break;
       }
+
     case LEGACY_SOUND_AIR_RELEASE:     // Can barely hear.  Not sure if it works on steam as well as diesel? **************
       {
         m_legacyCommandRecord.legacyCommandByte[1] = (t_devNum * 2) + 1;  // Shift left one bit, add 1
         m_legacyCommandRecord.legacyCommandByte[2] = 0xF8;
         break;
       }
+
     case LEGACY_SOUND_LONG_LETOFF:     // Diesel and (presumably) steam. Long hiss. *****************
       {
         m_legacyCommandRecord.legacyCommandByte[1] = (t_devNum * 2) + 1;  // Shift left one bit, add 1
@@ -648,7 +757,7 @@ Engineer::legacyCommandStruct Engineer::translateToLegacy(byte t_devNum, byte t_
         break;
       }
 
-    // Keep going, we'll handle all of the 9-byte Legacy commands now...
+    // Now handle all of the 9-byte Legacy commands now...
 
     case LEGACY_ACTION_SET_SMOKE:      // 0x7C FX Control Trigger requires parm 0x00..0x03 (Off/Low/Med/Hi)
       {
@@ -745,8 +854,18 @@ Engineer::legacyCommandStruct Engineer::translateToLegacy(byte t_devNum, byte t_
                                                                     m_legacyCommandRecord.legacyCommandByte[7]);
         break;
       }
+    default:
+      {
+        // If we fall thorough to here, we have an unsupported command type
+        sprintf(lcdString, "ENG'R LEG BAD CMD!"); pLCD2004->println(lcdString); Serial.println(lcdString);
+      }
   }  // End of "switch" which Legacy command are we decoding?
-  return m_legacyCommandRecord;
+
+  // Okay, we have populated m_legacyCommandRecord[] with the appropriate Legacy command; either 3, 6, or 9 bytes.
+  sprintf(lcdString, "LCMD %c %i %i", t_devType, t_devNum, t_devParm1); pLCD2004->println(lcdString); Serial.println(lcdString);
+  sprintf(lcdString, "%X %X %X", m_legacyCommandRecord.legacyCommandByte[0], m_legacyCommandRecord.legacyCommandByte[1],
+    m_legacyCommandRecord.legacyCommandByte[2]); pLCD2004->println(lcdString); Serial.println(lcdString);
+  return m_legacyCommandRecord;  // We're done with Legacy so exit this function
 }
 
 void Engineer::sendCommandToLegacyBase(legacyCommandStruct t_legacyCommand) {
@@ -757,6 +876,8 @@ void Engineer::sendCommandToLegacyBase(legacyCommandStruct t_legacyCommand) {
   Serial3.write(t_legacyCommand.legacyCommandByte[0]);    // Byte 1
   Serial3.write(t_legacyCommand.legacyCommandByte[1]);    // Byte 2
   Serial3.write(t_legacyCommand.legacyCommandByte[2]);    // Byte 3
+  sprintf(lcdString, "OUT: %X %X %X", t_legacyCommand.legacyCommandByte[0], t_legacyCommand.legacyCommandByte[1],
+    t_legacyCommand.legacyCommandByte[2]); pLCD2004->println(lcdString); Serial.println(lcdString);
   if (t_legacyCommand.legacyCommandByte[3] != 0) {        // We have at least six bytes to write
     Serial3.write(t_legacyCommand.legacyCommandByte[3]);  // Byte 4
     Serial3.write(t_legacyCommand.legacyCommandByte[4]);  // Byte 5
@@ -811,7 +932,7 @@ void Engineer::sendCommandToLegacyBase(legacyCommandStruct t_legacyCommand) {
 
 void Engineer::commandBufEnqueue(const legacyCommandStruct t_legacyCommand) {
   // Rev: 06/16/22.  Tested overflow 11/12/22 and it works.
-  // Insert a record at the head of the Legacy command buffer, then increment head and count.
+  // Insert a Legacy/TMCC hex record at the head of the Legacy command buffer, then increment head and count.
   // t_legacyCommand is a 9-byte struct to enqueue.  We have no knowledge of the meaning; it's just Legacy-language bytes.
   // If returns then it worked. If error such as buf overflow, that will be a fatal error; halt.
   if (!commandBufIsFull()) {
@@ -831,7 +952,7 @@ bool Engineer::commandBufDequeue(legacyCommandStruct* t_legacyCommand) {
   // If it's been at least 30ms since the last command was sent to the Legacy base, then see if there is a new command waiting in
   // the Legacy command circular buffer.  If so, grab it and put it in our pointed-to legacyCommandStruct variable t_legacyCommand.
   // We aren't sending any data to the Legacy base; we just return a 9-byte command via pointer if a command is ready to send.
-  // The data is just a 9-byte struct to dequeue.  We have no knowledge of the meaning; it's just Legacy-language bytes.
+  // The data is just a 9-byte hex struct to dequeue.  We have no knowledge of the meaning as it's Legacy/TMCC-language bytes.
   // Returns true if we were able to get a new command, else false (not fatal.)
   if ((millis() - m_legacyLastTransmit) < LEGACY_CMD_DELAY) {
     return false;  // If we transmitted less than 30ms ago, nothing to do even if something might be in the command buffer

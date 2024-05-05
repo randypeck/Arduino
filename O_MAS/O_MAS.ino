@@ -305,7 +305,7 @@ void loop() {
 
     }  // *** MANUAL MODE COMPLETE! ***
 
-    else if ((modeCurrent == MODE_REGISTER) && (stateCurrent == STATE_RUNNING)) {
+    if ((modeCurrent == MODE_REGISTER) && (stateCurrent == STATE_RUNNING)) {
 
       // Run in Register mode until complete.
       MASRegistrationMode();
@@ -313,19 +313,13 @@ void loop() {
 
     }  // *** REGISTER MODE COMPLETE! ***
 
-    else if (((modeCurrent == MODE_AUTO) || (modeCurrent == MODE_PARK)) && (stateCurrent == STATE_RUNNING)) {
+    if (((modeCurrent == MODE_AUTO) || (modeCurrent == MODE_PARK)) && (stateCurrent == STATE_RUNNING)) {
 
       // Run in Auto/Park mode until complete.
       MASAutoParkMode();
       // Now, modeCurrent == MODE_AUTO or MODE_PARK, and stateCurrent == STATE_STOPPED
 
     }  // *** AUTO/PARK MODE COMPLETE! ***
-
-    else {  // Yikes, we started some unexpected mode/state.  This is a bug.
-
-      sprintf(lcdString, "MODE ERROR!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
-
-    }
 
   }
 }  // End of Loop
@@ -377,7 +371,7 @@ void MASManualMode() {
       pTurnoutReservation->setLastOrientation(buttonNum, position);  // Set "last-known" orientation to 'N'ormal or 'R'everse
     }
 
-    else if (msgType == 'S') {  // Sensor status from SNS
+    if (msgType == 'S') {  // Sensor status from SNS
       // This will be the result of SNS independently wanting to send us a change that it detected; not a request from us.
       byte sensorNum = 0;  // Will be set to 1..52
       char trippedOrCleared = ' ';  // Will be set to T or C
@@ -386,7 +380,7 @@ void MASManualMode() {
       // Just receive the message.  Nothing to do here, but OCC will see the message and update the white occupancy LEDs.
     }
 
-    else if (msgType != ' ') {  // If it's not Button, Sensor, or blank, we have a bug!
+    if (msgType != ' ') {  // If it's not Button, Sensor, or blank, we have a bug!
       sprintf(lcdString, "MSG ERR! %c", msgType); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
     }
 
@@ -402,128 +396,8 @@ void MASManualMode() {
   }
   // Let everyone know what we are in Manual mode, Stopped...
   pMessage->sendMAStoALLModeState(modeCurrent, stateCurrent);  // Broadcast MODE (Manual) and STATE (Stopped.)
-
-}
-
-void getAllSensorStatuses() {
-  // Rev: 04-15-24.
-  // Get sensor status of every sensor so that OCC can illuminate every occupancy sensor LED appropriately:
-  for (byte sensorNum = 1; sensorNum <= TOTAL_SENSORS; sensorNum++) {  // For every sensor on the layout
-    // Get the sensor's current status: Tripped or Cleared.
-    // We (MAS) don't care about the result, but OCC will see the response and illuminate the White occupancy LEDs.
-    // First we transmit the request...
-    pMessage->sendMAStoSNSRequestSensor(sensorNum);
-    // Now wait for the reply message that will give us Tripped or Cleared for sensorNum...
-    while (pMessage->available() != 'S') {}  // Don't do anything until we have a Sensor message incoming from SNS
-    byte sensorSent = 0;
-    char trippedOrCleared = ' ';
-    // All modules that care, not just MAS, will see this sensor status message and use it as needed.
-    pMessage->getSNStoALLSensorStatus(&sensorSent, &trippedOrCleared);
-    if (sensorSent != (sensorNum)) {
-      sprintf(lcdString, "SNS %i %i NUM ERR", sensorSent, sensorNum); pLCD2004->println(lcdString); endWithFlashingLED(1);
-    }  // That's a bug!
-    if ((trippedOrCleared != SENSOR_STATUS_TRIPPED) && (trippedOrCleared != SENSOR_STATUS_CLEARED)) {
-      sprintf(lcdString, "SNS %i %c T|C ERR", sensorNum, trippedOrCleared); pLCD2004->println(lcdString); endWithFlashingLED(1);
-    }  // That's a bug!
-  }
   return;
-}
 
-void throwAllTurnoutsToDefault() {
-  // Rev: 04-15-24.
-  // Throw all turnouts to a known starting orientation, and update the Turnout Reservation file to reflect the current position.
-  // ESPECIALLY throw all single-ended siding turnouts to align with the mainline: 9R, 11R, 13R, 19N, 22R, 23N, 24N, 25N, and 26R.
-  // We could update Turnout Reservation Last-Known Orientation here, but I don't think we'll ever use this function as of 4/14/24.
-  pMessage->sendMAStoALLTurnout( 1, TURNOUT_DIR_NORMAL);
-  pTurnoutReservation->setLastOrientation( 1, TURNOUT_DIR_NORMAL);
-  delay(200);
-  pMessage->sendMAStoALLTurnout( 2, TURNOUT_DIR_NORMAL);
-  pTurnoutReservation->setLastOrientation( 2, TURNOUT_DIR_NORMAL);
-  delay(200);
-  pMessage->sendMAStoALLTurnout( 3, TURNOUT_DIR_NORMAL);
-  pTurnoutReservation->setLastOrientation( 3, TURNOUT_DIR_NORMAL);
-  delay(200);
-  pMessage->sendMAStoALLTurnout( 4, TURNOUT_DIR_NORMAL);
-  pTurnoutReservation->setLastOrientation( 4, TURNOUT_DIR_NORMAL);
-  delay(200);
-  pMessage->sendMAStoALLTurnout( 5, TURNOUT_DIR_NORMAL);
-  pTurnoutReservation->setLastOrientation( 5, TURNOUT_DIR_NORMAL);
-  delay(200);
-  pMessage->sendMAStoALLTurnout( 6, TURNOUT_DIR_NORMAL);
-  pTurnoutReservation->setLastOrientation( 6, TURNOUT_DIR_NORMAL);
-  delay(200);
-  pMessage->sendMAStoALLTurnout( 7, TURNOUT_DIR_NORMAL);
-  pTurnoutReservation->setLastOrientation( 7, TURNOUT_DIR_NORMAL);
-  delay(200);
-  pMessage->sendMAStoALLTurnout( 8, TURNOUT_DIR_NORMAL);
-  pTurnoutReservation->setLastOrientation( 8, TURNOUT_DIR_NORMAL);
-  delay(200);
-  pMessage->sendMAStoALLTurnout( 9, TURNOUT_DIR_REVERSE);           // SINGLE-ENDED SIDING!
-  pTurnoutReservation->setLastOrientation( 9, TURNOUT_DIR_REVERSE);
-  delay(200);
-  pMessage->sendMAStoALLTurnout(10, TURNOUT_DIR_NORMAL);
-  pTurnoutReservation->setLastOrientation(10, TURNOUT_DIR_NORMAL);
-  delay(200);
-  pMessage->sendMAStoALLTurnout(11, TURNOUT_DIR_REVERSE);           // SINGLE-ENDED SIDING!
-  pTurnoutReservation->setLastOrientation(11, TURNOUT_DIR_REVERSE);
-  delay(200);
-  pMessage->sendMAStoALLTurnout(12, TURNOUT_DIR_NORMAL);
-  pTurnoutReservation->setLastOrientation(12, TURNOUT_DIR_NORMAL);
-  delay(200);
-  pMessage->sendMAStoALLTurnout(13, TURNOUT_DIR_REVERSE);           // SINGLE-ENDED SIDING!
-  pTurnoutReservation->setLastOrientation(13, TURNOUT_DIR_REVERSE);
-  delay(200);
-  pMessage->sendMAStoALLTurnout(14, TURNOUT_DIR_NORMAL);
-  pTurnoutReservation->setLastOrientation(14, TURNOUT_DIR_NORMAL);
-  delay(200);
-  pMessage->sendMAStoALLTurnout(15, TURNOUT_DIR_NORMAL);
-  pTurnoutReservation->setLastOrientation(15, TURNOUT_DIR_NORMAL);
-  delay(200);
-  pMessage->sendMAStoALLTurnout(16, TURNOUT_DIR_NORMAL);
-  pTurnoutReservation->setLastOrientation(16, TURNOUT_DIR_NORMAL);
-  delay(200);
-  pMessage->sendMAStoALLTurnout(17, TURNOUT_DIR_NORMAL);
-  pTurnoutReservation->setLastOrientation(17, TURNOUT_DIR_NORMAL);
-  delay(200);
-  pMessage->sendMAStoALLTurnout(18, TURNOUT_DIR_NORMAL);
-  pTurnoutReservation->setLastOrientation(18, TURNOUT_DIR_NORMAL);
-  delay(200);
-  pMessage->sendMAStoALLTurnout(19, TURNOUT_DIR_NORMAL);            // SINGLE-ENDED SIDING!
-  pTurnoutReservation->setLastOrientation(19, TURNOUT_DIR_NORMAL);
-  delay(200);
-  pMessage->sendMAStoALLTurnout(20, TURNOUT_DIR_NORMAL);
-  pTurnoutReservation->setLastOrientation(20, TURNOUT_DIR_NORMAL);
-  delay(200);
-  pMessage->sendMAStoALLTurnout(21, TURNOUT_DIR_NORMAL);
-  pTurnoutReservation->setLastOrientation(21, TURNOUT_DIR_NORMAL);
-  delay(200);
-  pMessage->sendMAStoALLTurnout(22, TURNOUT_DIR_REVERSE);           // SINGLE-ENDED SIDING!
-  pTurnoutReservation->setLastOrientation(22, TURNOUT_DIR_REVERSE);
-  delay(200);
-  pMessage->sendMAStoALLTurnout(23, TURNOUT_DIR_NORMAL);            // SINGLE-ENDED SIDING!
-  pTurnoutReservation->setLastOrientation(23, TURNOUT_DIR_NORMAL);
-  delay(200);
-  pMessage->sendMAStoALLTurnout(24, TURNOUT_DIR_NORMAL);            // SINGLE-ENDED SIDING!
-  pTurnoutReservation->setLastOrientation(24, TURNOUT_DIR_NORMAL);
-  delay(200);
-  pMessage->sendMAStoALLTurnout(25, TURNOUT_DIR_NORMAL);            // SINGLE-ENDED SIDING!
-  pTurnoutReservation->setLastOrientation(25, TURNOUT_DIR_NORMAL);
-  delay(200);
-  pMessage->sendMAStoALLTurnout(26, TURNOUT_DIR_REVERSE);           // SINGLE-ENDED SIDING!
-  pTurnoutReservation->setLastOrientation(26, TURNOUT_DIR_REVERSE);
-  delay(200);
-  pMessage->sendMAStoALLTurnout(27, TURNOUT_DIR_NORMAL);
-  pTurnoutReservation->setLastOrientation(27, TURNOUT_DIR_NORMAL);
-  delay(200);
-  pMessage->sendMAStoALLTurnout(28, TURNOUT_DIR_NORMAL);
-  pTurnoutReservation->setLastOrientation(28, TURNOUT_DIR_NORMAL);
-  delay(200);
-  pMessage->sendMAStoALLTurnout(29, TURNOUT_DIR_NORMAL);
-  pTurnoutReservation->setLastOrientation(29, TURNOUT_DIR_NORMAL);
-  delay(200);
-  pMessage->sendMAStoALLTurnout(30, TURNOUT_DIR_NORMAL);
-  pTurnoutReservation->setLastOrientation(30, TURNOUT_DIR_NORMAL);
-  return;
 }
 
 // ********************************************************************************************************************************
@@ -579,7 +453,7 @@ void MASRegistrationMode() {
   pTrainProgress->begin(pBlockReservation, pRoute);  // Reset the Train Progress table to no trains anywhere
 
 
-delay(2000);  // just for testing
+delay(20000);  // just for testing
 
   // Since this mode is done, update stateCurrent to reflect that.  modeCurrent remains unchanged.
   pModeSelector->setStateToSTOPPED(modeCurrent, &stateCurrent);
@@ -731,9 +605,9 @@ void MASAutoParkMode() {
 
 */
 
-// *****************************************************************************************
-// ************************ F U N C T I O N   D E F I N I T I O N S ************************
-// *****************************************************************************************
+// ********************************************************************************************************************************
+// ********************************************************************************************************************************
+// ********************************************************************************************************************************
 
 void checkForTurnout17Problem() {
   // Rev: 03/24/23.
@@ -764,6 +638,127 @@ void reserveSecondLevelBlocks() {
   }
 }
 
+
+void getAllSensorStatuses() {
+  // Rev: 04-15-24.
+  // Get sensor status of every sensor so that OCC can illuminate every occupancy sensor LED appropriately:
+  for (byte sensorNum = 1; sensorNum <= TOTAL_SENSORS; sensorNum++) {  // For every sensor on the layout
+    // Get the sensor's current status: Tripped or Cleared.
+    // We (MAS) don't care about the result, but OCC will see the response and illuminate the White occupancy LEDs.
+    // First we transmit the request...
+    pMessage->sendMAStoSNSRequestSensor(sensorNum);
+    // Now wait for the reply message that will give us Tripped or Cleared for sensorNum...
+    while (pMessage->available() != 'S') {}  // Don't do anything until we have a Sensor message incoming from SNS
+    byte sensorSent = 0;
+    char trippedOrCleared = ' ';
+    // All modules that care, not just MAS, will see this sensor status message and use it as needed.
+    pMessage->getSNStoALLSensorStatus(&sensorSent, &trippedOrCleared);
+    if (sensorSent != (sensorNum)) {
+      sprintf(lcdString, "SNS %i %i NUM ERR", sensorSent, sensorNum); pLCD2004->println(lcdString); endWithFlashingLED(1);
+    }  // That's a bug!
+    if ((trippedOrCleared != SENSOR_STATUS_TRIPPED) && (trippedOrCleared != SENSOR_STATUS_CLEARED)) {
+      sprintf(lcdString, "SNS %i %c T|C ERR", sensorNum, trippedOrCleared); pLCD2004->println(lcdString); endWithFlashingLED(1);
+    }  // That's a bug!
+  }
+  return;
+}
+
+void throwAllTurnoutsToDefault() {
+  // Rev: 04-15-24.
+  // Throw all turnouts to a known starting orientation, and update the Turnout Reservation file to reflect the current position.
+  // ESPECIALLY throw all single-ended siding turnouts to align with the mainline: 9R, 11R, 13R, 19N, 22R, 23N, 24N, 25N, and 26R.
+  // We could update Turnout Reservation Last-Known Orientation here, but I don't think we'll ever use this function as of 4/14/24.
+  pMessage->sendMAStoALLTurnout(1, TURNOUT_DIR_NORMAL);
+  pTurnoutReservation->setLastOrientation(1, TURNOUT_DIR_NORMAL);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(2, TURNOUT_DIR_NORMAL);
+  pTurnoutReservation->setLastOrientation(2, TURNOUT_DIR_NORMAL);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(3, TURNOUT_DIR_NORMAL);
+  pTurnoutReservation->setLastOrientation(3, TURNOUT_DIR_NORMAL);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(4, TURNOUT_DIR_NORMAL);
+  pTurnoutReservation->setLastOrientation(4, TURNOUT_DIR_NORMAL);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(5, TURNOUT_DIR_NORMAL);
+  pTurnoutReservation->setLastOrientation(5, TURNOUT_DIR_NORMAL);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(6, TURNOUT_DIR_NORMAL);
+  pTurnoutReservation->setLastOrientation(6, TURNOUT_DIR_NORMAL);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(7, TURNOUT_DIR_NORMAL);
+  pTurnoutReservation->setLastOrientation(7, TURNOUT_DIR_NORMAL);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(8, TURNOUT_DIR_NORMAL);
+  pTurnoutReservation->setLastOrientation(8, TURNOUT_DIR_NORMAL);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(9, TURNOUT_DIR_REVERSE);           // SINGLE-ENDED SIDING!
+  pTurnoutReservation->setLastOrientation(9, TURNOUT_DIR_REVERSE);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(10, TURNOUT_DIR_NORMAL);
+  pTurnoutReservation->setLastOrientation(10, TURNOUT_DIR_NORMAL);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(11, TURNOUT_DIR_REVERSE);           // SINGLE-ENDED SIDING!
+  pTurnoutReservation->setLastOrientation(11, TURNOUT_DIR_REVERSE);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(12, TURNOUT_DIR_NORMAL);
+  pTurnoutReservation->setLastOrientation(12, TURNOUT_DIR_NORMAL);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(13, TURNOUT_DIR_REVERSE);           // SINGLE-ENDED SIDING!
+  pTurnoutReservation->setLastOrientation(13, TURNOUT_DIR_REVERSE);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(14, TURNOUT_DIR_NORMAL);
+  pTurnoutReservation->setLastOrientation(14, TURNOUT_DIR_NORMAL);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(15, TURNOUT_DIR_NORMAL);
+  pTurnoutReservation->setLastOrientation(15, TURNOUT_DIR_NORMAL);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(16, TURNOUT_DIR_NORMAL);
+  pTurnoutReservation->setLastOrientation(16, TURNOUT_DIR_NORMAL);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(17, TURNOUT_DIR_NORMAL);
+  pTurnoutReservation->setLastOrientation(17, TURNOUT_DIR_NORMAL);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(18, TURNOUT_DIR_NORMAL);
+  pTurnoutReservation->setLastOrientation(18, TURNOUT_DIR_NORMAL);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(19, TURNOUT_DIR_NORMAL);            // SINGLE-ENDED SIDING!
+  pTurnoutReservation->setLastOrientation(19, TURNOUT_DIR_NORMAL);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(20, TURNOUT_DIR_NORMAL);
+  pTurnoutReservation->setLastOrientation(20, TURNOUT_DIR_NORMAL);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(21, TURNOUT_DIR_NORMAL);
+  pTurnoutReservation->setLastOrientation(21, TURNOUT_DIR_NORMAL);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(22, TURNOUT_DIR_REVERSE);           // SINGLE-ENDED SIDING!
+  pTurnoutReservation->setLastOrientation(22, TURNOUT_DIR_REVERSE);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(23, TURNOUT_DIR_NORMAL);            // SINGLE-ENDED SIDING!
+  pTurnoutReservation->setLastOrientation(23, TURNOUT_DIR_NORMAL);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(24, TURNOUT_DIR_NORMAL);            // SINGLE-ENDED SIDING!
+  pTurnoutReservation->setLastOrientation(24, TURNOUT_DIR_NORMAL);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(25, TURNOUT_DIR_NORMAL);            // SINGLE-ENDED SIDING!
+  pTurnoutReservation->setLastOrientation(25, TURNOUT_DIR_NORMAL);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(26, TURNOUT_DIR_REVERSE);           // SINGLE-ENDED SIDING!
+  pTurnoutReservation->setLastOrientation(26, TURNOUT_DIR_REVERSE);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(27, TURNOUT_DIR_NORMAL);
+  pTurnoutReservation->setLastOrientation(27, TURNOUT_DIR_NORMAL);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(28, TURNOUT_DIR_NORMAL);
+  pTurnoutReservation->setLastOrientation(28, TURNOUT_DIR_NORMAL);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(29, TURNOUT_DIR_NORMAL);
+  pTurnoutReservation->setLastOrientation(29, TURNOUT_DIR_NORMAL);
+  delay(200);
+  pMessage->sendMAStoALLTurnout(30, TURNOUT_DIR_NORMAL);
+  pTurnoutReservation->setLastOrientation(30, TURNOUT_DIR_NORMAL);
+  return;
+}
 
 /*
 

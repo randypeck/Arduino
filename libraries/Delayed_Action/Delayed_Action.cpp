@@ -628,10 +628,8 @@ void Delayed_Action::populateDelayedAction(const unsigned long t_startTime, cons
   // I could also have done this in Loco_Reference but I'd rather keep it isolated as much as possible.  Another option would have
   // been to number them within our 1..50 legitimate locoNums.
   if ((t_devNum >= LOCO_ID_POWERMASTER_1) && (t_devNum <= LOCO_ID_POWERMASTER_4)) {
-    m_DelayedActionRecord.deviceType = DEV_TYPE_TMCC_ENGINE;  // Hard code PowerMasters as 'N' TMCC Engines
-sprintf(lcdString, "Powermaster"); pLCD2004->println(lcdString); // ********************************************************************************************
+    m_DelayedActionRecord.deviceType = DEV_TYPE_LEGACY_ENGINE;  // Hard code PowerMasters as 'E' Legacy Engines
   } else {
-sprintf(lcdString, "NOT Powermaster"); pLCD2004->println(lcdString); // ********************************************************************************************
     m_DelayedActionRecord.deviceType = m_pLoco->devType(t_devNum);  // Look up the loco's type in Loco Reference i.e. E|T|N|R
   }
   m_DelayedActionRecord.deviceNum = t_devNum;

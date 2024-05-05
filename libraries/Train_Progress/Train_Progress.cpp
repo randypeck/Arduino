@@ -1,4 +1,4 @@
-// TRAIN_PROGRESS.CPP Rev: 04/11/24.  SOME UTILITY FUNCTIONS WORKING SO FAR BUT NOT TESTED ****************************************************************************************
+// TRAIN_PROGRESS.CPP Rev: 05/04/24.  SOME UTILITY FUNCTIONS WORKING SO FAR BUT NOT TESTED ****************************************************************************************
 // Part of O_MAS, O_OCC, and O_LEG.
 // IMPORTANT: This class expects t_locoNum to always be passed and returned 1..50, but corresponding Train Progress class array
 // elements are internally stored in array elements 0..49.
@@ -855,7 +855,8 @@ void Train_Progress::checkIfTrainProgressFull(const byte t_locoNum) {  // Check 
 // TMCC speeds = 0..31
 
 bool Train_Progress::outOfRangeLocoNum(byte t_locoNum) {  // 1..50, disallow LOCO_ID_NULL (0) or LOCO_ID_STATIC (99)
-  if ((t_locoNum < 1) || (t_locoNum > TOTAL_TRAINS)) {    // 1..50
+  if (((t_locoNum < 1) || (t_locoNum > TOTAL_TRAINS)) &&
+      ((t_locoNum < LOCO_ID_POWERMASTER_1) || (t_locoNum > LOCO_ID_POWERMASTER_4))) {    // 1..50 or 91..94
     return true;  // true means it's out of range
   }
   else {
