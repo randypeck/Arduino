@@ -54,12 +54,12 @@ void Engineer::begin(Loco_Reference* t_pLoco, Train_Progress* t_pTrainProgress, 
   if ((m_pLoco == nullptr) || (m_pTrainProgress == nullptr) || (m_pDelayedAction == nullptr)) {
     sprintf(lcdString, "UN-INIT'd ER PTR"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(5);
   }
-  legacyCommandBufInit();  // Initialize all LEGACY_CMD_HEAP_RECS records of the Legacy command buffer
-  accessoryRelayInit();    // Release all accessory relays here in begin().
+  initLegacyCommandBuf();  // Initialize all LEGACY_CMD_HEAP_RECS records of the Legacy command buffer
+  initAccessoryRelays();    // Release all accessory relays here in begin().
   return;
 }
 
-void Engineer::legacyCommandBufInit() {  // Size will be LEGACY_CMD_HEAP_RECS
+void Engineer::initLegacyCommandBuf() {  // Size will be LEGACY_CMD_HEAP_RECS
   // Rev: 06/16/22.  Done but not tested.
   // (Re)init the whole m_pLegacyCommandBuf[] array.
   // Public because LEG will need to call this whenever Registration mode (re)starts.
@@ -78,7 +78,7 @@ void Engineer::legacyCommandBufInit() {  // Size will be LEGACY_CMD_HEAP_RECS
   sprintf(lcdString, "ENG LEG BUF INIT'D"); pLCD2004->println(lcdString); Serial.println(lcdString);
 }
 
-void Engineer::accessoryRelayInit() {
+void Engineer::initAccessoryRelays() {
   // Rev: 02/17/23.  DONE BUT NOT TESTED.
   // Turn off all accessory relays.
   // Public because LEG will need to call this whenever Registration mode (re)starts.
@@ -125,7 +125,7 @@ void Engineer::getDelayedActionCommand() {
   byte m_devParm1 = 0;
   byte m_devParm2 = 0;
 
-  // Try to get a Delayed Action record...
+  // Try to get a Delayed Action record...(will return the oldest ripe record, if any exist.)
   if (!m_pDelayedAction->getAction(&m_devType, &m_devNum, &m_devCommand, &m_devParm1, &m_devParm2)) {
     return;  // If NOT found, returns false to indicate there wasn't a ripe record and thus nothing to do.
   }

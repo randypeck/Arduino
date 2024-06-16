@@ -55,11 +55,11 @@ class Engineer {
     // One of the few classes where we don't pass the "FRAM* t_pStorage" parm or maintain the "FRAM* m_pStorage" local variable, as
     // this class doesn't need any access to FRAM (at least not as of this writing.)
     
-    void legacyCommandBufInit();  // Always LEGACY_CMD_HEAP_RECS elements
+    void initLegacyCommandBuf();  // Always LEGACY_CMD_HEAP_RECS elements
     // (Re)init the whole m_pLegacyCommandBuf[] array.
     // Must be called whenever Registration mode (re)starts.
 
-    void accessoryRelayInit();
+    void initAccessoryRelays();
     // Turn off all accessory relays.
     // Must be called whenever Registration mode (re)starts.
 

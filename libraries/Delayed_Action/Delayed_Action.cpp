@@ -38,7 +38,7 @@ void Delayed_Action::begin(Loco_Reference* t_pLoco, Train_Progress* t_pTrainProg
   if ((m_pLoco == nullptr) || (m_pTrainProgress == nullptr)) {
     sprintf(lcdString, "UN-INIT'd DA PTR"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(5);
   }
-  initialize();                          // Clear the entire Delayed Access table for a fresh start.
+  initDelayedActionTable();                          // Clear the entire Delayed Access table for a fresh start.
   return;
 }
 
@@ -46,7 +46,7 @@ void Delayed_Action::begin(Loco_Reference* t_pLoco, Train_Progress* t_pTrainProg
 // ***** HERE ARE FUNCTIONS THAT LEG CONDUCTOR IS GOING TO WANT ACCESS TO (Typically, WRITING COMMAND RECORDS) *****
 // *****************************************************************************************************************
 
-void Delayed_Action::initialize() {  // Size will always be HEAP_RECS_DELAYED_ACTION records
+void Delayed_Action::initDelayedActionTable() {  // Size will always be HEAP_RECS_DELAYED_ACTION records
   // Rev: 06/09/22.
   // Whenever Registration (re)starts, we must re-initialize the whole Delayed Access table.
   m_TopActiveRec = -1;  // Highest record used so far in Delayed Action table/array, so we don't search all 1000 recs every scan.
@@ -66,8 +66,8 @@ void Delayed_Action::initialize() {  // Size will always be HEAP_RECS_DELAYED_AC
 void Delayed_Action::populateLocoCommand(const unsigned long t_startTime, const byte t_devNum, const byte t_devCommand,
                                          const byte t_devParm1, const byte t_devParm2) {
   // Rev: 05/03/24.
-  // populateLocoCommand() adds just about any of the DISCRETE, LOCO commands, such as LEGACY_ACTION_STARTUP_SLOW,
-  // LEGACY_ACTION_REVERSE, LEGACY_ACTION_ABS_SPEED, LEGACY_SOUND_BELL_ON and LEGACY_DIALOGUE.
+  // populateLocoCommand() adds just about any of the DISCRETE, LOCO commands to Delayed Action,
+  // such as LEGACY_ACTION_STARTUP_SLOW, LEGACY_ACTION_REVERSE, LEGACY_ACTION_ABS_SPEED, LEGACY_SOUND_BELL_ON and LEGACY_DIALOGUE.
   // Some commands, such as LEGACY_DIALOGUE, require parm1 such as LEGACY_DIALOGUE_E2T_ARRIVING.
   // ALL DEVICES INCLUDING ACCESSORIES START AT 1, not 0.
   // Speed changes and whistle/horn sequences are handled by other functions.
@@ -128,6 +128,7 @@ void Delayed_Action::populateAccessoryCommand(const unsigned long t_startTime, c
                                               const byte t_devParm1, const byte t_devParm2) {
   // Rev: 02/15/23.  NOT TESTED *******************************************************************************************************************
   // populateAccessoryCommand() adds just about any of the accessory or PA etc. commands i.e. PA_SYSTEM_ANNOUNCE (plus parm.)
+  // We have a separate call from populateLocoCommand() just so we don't have to pass a parm if it's a Loco vs Accessory command.
   // ALL DEVICES INCLUDING ACCESSORIES START AT 1, not 0.
   m_DelayedActionRecord.status = 'A';  // Active
   m_DelayedActionRecord.timeToExecute = t_startTime;
@@ -153,7 +154,6 @@ void Delayed_Action::populateLocoSpeedChange(const unsigned long t_startTime, co
   // 2. Call Delayed_Action::wipeLocoSpeedCommands() to ensure there are no residual speed commands in Delayed Action.
   // When slowing Crawl, caller should add a delay so loco will ideally reach Crawl just at the moment it trips the Stop sensor,
   // and we could also update "expectedStopTime" so we can compare it to the time we actually trip the Crawl sensor.
-
 
   // First, let's get our current speed, which we'll use as our starting speed...
   byte t_startSpeed = m_pTrainProgress->currentSpeed(t_devNum);
@@ -439,6 +439,7 @@ unsigned long Delayed_Action::speedChangeTime(const byte t_startSpeed, const byt
 
 bool Delayed_Action::getAction(char* t_devType, byte* t_devNum, byte* t_devCommand, byte* t_devParm1, byte* t_devParm2) {
   // Rev: 06/09/22.
+  // Called ONLY by PRIVATE Engineer::getDelayedActionCommand().
   // getAction returns false if no ripe records in Delayed Action; else returns true and populates all five parameter
   // fields that are passed as pointers.
   // A returned ripe record will automatically be Expired when it is returned by this function.
@@ -616,8 +617,8 @@ Serial.println("---------------------------");
 void Delayed_Action::populateDelayedAction(const unsigned long t_startTime, const byte t_devNum, const byte t_devCommand,
                                            const byte t_devParm1, const byte t_devParm2) {
   // Rev: 02/20/23.
-  // populateDelayedAction() PRIVATELY adds just about any of the *discrete* LOCO commands, such as LEGACY_ACTION_STARTUP_SLOW,
-  // LEGACY_ACTION_REVERSE, LEGACY_ACTION_ABS_SPEED, LEGACY_SOUND_BELL_ON and LEGACY_DIALOGUE.
+  // populateDelayedAction() PRIVATELY adds just about any SINGLE/DISCRETE LOCO command to Delayed Action, such as
+  // LEGACY_ACTION_STARTUP_SLOW, LEGACY_ACTION_REVERSE, LEGACY_ACTION_ABS_SPEED, LEGACY_SOUND_BELL_ON and LEGACY_DIALOGUE.
   // Some commands, such as LEGACY_DIALOGUE, require parm1 such as LEGACY_DIALOGUE_E2T_ARRIVING.
   // There is no error checking and no calling wipeLocoSpeedCommands() -- that must be done by the calling function.
   // ALL DEVICES INCLUDING ACCESSORIES START AT 1, not 0.

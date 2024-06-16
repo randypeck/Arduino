@@ -234,7 +234,7 @@ void setup() {
   pEngineer = new Engineer;  // C++ quirk: no parens in ctor call if no parms; else thinks it's fn decl'n.
   pEngineer->begin(pLoco, pTrainProgress, pDelayedAction);
 
-  // *** INITIALIZE CONDUCTOR CLASS AND OBJECT ***
+  // *** INITIALIZE CONDUCTOR CLASS AND OBJECT ***  We may not need this class; may handle it in the main LEG loop... **************************************
   // CONDUCTOR MUST BE INSTANTIATED *AFTER* BLOCK RES'N, LOCO REF, ROUTE REF, TRAIN PROGRESS, DELAYED ACTION, AND ENGINEER.
   pConductor = new Conductor;  // C++ quirk: no parens in ctor call if no parms; else thinks it's fn decl'n.
   pConductor->begin(pStorage, pBlockReservation, pDelayedAction, pEngineer);
@@ -248,10 +248,10 @@ void setup() {
 void loop() {
 
   haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, release relays and just stop
-  // IMPORTANT: If a control panel track power switch is held, this function delays until 20ms after it is released,
+  // IMPORTANT: If a control panel track power switch is held, this function delays until 40ms after it is released,
   // so if the operator holds a power switch on while a train is moving and/or there are commands in Delayed Action,
   // no events will be seen while switch is held and sensor trips/releases may be missed.  For this reason, it's best
-  // to only check for PowerMaster switches when RUNNING in MANUAL mode, or better yet when NOT in any mode.
+  // to only check for PowerMaster switches when NOT in any mode (i.e. stopped state.)
   checkIfPowerMasterOnOffPressed();  // Turn track power on or off if operator is holding a track-power switch.
   pEngineer->executeConductorCommand();  // Run oldest ripe command in Legacy command buffer, if possible.
 
@@ -358,6 +358,7 @@ void LEGManualMode() {
   // We will only enter this block if we just entered MANUAL RUNNING.
   // When starting MANUAL mode, MAS/SNS will ALWAYS immediately send status of every sensor.
   // Standby and recieve a Sensor Status from every sensor.  No need to clear first as we'll get them all.
+  // We don't care about sensors in LEG Manual mode, so we disregard them.
   for (int i = 1; i <= TOTAL_SENSORS; i++) {
     // Wait for a Sensor message (there better not be any other type that comes in)...
     while (pMessage->available() != 'S') {}  // Do nothing until we have a new message
@@ -367,7 +368,7 @@ void LEGManualMode() {
     }
   }
 
-  // Okay, we've received all TOTAL_SENSORS sensor status updates
+  // Okay, we've received all TOTAL_SENSORS sensor status updates (and disregarded them.)
   // Now operate in Manual until mode stopped.
   // Just watch the Emergency Stop (halt) line, and monitor for messages:
   // * Sensor updates, though nothing to do with them in Manual mode.
@@ -376,8 +377,8 @@ void LEGManualMode() {
 
     haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, release relays and just stop
 
-    msgType = pMessage->available();  // Could be ' ', 'S', or 'M'
-    if (msgType == 'S') {  // Got a sensor message in Manual mode; update the WHITE LEDs
+    msgType = pMessage->available();  // Could legitimately only be 'S', or 'M'
+    if (msgType == 'S') {  // Got a sensor message in Manual mode; nothing to do though.
       pMessage->getSNStoALLSensorStatus(&sensorNum, &trippedOrCleared);
       if (trippedOrCleared == SENSOR_STATUS_TRIPPED) {
         sprintf(lcdString, "Sensor %2d Tripped.", sensorNum); pLCD2004->println(lcdString); Serial.println(lcdString);
@@ -390,8 +391,8 @@ void LEGManualMode() {
         sprintf(lcdString, "MAN MODE UPDT ERR!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
       }
       // Okay they want to stop Manual mode.
-    } else if (msgType != ' ') {
-      // WE HAVE A BIG PROBLEM with an unexpected message type at this point
+    } else if (msgType != ' ') {  // Remember, pMessage->available() returns ' ' if there is no message.
+      // WE HAVE A BIG PROBLEM with an unexpected message type at this point (not S, M, or blank.)
       sprintf(lcdString, "MAN MODE MSG ERR!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
     }
   } while (stateCurrent != STATE_STOPPED);  // We'll just assume mode is still Manual
@@ -428,16 +429,26 @@ void LEGAutoParkMode() {
 // ********************************************************************************************************************************
 
 void checkIfPowerMasterOnOffPressed() {
-  // Rev: 03/09/23.  Based on old code from A-LEG.  Complete but needs to be tested ***********************************************
+  // Rev: 05/13/24.
   // When operator holds one of the four PowerMaster toggle switches in either the on or off position, create a Delayed Action
   // command to be executed as soon as possible.  This function handles debounce for both press and release, and pauses until the
   // operator has released the switch.
   // Although we insert a new Delayed Action record ready for immediate execution, WE DO NOT EXECUTE THE COMMAND.  Instead, the
   // caller must do the usual Engineer::executeConductorCommand() to retrieve the Delayed Action record and send it on to the
   // Legacy Command Buffer / Legacy base.
+  // May 2024 we had some problems with the PowerMaster toggles reading as on or off the first time they were read, but then worked
+  // fine after that and I can't recall what changed.  But this MAY have been related to the fact that I changed the PowerMaster
+  // toggle switch input pins from digital inputs to analog inputs, and perhaps I was not configuring them as digital pins
+  // correctly or in the proper order.
+  // If this recurs, a possible solution per ChatGPT: "Performing an initial pin read in the setup() function and discarding the
+  // result can help stabilize an input pin. This action essentially "settles" the pin's state, allowing any initial noise to
+  // dissipate before your program starts its regular operation. After this initialization step, subsequent reads should be more
+  // reliable, as the pin's state is less likely to be influenced by transient noise. This approach is commonly used to ensure
+  // consistent behavior in digital input applications."
+  // Another possible fix would be to insert a 1ms delay between reading pins.
 
   const byte POWERMASTER_OFF = 0;  // Turn PowerMaster #n OFF with Legacy Engine # Absolute Speed 0.
-  const byte POWERMASTER_ON = 1;  // Turn PowerMaster #n ON  with Legacy Engine # Absolute Speed 1.
+  const byte POWERMASTER_ON  = 1;  // Turn PowerMaster #n ON  with Legacy Engine # Absolute Speed 1.
 
   // Check the four control panel "PowerMaster" on/off switches and turn power on or off as needed via Legacy commands.
   // Note that the four power LEDs are driven directly by track power, so no need to turn them on or off in code.
@@ -495,7 +506,6 @@ void checkIfPowerMasterOnOffPressed() {
     pDelayedAction->populateLocoCommand(millis(), LOCO_ID_POWERMASTER_4, LEGACY_ACTION_ABS_SPEED, POWERMASTER_OFF, 0);
     delay(20);  // wait for press debounce
     while (digitalRead(PIN_IN_PANEL_4_OFF) == LOW) {}   // Pause everything while held
-    delay(20);  // wait for release debounce
     delay(20);  // wait for release debounce
   }
   return;

@@ -18,12 +18,12 @@
 //   automatically begins the next speed change starting at the speed the loco is actually going, not what we think/hope it should
 //   have been going.  But it will be useful to get some data so we can make the appropriate adjustment(s) to the route.
 // * When changing from any speed to Crawl, via populateLocoSlowToStop(), this can happen fairly frequently because we're trying to
-//   achieve Crawl speed at the exact moment we trip the Stop sensor.  So 50% of the time we'll probably undershoot the sensor a
-//   bit (in which case we will have reached our target speed in time) but 50% of the time we may overshoot it (i.e. we will NOT
-//   have reached our target speed quickly enough) but only by a small margin of error.  Again, no big deal as our starting speed
-//   will automatically be set to whatever speed the loco is actually going, and we can stop from pretty much any speed in the
-//   three seconds this function allows the loco to stop.  But it will be useful to get some data so we can make appropriate
-//   adjustments to the loco's deceleration parameters and/or the route (maybe trip Crawl sensor at a lower speed.)
+//   achieve Crawl speed at the exact moment we trip the Stop sensor.  So 50% of the time we'll probably undershoot the Stop sensor
+//   a bit (in which case we will have reached Crawl speed in time) but 50% of the time we may overshoot it (i.e. we will NOT
+//   have reached Crawl speed quickly enough) but only by a small margin of error.  Again, no big deal as our starting speed via
+//   populateLocoSlowToStop() will automatically begin at whatever speed the loco is actually going, and we can stop from pretty
+//   much any speed in the 3 seconds this function allows the loco to stop.  But it will be useful to get some data so we can make
+//   appropriate adjustments to the loco's deceleration parameters and/or the route (maybe trip Crawl sensor at a lower speed.)
 
 // Conductor won't populate Delayed Action table with the next slew of records until a loco trips each sensor; not all at once for
 // an entire Train Progress route, because Delayed Action records are tripped by TIME, which we won't know until we trip a SENSOR.
@@ -115,7 +115,7 @@ class Delayed_Action {
     // ***** HERE ARE FUNCTIONS THAT LEG CONDUCTOR IS GOING TO WANT ACCESS TO *****
     // ****************************************************************************
 
-    void initialize();  // Will always have HEAP_RECS_DELAYED_ACTION records
+    void initDelayedActionTable();  // Will always have HEAP_RECS_DELAYED_ACTION records
     // Init Delayed Action to empty; set all records to 'E'xpired.
     // Whenever Registration (re)starts, we must re-initialize the whole Delayed Access table.
 

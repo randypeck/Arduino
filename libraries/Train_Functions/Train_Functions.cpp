@@ -1,5 +1,6 @@
-// TRAIN_FUNCTIONS.CPP Rev: 04/15/24.
+// TRAIN_FUNCTIONS.CPP Rev: 05/23/24.
 // Declares and defines several functions that are global to all (or nearly all) Arduino modules.
+// 05/23/24: Always digitalWrite(pin, LOW) before pinMode(pin, OUTPUT) else will write high briefly.
 // 04/15/24: Increased the False Halt delay from 1ms to 5ms; was getting too many false halts when pressing turnout buttons.
 // 06/30/22: Removed pinMode and digitalWrite for FRAM; we'll do that in Hackscribble_Ferro class.
 
@@ -9,7 +10,7 @@ void initializePinIO() {
 
   // First we'll set up pins that are appropriate for all modules.
   digitalWrite(PIN_IO_HALT, HIGH);      // Monitor if gets pulled LOW it means someone tripped HALT.
-  pinMode(PIN_IO_HALT, INPUT_PULLUP);   // Or change to output and pull low to trigger HALT from here.
+  pinMode(PIN_IO_HALT, INPUT_PULLUP);   // Or change pinMode to OUTPUT and pull low to trigger HALT from here.
   digitalWrite(PIN_OUT_SPEAKER, HIGH);  // Piezo buzzer connects positive here
   pinMode(PIN_OUT_SPEAKER, OUTPUT);
   digitalWrite(PIN_OUT_LED, LOW);       // Built-in LED LOW=off
@@ -86,6 +87,8 @@ void initializePinIO() {
 
 void initializeQuadRAM() {
   // *** QUADRAM EXTERNAL SRAM MODULE ***
+  // 05/24/24: Changed four pinMode/digitalWrite commands to write LOW *before* setting pinMode; i.e. reversed order of commands.
+  //           This is because if you set pinMode(pin, OUTPUT) before digitalWrite(pin, LOW), you'll output an active high briefly.
   // Currently used as heap memory, only on MAS, OCC, and LEG, to free up some SRAM space.
   // QuadRAM: Enable external memory with no wait states.  https://www.rugged-circuits.com/quadram-tech
   // When external RAM is enabled, pins PA0-PA7 (digital pins D22 through D29), PC0-PC7 (digital pins D30 through D37),
@@ -107,13 +110,13 @@ void initializeQuadRAM() {
   XMCRB = 0;
   // QuadRAM requires four pinMode() and digitalWrite() statements.
   // QuadRAM has to be enabled by setting PD7 (Arduino digital pin D38) low:
-  pinMode(PIN_OUT_XMEM_ENABLE, OUTPUT); digitalWrite(PIN_OUT_XMEM_ENABLE, LOW);  // PIN_OUT_XMEM_ENABLE = 38
+  digitalWrite(PIN_OUT_XMEM_ENABLE, LOW); pinMode(PIN_OUT_XMEM_ENABLE, OUTPUT);  // PIN_OUT_XMEM_ENABLE = 38
   // QuadRAM: Enable bank select outputs and select bank 0. Don't need multiple banks in this app.
   // Pins PL5 through PL7 (digital pins D44 through D42) are used to select between eight 64 kilobyte RAM banks, which together
   // form the 512 kilobyte external RAM.
-  pinMode(PIN_OUT_XMEM_BANK_BIT_0, OUTPUT); digitalWrite(PIN_OUT_XMEM_BANK_BIT_0, LOW);  // PIN_OUT_XMEM_BANK_BIT_0 = 42 (PL7 or D42)
-  pinMode(PIN_OUT_XMEM_BANK_BIT_1, OUTPUT); digitalWrite(PIN_OUT_XMEM_BANK_BIT_1, LOW);  // PIN_OUT_XMEM_BANK_BIT_1 = 43 (PL6 or D43)
-  pinMode(PIN_OUT_XMEM_BANK_BIT_2, OUTPUT); digitalWrite(PIN_OUT_XMEM_BANK_BIT_2, LOW);  // PIN_OUT_XMEM_BANK_BIT_2 = 44 (PL5 or D44)
+  digitalWrite(PIN_OUT_XMEM_BANK_BIT_0, LOW); pinMode(PIN_OUT_XMEM_BANK_BIT_0, OUTPUT);  // PIN_OUT_XMEM_BANK_BIT_0 = 42 (PL7 or D42)
+  digitalWrite(PIN_OUT_XMEM_BANK_BIT_1, LOW); pinMode(PIN_OUT_XMEM_BANK_BIT_1, OUTPUT);  // PIN_OUT_XMEM_BANK_BIT_1 = 43 (PL6 or D43)
+  digitalWrite(PIN_OUT_XMEM_BANK_BIT_2, LOW); pinMode(PIN_OUT_XMEM_BANK_BIT_2, OUTPUT);  // PIN_OUT_XMEM_BANK_BIT_2 = 44 (PL5 or D44)
   // QuadRAM: Relocate the heap to external SRAM.
   // This is not required, but frees more of the 8K SRAM so definitely do this.
   __malloc_heap_start =  (char *) ( XMEM_START );   // Reallocate start of heap area = 0x2200 = dec 8,704.
@@ -127,9 +130,8 @@ void haltIfHaltPinPulledLow() {
   // but EMF double spike causes rare false trips.  So we upped from 50 microseconds to 1 ms (and 4/15/24 to 5ms.)
   // 04/16/24: Still getting false halts occasionally at 5ms delay when pressing turnout buttons in Manual mode.
   if (digitalRead(PIN_IO_HALT) == LOW) {    // See if it lasts a while
-    delay(10);  // Pause to let a spike resolve.  Increased from 1ms to 5ms on 4/15/24, then 10ms on 4/16/24.
-    // Note: We tried delay of 50 microseconds, but there was occasional false trip, so upped to 1ms.
-    if (digitalRead(PIN_IO_HALT) == LOW) {  // If still low, we have a legit Halt, not a neg voltage spike
+    delay(10);  // Pause to let a spike resolve.  Had to increase from 5us ultimately to 10ms due to too many false halts.
+    if (digitalRead(PIN_IO_HALT) == LOW) {  // If still low, we have a legit Halt, not a transient voltage spike
       if (THIS_MODULE == ARDUINO_LEG) {     // LEG requires some extra logic:
         pShiftRegister->initializePinsForOutput();  // LEG: Release all relay coils that might be holding accessories on
         requestLegacyHalt();
@@ -176,12 +178,13 @@ void endWithFlashingLED(int t_numFlashes) {  // Works for all modules, including
 }
 
 void requestEmergencyStop() {
-  // Rev 10/05/16
-  pinMode(PIN_IO_HALT, OUTPUT);
+  // Rev: 05/23/24 to digitalWrite(pin, LOW) *before* setting pinMode(pin, OUTPUT), for best practices (not really a problem here.)
+  // Rev: 10/05/16
   digitalWrite(PIN_IO_HALT, LOW);   // Pulling this low tells all Arduinos to HALT
+  pinMode(PIN_IO_HALT, OUTPUT);
   delay(1000);
-  digitalWrite(PIN_IO_HALT, HIGH);
-  pinMode(PIN_IO_HALT, INPUT);
+  digitalWrite(PIN_IO_HALT, HIGH);  // Well this seems unnecessary...why not just leave it pulling low?
+  pinMode(PIN_IO_HALT, INPUT_PULLUP);
   return;
 }
 
