@@ -15,6 +15,12 @@ void Rotary_Prompt::begin(QuadAlphaNum* t_pQuadAlphaNum) {
   return;
 }
 
+void Rotary_Prompt::clearDisplay() {
+  char blank[] = "        ";
+  m_pQuadAlphaNum->writeToBackpack(blank);
+  return;
+}
+
 byte Rotary_Prompt::getSelection(rotaryEncoderPromptStruct* t_encoderPromptArray, byte t_numElements, byte t_startElement) {
   // Rev: 03/14/23.
   // t_encoderPromptArray is an array of 8-character strings to use as prompts, including some other details.

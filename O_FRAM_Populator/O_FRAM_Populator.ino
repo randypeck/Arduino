@@ -30,15 +30,15 @@
 //#define TURNOUT_RESERVATION_POPULATE
 //#define SENSOR_BLOCK_POPULATE
 //#define BLOCK_RESERVATION_POPULATE
-//#define LOCO_REFERENCE_POPULATE
-#define ROUTE_REFERENCE_POPULATE  // Be sure to indicate GROUP_n in Route_Reference::populate().
+#define LOCO_REFERENCE_POPULATE
+//#define ROUTE_REFERENCE_POPULATE  // Be sure to indicate GROUP_n in Route_Reference::populate().
 //#define DEADLOCK_POPULATE
 
 //#define TURNOUT_RESERVATION_TEST
 //#define SENSOR_BLOCK_TEST
 //#define BLOCK_RESERVATION_TEST
 //#define LOCO_REFERENCE_TEST
-#define ROUTE_REFERENCE_TEST      // Will fail until all GROUPs (i.e. all Routes) have been populated.
+//#define ROUTE_REFERENCE_TEST      // Will fail until all GROUPs (i.e. all Routes) have been populated.
 //#define DEADLOCK_TEST
 
 #include <Train_Consts_Global.h>
@@ -311,15 +311,15 @@ void unitTestSensorBlock() {
     pSensorBlock->display(i);
   }
   Serial.println("Tripping sensors 1, 26, and 52...");
-  pSensorBlock->setStatus( 1, SENSOR_STATUS_TRIPPED);
-  pSensorBlock->setStatus(26, SENSOR_STATUS_TRIPPED);
-  pSensorBlock->setStatus(52, SENSOR_STATUS_TRIPPED);
+  pSensorBlock->setSensorStatus( 1, SENSOR_STATUS_TRIPPED);
+  pSensorBlock->setSensorStatus(26, SENSOR_STATUS_TRIPPED);
+  pSensorBlock->setSensorStatus(52, SENSOR_STATUS_TRIPPED);
   for (byte s = 1; s <= TOTAL_SENSORS; s++) {
     pSensorBlock->display(s);
   }
   Serial.println("Clearing sensors 1 and 52...");
-  pSensorBlock->setStatus(1, SENSOR_STATUS_CLEARED);
-  pSensorBlock->setStatus(52, SENSOR_STATUS_CLEARED);
+  pSensorBlock->setSensorStatus(1, SENSOR_STATUS_CLEARED);
+  pSensorBlock->setSensorStatus(52, SENSOR_STATUS_CLEARED);
   for (byte s = 1; s <= TOTAL_SENSORS; s++) {
     pSensorBlock->display(s);
   }

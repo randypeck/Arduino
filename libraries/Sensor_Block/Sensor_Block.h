@@ -23,8 +23,8 @@ class Sensor_Block {
 
     byte whichBlock(const byte t_sensorNum);  // 1..n
     char whichEnd(const byte t_sensorNum);    // East or West
-    char getStatus(const byte t_sensorNum);   // Tripped or Cleared
-    void setStatus(const byte t_sensorNum, const char t_sensorStatus);  // Set sensorNum to Tripped or Cleared
+    char getSensorStatus(const byte t_sensorNum);   // Tripped or Cleared
+    void setSensorStatus(const byte t_sensorNum, const char t_sensorStatus);  // Set sensorNum to Tripped or Cleared
 
     void display(const byte t_sensorNum);  // Display a single record to Serial COM.
     void populate();  // Special utility reads hard-coded data, writes records to FRAM.

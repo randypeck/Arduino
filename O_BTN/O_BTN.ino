@@ -67,7 +67,7 @@ void setup() {
   pShiftRegister->begin();                    // Set all registers to default.
   pShiftRegister->initializePinsForInput();   // Set all Centipede shift register pins to INPUT for Turnout Buttons.
 
-}
+}  // End of setup()
 
 // *****************************************************************************************
 // ***************************************  L O O P  ***************************************
@@ -146,7 +146,7 @@ void loop() {
     }    // end of "if we've waited long enough since button was released...
   }      // end of "if we are in manual mode, running state...
 
-}
+}  // End of loop()
 
 // *****************************************************************************************
 // ************************ F U N C T I O N   D E F I N I T I O N S ************************
@@ -188,7 +188,7 @@ void turnoutButtonDebounce(const byte tButtonPressed) {
   // Wait long enough to for pushbutton to stop possibly bouncing so our look for "release button" will be valid
   delay(20);  // don't let operator press buttons too quickly
   // Now watch and wait for the operator to release the pushbutton...
-  while (pShiftRegister->digitalRead(tButtonPressed - 1) == LOW) { }    // LOW == 0x0; HIGH == 0x1
+  while (pShiftRegister->digitalRead(tButtonPressed - 1) == LOW) {}    // LOW == 0x0; HIGH == 0x1
   // We also need some debounce after the operator releases the button
   delay(20);
   return;

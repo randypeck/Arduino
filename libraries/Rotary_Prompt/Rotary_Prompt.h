@@ -45,6 +45,8 @@ class Rotary_Prompt {
     void begin(QuadAlphaNum* t_pQuadAlphaNum);
     // Pass a pointer to the 8-char LED Backpack array object
 
+    void clearDisplay();  // Turn off all 8 segments
+
     byte getSelection(rotaryEncoderPromptStruct* t_encoderPromptArray, byte t_numberOfElements, byte t_startingElement);
     // Pass an array of prompts, to be scrolled on the LED Backpack using the rotary encoder, and return the index number into the
     // array that is selected by the user (when they press the rotary encoder.)

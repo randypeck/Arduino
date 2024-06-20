@@ -111,7 +111,7 @@ void setup() {
   pShiftRegister->begin();                    // Set all registers to default.
   pShiftRegister->initializePinsForInput();   // Set all Centipede shift register pins to INPUT for Sensors.
 
-}
+}  // End of setup()
 
 // *****************************************************************************************
 // ***************************************  L O O P  ***************************************
@@ -216,7 +216,7 @@ void loop() {
           // We need a slight delay in the event that we have a flurry of sensor changes to transmit to MAS, to give the
           // other modules a chance to keep up.  No delay overflowed OCC input RS485 buffer when we started a mode.
           // Note that we impose a delay ONLY if we just already sent an update, normally there will be no delay.
-          while ((millis() - sensorTimeUpdatedMS) < SENSOR_DELAY_MS) { }   // Wait a moment
+          while ((millis() - sensorTimeUpdatedMS) < SENSOR_DELAY_MS) {}   // Wait a moment
           sensorTimeUpdatedMS = millis();    // Refresh the timer
           // Now that we have a known sensor change, let's check to see if the mode indicates we should send it to MAS.
           // The combination of Modes and States where are are allowed (and not allowed) to send sensor updates is rather complex,
@@ -246,7 +246,7 @@ void loop() {
       sensorOldState[pinBank] = sensorNewState[pinBank];
     }
   }
-}
+}  // End of loop()
 
 // *****************************************************************************************
 // ************************ F U N C T I O N   D E F I N I T I O N S ************************

@@ -1,8 +1,10 @@
-// OCCUPANCY_LEDs.CPP Rev: 04/07/24.  FINISHED BUT NOT TESTED.
+// OCCUPANCY_LEDs.CPP Rev: 06/18/24.  FINISHED BUT NOT TESTED.
 // Part of O_OCC.
 // This class is responsible for illumination of Control Panel WHITE OCCUPANCY SENSOR LEDs and BLUE/RED BLOCK OCCUPANCY LEDs.
 // Illumination depends on Mode and State.
 // There is no support for blinking WHITE or RED/BLUE LEDs.
+// Note: Sensor Status stores how Control Panel LEDs should be lit, NOT the current status of each sensor.
+// Main modules (MAS, OCC, LEG) use the Sensor Block table to save and retrieve sensor status during Registration and Auto/Park.
 
 #include "Occupancy_LEDs.h"
 
@@ -43,12 +45,6 @@ void Occupancy_LEDs::updateSensorStatus(const byte t_sensorNum, const char t_tri
     sprintf(lcdString, "FATAL OCC LED ERR 1"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(5);
   }
   return;
-}
-
-char Occupancy_LEDs::getSensorStatus(const byte t_sensorNum) {
-  // Rev: 03/19/23.  FINISHED BUT NOT YET TESTED.
-  // Important: This does NOT retrieve the actual sensor status; it returns the status as far as our m_sensorStatus[] array knows.
-  return m_sensorStatus[t_sensorNum - 1];  // 'T' or 'C'
 }
 
 void Occupancy_LEDs::setBlockStatic(const byte t_blockNum) {

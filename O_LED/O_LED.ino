@@ -154,7 +154,7 @@ void setup() {
   pShiftRegister->begin();                    // Set all registers to default.
   pShiftRegister->initializePinsForOutput();  // Set all Centipede shift register pins to OUTPUT for Turnout LEDs
 
-}
+}  // End of setup()
 
 // *****************************************************************************************
 // ***************************************  L O O P  ***************************************
@@ -230,7 +230,7 @@ void loop() {
     turnoutUpdateTime = millis();  // refresh timer for delay between checking for "throws"
   }
 
-}
+}  // End of loop()
 
 // *****************************************************************************************
 // ************************ F U N C T I O N   D E F I N I T I O N S ************************

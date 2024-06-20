@@ -60,7 +60,6 @@ void Delayed_Action::initDelayedActionTable() {  // Size will always be HEAP_REC
     m_pDelayedAction[i].deviceParm1 = 0;
     m_pDelayedAction[i].deviceParm2 = 0;
   }
-  sprintf(lcdString, "D.A. Initialized"); pLCD2004->println(lcdString); Serial.println(lcdString);
 }
 
 void Delayed_Action::populateLocoCommand(const unsigned long t_startTime, const byte t_devNum, const byte t_devCommand,

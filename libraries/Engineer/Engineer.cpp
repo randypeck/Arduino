@@ -75,7 +75,6 @@ void Engineer::initLegacyCommandBuf() {  // Size will be LEGACY_CMD_HEAP_RECS
       m_pLegacyCommandBuf[i].legacyCommandByte[j] = 0;
     }
   }
-  sprintf(lcdString, "ENG LEG BUF INIT'D"); pLCD2004->println(lcdString); Serial.println(lcdString);
 }
 
 void Engineer::initAccessoryRelays() {

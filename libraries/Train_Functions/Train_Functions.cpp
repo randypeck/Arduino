@@ -180,6 +180,13 @@ void endWithFlashingLED(int t_numFlashes) {  // Works for all modules, including
 void requestEmergencyStop() {
   // Rev: 05/23/24 to digitalWrite(pin, LOW) *before* setting pinMode(pin, OUTPUT), for best practices (not really a problem here.)
   // Rev: 10/05/16
+  // The reason why we only pull the pin low for 1 second is because all of the external resistors will create a load which may
+  // require more current than the Arduino is rated, so just pull low momentarily rather than leave the current sink on. 
+  // This means that every module needs to check if the halt line is pulled low AT LEAST EVERY 1 SECOND.  Should not be a problem
+  // since it should happen every time through every loop - but we could always extend the time held low if needed.
+  // Of course there are some cases where blocking will prevent checking, such as when waiting for the operator to make selections
+  // on the rotary encoder during Registration.  No big deal -- the most important place to constantly be checking the halt line
+  // is in LEG, where we will want to turn off all track power.
   digitalWrite(PIN_IO_HALT, LOW);   // Pulling this low tells all Arduinos to HALT
   pinMode(PIN_IO_HALT, OUTPUT);
   delay(1000);

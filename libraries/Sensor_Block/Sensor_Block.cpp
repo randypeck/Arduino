@@ -1,5 +1,6 @@
-// SENSOR_BLOCK.CPP Rev: 02/27/23.  TESTED AND WORKING.
+// SENSOR_BLOCK.CPP Rev: 06/18/24.  TESTED AND WORKING.
 // A set of functions to retrieve data from the Sensor Block cross reference table, which is stored in FRAM.
+// Changed name from setStatus/getStatus to setSensorStatus/getSensorStatus
 
 #include <Sensor_Block.h>
 
@@ -56,7 +57,7 @@ char Sensor_Block::whichEnd(const byte t_sensorNum) {
   return m_sensorBlock.whichEnd;  // SENSOR_BLOCK_EAST == 'E', or SENSOR_BLOCK_WEST == 'W'
 }
 
-char Sensor_Block::getStatus(const byte t_sensorNum) {
+char Sensor_Block::getSensorStatus(const byte t_sensorNum) {
   // Rev: 01/25/23.
   // Returns field status = SENSOR_STATUS_TRIPPED or SENSOR_STATUS_CLEARED.
   // This reflects what is stored in the Sensor Block table, *not* necessarily the actual status of the sensor.
@@ -66,7 +67,7 @@ char Sensor_Block::getStatus(const byte t_sensorNum) {
   return m_sensorBlock.status;
 }
 
-void Sensor_Block::setStatus(const byte t_sensorNum, const char t_sensorStatus) {
+void Sensor_Block::setSensorStatus(const byte t_sensorNum, const char t_sensorStatus) {
   // Rev: 01/25/23.
   // Sets a particular sensor's occupancy status to either Tripped or Cleared [T|C]
   if ((t_sensorStatus != SENSOR_STATUS_TRIPPED) && (t_sensorStatus != SENSOR_STATUS_CLEARED)) {
@@ -97,10 +98,10 @@ void Sensor_Block::display(const byte t_sensorNum) {
     sprintf(lcdString, "BAD END SENSOR %i", t_sensorNum); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(5);
   }
   sprintf(lcdString, "%2i, Currently ", Sensor_Block::whichBlock(t_sensorNum)); Serial.print(lcdString);
-  if (Sensor_Block::getStatus(t_sensorNum) == SENSOR_STATUS_CLEARED) {
+  if (Sensor_Block::getSensorStatus(t_sensorNum) == SENSOR_STATUS_CLEARED) {
     Serial.println("Cleared.");
   }
-  else if (Sensor_Block::getStatus(t_sensorNum) == SENSOR_STATUS_TRIPPED) {
+  else if (Sensor_Block::getSensorStatus(t_sensorNum) == SENSOR_STATUS_TRIPPED) {
     Serial.println("TRIPPED.");
   }
   else {

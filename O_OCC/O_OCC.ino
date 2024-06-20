@@ -1,4 +1,4 @@
-// O_OCC.INO Rev: 04/16/24.  FINISHED BUT NOT TESTED.
+// O_OCC.INO Rev: 06/18/24.  FINISHED BUT NOT TESTED.
 // OCC paints the WHITE Occupancy Sensor LEDs and RED/BLUE Block Occupancy LEDs on the Control Panel.
 // In Registration mode, OCC also prompts operator for initial data, using the Control Panel's Rotary Encoder and 8-Char display.
 // In Auto/Park modes, OCC also autonomously sends arrival and departure announcements to various stations around the layout.
@@ -75,7 +75,7 @@
 #include <Train_Consts_Global.h>
 #include <Train_Functions.h>
 const byte THIS_MODULE = ARDUINO_OCC;  // Global needed by Train_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "OCC 04/15/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "OCC 06/18/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 
 // *** SERIAL LCD DISPLAY CLASS ***
 // #include <Display_2004.h> is already in <Train_Functions.h> so not needed here.
@@ -134,25 +134,30 @@ Occupancy_LEDs* pOccupancyLEDs = nullptr;
 
 // *** MISC CONSTANTS AND GLOBALS NEEDED BY OCC ***
 
-// The Rotary Prompt array is used for both various Y/N pre-registration prompts, as well as for registering trains.
-// Simple prompts such as SMOKE Y/N will use only the first couple of elements.
-// Loco Registration could potentially use TOTAL_TRAINS + 1 elements, which can hold the names of all 50 possible train names, plus
-// 'STATIC'.  If we ever add support for 'DONE' then dimension to TOTAL_TRAINS + 2.
-const byte MAX_ROTARY_PROMPTS = TOTAL_TRAINS + 1;  // + 1 allows up to every train plus STATIC; the most we'd ever need.
-rotaryEncoderPromptStruct rotaryPrompt[MAX_ROTARY_PROMPTS];  // expired (bool), referenceNum, and alphaPrompt[9]
-byte numRotaryPrompts   = 0;  // Gets passed to pRotaryEncoderPrompter->getSelection() as number of elements to use.
-
 // Variables that come with new Route messages
 byte         locoNum          = 0;
 char         extOrCont        = ROUTE_TYPE_EXTENSION;  // or ROUTE_TYPE_CONTINUATION (E/C)
-unsigned int routeRecNum      = 0;    // Record number in FRAM, 0..n
-unsigned int countdown        = 0;    // Number of seconds to delay before starting train on an Extension route
+unsigned int routeRecNum      = 0;  // Record number in FRAM, 0..n
+unsigned int countdown        = 0;  // Number of seconds to delay before starting train on an Extension route
 byte         sensorNum        = 0;
 char         trippedOrCleared = SENSOR_STATUS_CLEARED;  // or SENSOR_STATUS_TRIPPED (C/T)
 
 byte         modeCurrent      = MODE_UNDEFINED;
 byte         stateCurrent     = STATE_UNDEFINED;
 char         msgType          = ' ';
+
+char fastOrSlow = ' ';  // Loco startup can be F|S
+char smokeOn    = ' ';  // Smoke can be S|N
+char audioOn    = ' ';  // Audio can be A|N
+char debugOn    = ' ';  // Debug can be D|N
+
+// The Rotary Prompt array is used for both various Y/N pre-registration prompts, as well as for registering trains.
+// Simple prompts such as SMOKE Y/N will use only the first couple of elements.
+// Loco Registration could potentially use TOTAL_TRAINS + 1 elements, which can hold the names of all 50 possible train names, plus
+// 'STATIC'.  If we ever add support for 'DONE' then dimension to TOTAL_TRAINS + 2.
+const byte MAX_ROTARY_PROMPTS = TOTAL_TRAINS + 1;  // + 1 allows up to every train plus STATIC; the most we'd ever need.
+rotaryEncoderPromptStruct rotaryPrompt[MAX_ROTARY_PROMPTS];  // expired (bool), referenceNum, and alphaPrompt[9]
+byte numRotaryPrompts = 0;  // Gets passed to pRotaryEncoderPrompter->getSelection() as number of elements to use.
 
 // *****************************************************************************************
 // **************************************  S E T U P  **************************************
@@ -186,9 +191,9 @@ void setup() {
   pStorage->begin();  // Will crash on its own if there is any problem with the FRAM
   //pStorage->setFRAMRevDate(6, 18, 60);  // Available function for testing only.
   //pStorage->checkFRAMRevDate();  // Terminate with error if FRAM rev date does not match date in Train_Consts_Global.h
-  //pStorage->testFRAM();         while (true) { }  // Writes then reads random data to entire FRAM.
-  //pStorage->testSRAM();         while (true) { }  // Test 4K of SRAM just for comparison.
-  //pStorage->testQuadRAM(56647); while (true) { }  // (unsigned long t_numBytesToTest); max about 56,647 testable bytes.
+  //pStorage->testFRAM();         while (true) {}  // Writes then reads random data to entire FRAM.
+  //pStorage->testSRAM();         while (true) {}  // Test 4K of SRAM just for comparison.
+  //pStorage->testQuadRAM(56647); while (true) {}  // (unsigned long t_numBytesToTest); max about 56,647 testable bytes.
 
   // *** INITIALIZE RS485 MESSAGE CLASS AND OBJECT *** (Heap uses 30 bytes)
   // WARNING: Instantiating Message class hangs the system if hardware is not connected.
@@ -247,7 +252,7 @@ void setup() {
   pOccupancyLEDs = new Occupancy_LEDs;
   pOccupancyLEDs->begin(pTrainProgress);
 
-}  // End of Setup
+}  // End of setup()
 
 // *****************************************************************************************
 // ***************************************  L O O P  ***************************************
@@ -314,7 +319,7 @@ void loop() {
 
         // Run in Manual mode until stopped.
         OCCManualMode();
-        // Now, modeCurrent == MODE_MANUAL and stateCurrent == STATE_STOPPED
+        // Upon return, modeCurrent == MODE_MANUAL and stateCurrent == STATE_STOPPED
 
       }  // *** MANUAL MODE COMPLETE! ***
 
@@ -322,7 +327,7 @@ void loop() {
 
         // Run in Register mode until complete.
         OCCRegistrationMode();
-        // Now, modeCurrent == MODE_REGISTER and stateCurrent == STATE_STOPPED
+        // Upon return, modeCurrent == MODE_REGISTER and stateCurrent == STATE_STOPPED
 
       }  // *** REGISTER MODE COMPLETE! ***
 
@@ -330,7 +335,7 @@ void loop() {
 
         // Run in Auto/Park mode until complete.
         OCCAutoParkMode();
-        // Now, modeCurrent == MODE_AUTO or MODE_PARK, and stateCurrent == STATE_STOPPED
+        // Upon return, modeCurrent == MODE_AUTO or MODE_PARK, and stateCurrent == STATE_STOPPED
 
       }  // *** AUTO/PARK MODE COMPLETE! ***
       break;
@@ -342,7 +347,7 @@ void loop() {
     }
 
   }
-}
+}  // End of loop()
 
 // ********************************************************************************************************************************
 // ********************************************************* FUNCTIONS ************************************************************
@@ -352,21 +357,24 @@ void loop() {
 // **************************************************** OPERATE IN MANUAL MODE ****************************************************
 // ********************************************************************************************************************************
 
-void OCCManualMode() {
+void OCCManualMode() {  // CLEAN THIS UP SO THAT MAS/OCC/LEG ARE MORE CONSISTENT WHEN DOING THE SAME THING I.E. RETRIEVING SENSORS AND UPDATING SENSOR-BLOCK *******************************
 
-  // We will only enter this block if we just entered MANUAL RUNNING.
-  // When starting MANUAL mode, MAS/SNS will ALWAYS immediately send status of every sensor.
-  // Standby and recieve a Sensor Status from every sensor.  No need to clear first as we'll get them all.
+  sprintf(lcdString, "BEGIN MAN MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
+  // When starting MANUAL mode, MAS/SNS will always immediately send status of every sensor.
+  // Recieve a Sensor Status from every sensor.  No need to clear first as we'll get them all.
   for (int i = 1; i <= TOTAL_SENSORS; i++) {
     // Wait for a Sensor message (there better not be any other type that comes in)...
     while (pMessage->available() != 'S') {}  // Do nothing until we have a new message
     pMessage->getSNStoALLSensorStatus(&sensorNum, &trippedOrCleared);
-    if (i != sensorNum) {  // Each record should be sensorNum 1..TOTAL_SENSORS in sequence.
-      sprintf(lcdString, "SNS NUM MISMATCH M"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
+    if (i != sensorNum) {
+      sprintf(lcdString, "SNS %i %i NUM ERR", i, sensorNum); pLCD2004->println(lcdString); endWithFlashingLED(1);
+    }
+    if ((trippedOrCleared != SENSOR_STATUS_TRIPPED) && (trippedOrCleared != SENSOR_STATUS_CLEARED)) {
+      sprintf(lcdString, "SNS %i %c T|C ERR", i, trippedOrCleared); pLCD2004->println(lcdString); endWithFlashingLED(1);
     }
     pOccupancyLEDs->updateSensorStatus(sensorNum, trippedOrCleared);  // Update status but don't paint
+    pSensorBlock->setSensorStatus(sensorNum, trippedOrCleared);
   }
-
   // Okay, we've received all TOTAL_SENSORS sensor status updates, and updated the Occupancy_LEDs class.
   // Now go ahead and paint all the WHITE LEDs.
   pOccupancyLEDs->paintAllOccupancySensorLEDs(modeCurrent, stateCurrent);
@@ -378,13 +386,12 @@ void OCCManualMode() {
   // * Sensor updates, which require us to refresh the Control Panel WHITE LEDs.
   // * Mode update, in which case we're done and return to the main loop.
   do {
-
     haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, release relays and just stop
-
     msgType = pMessage->available();  // Could be ' ', 'S', or 'M'
     if (msgType == 'S') {  // Got a sensor message in Manual mode; update the WHITE LEDs
       pMessage->getSNStoALLSensorStatus(&sensorNum, &trippedOrCleared);
       pOccupancyLEDs->updateSensorStatus(sensorNum, trippedOrCleared);
+      pSensorBlock->setSensorStatus(sensorNum, trippedOrCleared);
       pOccupancyLEDs->paintAllOccupancySensorLEDs(modeCurrent, stateCurrent);
       if (trippedOrCleared == SENSOR_STATUS_TRIPPED) {
         sprintf(lcdString, "Sensor %2d Tripped.", sensorNum); pLCD2004->println(lcdString); Serial.println(lcdString);
@@ -400,11 +407,12 @@ void OCCManualMode() {
       // When MANUAL mode is stopped, all there is to do is turn off all the Control Panel LEDs.
       pOccupancyLEDs->paintOneOccupancySensorLED(0);  // Sending 0 will turn off all WHITE LEDs
       pOccupancyLEDs->paintOneBlockOccupancyLED(0);   // Sending 0 will turn off all RED/BLUE LEDs
-    } else if (msgType != ' ') {
-      // WE HAVE A BIG PROBLEM with an unexpected message type at this point
-      sprintf(lcdString, "MAN MODE MSG ERR!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
+    } else if (msgType != ' ') {  // Remember, pMessage->available() returns ' ' if there is no message.
+      sprintf(lcdString, "MAN MSG ERR %c", msgType); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
     }
   } while (stateCurrent != STATE_STOPPED);  // We'll just assume mode is still Manual
+  sprintf(lcdString, "END MAN MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
+  return;
 }
 
 // ********************************************************************************************************************************
@@ -412,8 +420,24 @@ void OCCManualMode() {
 // ********************************************************************************************************************************
 
 void OCCRegistrationMode() {
+  // For OCC only:
+  //   Initialize and clear the Control Panel Occupancy Sensor and Block Occupancy LEDs.
+  //   For each block, read Block Reservation record and store locoNum field in defaultLocoInThisBlock[0..TOTAL_BLOCKS - 1]
+  //     This will preserve left-over last-known locos in each block, to hopefully use as the default loco for each occupied block.
+  // Release all Block Reservations
+  // Initialize the Train Progress table
+  // Receive the status T/C of each sensor. For each sensor retrieved:
+  //   OCC only: Store the sensor status in the Occupany LED class, as LED_OFF or LED_SENSOR_OCCUPIED
+  //   Store sensor status T/C in Sensor-Block table for later use.
+  //   If sensor is Tripped, reserve sensor's block in Block Res'n table.
+  // OCC only: Prompt operator for startup parms incl. Fast/Slow, Smoke On/Off, Audio On/Off, Debug On/Off and store results.
+  // OCC will now prompt operator for the ID of every occupied block; could be a real loco or STATIC equipment.
+  //   For each occupied block identified by operator, IF THE LOCO IS REAL (static already accounted for):
+  //     Update Block Reservation to reflect that loco (will overwrite previous status as reserved for STATIC.)
+  //     Create new entry in Train Progress for this new loco.
 
-  // We will only enter this code block if we just entered REGISTRATION RUNNING.
+  sprintf(lcdString, "BEGIN REG MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
+
   // Each time we (re)start Registration, we'll call Occupancy_LEDs::begin() to reset the Static-Equipment Block, Sensor
   // Status, and internal Block status arrays.  No harm in calling begin() and passing the pointer more than once.
   // Do this BEFORE RECEIVE SENSOR STATUS MESSAGES, because it resets the local sensor status array that we'll be updating!
@@ -421,7 +445,8 @@ void OCCRegistrationMode() {
   // Now paint all Control Panel Occupancy and Block LEDs dark.
   pOccupancyLEDs->paintOneOccupancySensorLED(0);  // Sending 0 will turn off all WHITE LEDs
   pOccupancyLEDs->paintOneBlockOccupancyLED(0);   // Sending 0 will turn off all RED/BLUE LEDs
-  // NOTE: The following Block Reservation read (and then release) MUST take place before we receive sensor status messages:
+
+  // NOTE: The following Block Reservation read (and then release) MUST take place before we receive sensor status messages.
   // Let's take advantage of the fact that we *might* have a still-accurate Block Res'n table in FRAM.  This will occur if
   // the previous operating session ended in Auto or Park mode with all locos stopped.  This can provide us with our best
   // guess of what loco might be sitting in each occupied block, when we prompt for that during Registration.  Worst case is
@@ -429,6 +454,7 @@ void OCCRegistrationMode() {
   byte defaultLocoInThisBlock[TOTAL_BLOCKS];  // Just a temporary array until we've completed Registration
   for (byte blockNum = 1; blockNum <= TOTAL_BLOCKS; blockNum++) {
     defaultLocoInThisBlock[blockNum - 1] = pBlockReservation->reservedForTrain(blockNum);
+    sprintf(lcdString, "BLK %i %i", blockNum, defaultLocoInThisBlock[blockNum - 1]); pLCD2004->println(lcdString); Serial.println(lcdString);
     // Could only legitimately be LOCO_ID_NULL, LOCO_ID_STATIC, or a valid locoNum 1..TOTAL_TRAINS; let's be certain.
     if ((defaultLocoInThisBlock[blockNum - 1] != LOCO_ID_NULL) &&
       (defaultLocoInThisBlock[blockNum - 1] != LOCO_ID_STATIC) &&
@@ -436,29 +462,49 @@ void OCCRegistrationMode() {
       sprintf(lcdString, "BLK RES LOCO ERR!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
     }
   }
-  // Now we've preserved the possible loco occupying each occupied block in defaultLocoInThisBlock[]!
-  // Okay to clear the Block Res'n table...
-  pBlockReservation->releaseAllBlocks();  // No blocks are reserved now.
 
-  // When starting REGISTRATION mode, MAS/SNS will ALWAYS send status of every sensor (after a short pause to let us init.)
-  // *** GET THE TRIP/CLEAR STATUS OF EVERY OCCUPANCY SENSOR ***
-  // No need to clear first as we'll get them all.
+  // Release all block reservations.
+  pBlockReservation->releaseAllBlocks();
+
+  // Initialize the Train Progress table for every possible train (1..TOTAL_TRAINS)
+  for (locoNum = 1; locoNum <= TOTAL_TRAINS; locoNum++) {  // i.e. 1..50 trains
+    pTrainProgress->resetTrainProgress(locoNum);  // Initialize the header and no route for a single train.
+  }
+
+  // When starting REGISTRATION mode, SNS will always immediately send status of every sensor.
+  // Standby and recieve a Sensor Status from every sensor.  No need to clear first as we'll get them all.
   for (int i = 1; i <= TOTAL_SENSORS; i++) {
     // Wait for a Sensor message (there better not be any other type that comes in)...
-    while (pMessage->available() != 'S') { }  // Do nothing until we have a new message
+    while (pMessage->available() != 'S') {}  // Do nothing until we have a new message
     pMessage->getSNStoALLSensorStatus(&sensorNum, &trippedOrCleared);
-    if (i != sensorNum) {  // Each record should be sensorNum 1..TOTAL_SENSORS in sequence.
-      sprintf(lcdString, "SNS NUM MISMATCH R"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
+    if (i != sensorNum) {
+      sprintf(lcdString, "SNS %i %i NUM ERR", i, sensorNum); pLCD2004->println(lcdString); endWithFlashingLED(1);
     }
-    pOccupancyLEDs->updateSensorStatus(sensorNum, trippedOrCleared);  // Update status array but don't paint
-    // Since we know the associated block is occupied by *something*, let's reserve it for STATIC.  Then as we prompt the
-    // user for the loco ID of each occupied block, we'll update the block reservation for each non-STATIC train.
-    pBlockReservation->reserveBlock(pSensorBlock->whichBlock(sensorNum), BE, LOCO_ID_STATIC);  // Direction is n/a
-  }
-  // Okay, we've received all TOTAL_SENSORS sensor status updates, updated our local array, and updated Block Res'n
+    if ((trippedOrCleared != SENSOR_STATUS_TRIPPED) && (trippedOrCleared != SENSOR_STATUS_CLEARED)) {
+      sprintf(lcdString, "SNS %i %c T|C ERR", i, trippedOrCleared); pLCD2004->println(lcdString); endWithFlashingLED(1);
+    }
+    sprintf(lcdString, "SNS %i %c", sensorNum, trippedOrCleared); pLCD2004->println(lcdString); Serial.println(lcdString);
 
-  // Clear the Train Progress table and whatever other tables we might be using
-  pTrainProgress->begin(pBlockReservation, pRoute);  // Reset the Train Progress table to no trains anywhere
+    // Update sensor status in the Occupancy LED class but don't paint
+    pOccupancyLEDs->updateSensorStatus(sensorNum, trippedOrCleared);
+
+    // Store the sensor status T/C in the Sensor Block table.
+    pSensorBlock->setSensorStatus(sensorNum, trippedOrCleared);
+
+    // If the sensor is TRIPPED, then reserve the corresponding block as Static in the Block Reservation table. Later, as we prompt
+    // the user for the loco ID of each occupied block, we'll update the block reservation for each non-STATIC train.
+    if (trippedOrCleared == 'T') {
+      if (pSensorBlock->whichEnd(sensorNum) == LOCO_DIRECTION_EAST) {  // 'E'
+        pBlockReservation->reserveBlock(pSensorBlock->whichBlock(sensorNum), BE, LOCO_ID_STATIC);
+      }
+      else if (pSensorBlock->whichEnd(sensorNum) == LOCO_DIRECTION_WEST) {  // 'W'
+        pBlockReservation->reserveBlock(pSensorBlock->whichBlock(sensorNum), BW, LOCO_ID_STATIC);
+      }
+      else {  // Not E or W, we have a problem!
+        sprintf(lcdString, "BLK END %i %c", sensorNum, pSensorBlock->whichEnd(sensorNum)); pLCD2004->println(lcdString); endWithFlashingLED(1);
+      }
+    }
+  }
 
   // *** PROMPT OPERATOR FOR STARTUP FAST/SLOW, SMOKE ON/OFF, AUDIO ON/OFF, DEBUG ON/OFF ***
   // Prompt for Fast or Slow loco power up (with or without startup dialogue.)
@@ -470,48 +516,50 @@ void OCCRegistrationMode() {
   strcpy(rotaryPrompt[1].alphaPrompt, "SLOW PWR");
   byte promptSelected = pRotaryEncoderPrompter->getSelection(rotaryPrompt, 2, 0);
   if (promptSelected == 0) {
-    pMessage->sendOCCtoLEGFastOrSlow('F');  // Fast
+    fastOrSlow = 'F';
+  } else {
+    fastOrSlow = 'S';
   }
-  else {
-    pMessage->sendOCCtoLEGFastOrSlow('S');  // Slow
-  }
+  pMessage->sendOCCtoLEGFastOrSlow(fastOrSlow);
+
   // Prompt for Smoke on or off.  Note: we may want LEG to always turn off smoke after 10 minutes automatically.
   strcpy(rotaryPrompt[0].alphaPrompt, "SMOKE N");
   strcpy(rotaryPrompt[1].alphaPrompt, "SMOKE Y");
   promptSelected = pRotaryEncoderPrompter->getSelection(rotaryPrompt, 2, 0);
   if (promptSelected == 0) {
-    pMessage->sendOCCtoLEGSmokeOn('N');  // No smoke
+    smokeOn = 'N';
+  } else {
+    smokeOn = 'S';
   }
-  else {
-    pMessage->sendOCCtoLEGSmokeOn('S');  // Smoke
-  }
+  pMessage->sendOCCtoLEGSmokeOn(smokeOn);
+
   // Prompt for Audio on or off (can apply to OCC station announcements and/or LEG loco dialogue
   strcpy(rotaryPrompt[0].alphaPrompt, "AUDIO N");
   strcpy(rotaryPrompt[1].alphaPrompt, "AUDIO Y");
   promptSelected = pRotaryEncoderPrompter->getSelection(rotaryPrompt, 2, 0);
   if (promptSelected == 0) {
-    pMessage->sendOCCtoLEGAudioOn('N');  // No audio
+    audioOn = 'N';
+  } else {
+    audioOn = 'A';
   }
-  else {
-    pMessage->sendOCCtoLEGAudioOn('A');  // Audio on
-  }
+  pMessage->sendOCCtoLEGAudioOn(audioOn);
+
   // Prompt for Debug Mode on or off.
   strcpy(rotaryPrompt[0].alphaPrompt, "DEBUG N");
   strcpy(rotaryPrompt[1].alphaPrompt, "DEBUG Y");
   promptSelected = pRotaryEncoderPrompter->getSelection(rotaryPrompt, 2, 0);
   if (promptSelected == 0) {
     pMessage->sendOCCtoLEGDebugOn('N');  // No debug
-  }
-  else {
+  } else {
     pMessage->sendOCCtoLEGDebugOn('D');  // Debug
   }
   // Finished prompting operator for FAST/SLOW, SMOKE/NO SMOKE, AUDIO ON/OFF, DEBUG ON/OFF.
-
-  // Paint all the WHITE LEDs, to show where the system sees all occupancy, to help operator with next step.
-  pOccupancyLEDs->paintAllOccupancySensorLEDs(modeCurrent, stateCurrent);
+  pRotaryEncoderPrompter->clearDisplay();
+  delay(3000);
 
   // *** PROMPT OPERATOR FOR LOCO ID OF EVERY OCCUPIED BLOCK, ONE AT A TIME ***
-
+  // Paint all the WHITE LEDs, to show where the system sees all occupancy, to help operator with next step.
+  pOccupancyLEDs->paintAllOccupancySensorLEDs(modeCurrent, stateCurrent);
   // Populate local array for the set of Loco Description prompts to use with the 8-char A/N display and Rotary Encoder.
   // The first choice for the operator will be "STATIC"
   numRotaryPrompts = 0;
@@ -528,38 +576,38 @@ void OCCRegistrationMode() {
       }
       rotaryPrompt[numRotaryPrompts].referenceNum = locoNum;
       pLoco->alphaDesc(locoNum, rotaryPrompt[numRotaryPrompts].alphaPrompt, 8);  // Returns text via pointer (array)
+      sprintf(lcdString, "Found loco %i", locoNum); pLCD2004->println(lcdString); Serial.println(lcdString);
     }
   }
+  sprintf(lcdString, "Done finding locos."); pLCD2004->println(lcdString); Serial.println(lcdString);
   // Now we have a Rotary Encoder array loaded with every active locoRef name, plus STATIC.
   // Our index into rotaryPrompt[] will be 0..(numRotaryPrompts - 1)
-
   // For each occuped sensor, ask operator what loco is there.
   for (sensorNum = 1; sensorNum <= TOTAL_SENSORS; sensorNum++) {  // sensorNum variable declared above setup()
-    if (pOccupancyLEDs->getSensorStatus(sensorNum) == SENSOR_STATUS_TRIPPED) {  // We have an occupied block
+    sprintf(lcdString, "SNS %i %c", sensorNum, pSensorBlock->getSensorStatus(sensorNum));  pLCD2004->println(lcdString); Serial.println(lcdString);
+    if (pSensorBlock->getSensorStatus(sensorNum) == SENSOR_STATUS_TRIPPED) {  // We have an occupied block
+      sprintf(lcdString, "Tripped sensor %i", sensorNum); pLCD2004->println(lcdString); Serial.println(lcdString);
       byte blockNum = pSensorBlock->whichBlock(sensorNum);
       char whichEnd = pSensorBlock->whichEnd(sensorNum);  // LOCO_DIRECTION_EAST == 'E', or LOCO_DIRECTION_WEST == 'W'
       // So we know that block blockNum is occupied and at which end (thus, which direction the equipment is facing.)
-
-      // Create a temp route element for the route's starting block/dir that we can use to pass to MAS and LEG via RS485, and
-      // to populate our local Train Progress table's initial route for this loco (only used if the loco is not STATIC.)
+      // Create a temp route element to store the block/dir (if it's a non-STATIC train) that MAS/OCC/LEG can use to populate the
+      // Train Progress table's initial route for this loco (will disregard if this is ID'd as a STATIC train.)
       routeElement initialBlock;
       initialBlock.routeRecVal = blockNum;
       if (whichEnd == LOCO_DIRECTION_EAST) {
         initialBlock.routeRecType = BE;
-      }
-      else {  // Better be LOCO_DIRECTION_WEST!
+      } else {  // Better be LOCO_DIRECTION_WEST!
         initialBlock.routeRecType = BW;
       }
       // Illuminate the RED block-occupancy LED we want to prompt user about.  Turns all others off automatically.
       pOccupancyLEDs->paintOneBlockOccupancyLED(blockNum);
-
       // Recall that our best-guess locoNum that may be occupying blockNum is defaultLocoInThisBlock[blockNum - 1]
       // Since we've already populated the rotaryPrompt[] array with EVERY active locoNum, we're guaranteed that the loco
       // that was previously using this block will be found in our rotaryPrompt[] array (even if it's STATIC.)
       // Remember, we're not passing the locoNum or blockNum as the default rotaryPrompt[] array element, but rather we're
       // going to have to pass the rotaryPrompt[] array index that contains the locoNum and description for our default loco.
       // So scan rotaryPrompt[].referencNum (locoNum) until we find defaultLocoInThisBlock[blockNum - 1]
-      byte startElement = 0;  // We'll default to rotary prompt element 0 = STATIC
+      byte startElement = 0;  // We'll default to rotary prompt element 0 = STATIC, but try to find a previously-occupying loco.
       for (byte rotaryElementToCheck = 0; rotaryElementToCheck < numRotaryPrompts; rotaryElementToCheck++) {
         if (rotaryPrompt[rotaryElementToCheck].referenceNum == defaultLocoInThisBlock[blockNum - 1]) {
           startElement = rotaryElementToCheck;
@@ -572,33 +620,33 @@ void OCCRegistrationMode() {
       byte rotaryArrayElement = pRotaryEncoderPrompter->getSelection(rotaryPrompt, numRotaryPrompts, startElement);
       // rotaryArrayElement will be the rotaryPrompt[] array index the user chose, 0..numRotaryPrompts - 1.
       byte locoSelected = rotaryPrompt[rotaryArrayElement].referenceNum;
+      // Before we forget, flag their selection as expired as we won't ever say a loco is on two blocks at the same time!
+      rotaryPrompt[locoSelected].expired = true;
       Serial.print("Loco selected array offset = "); Serial.println(rotaryArrayElement);
       Serial.print("Ref Num = "); Serial.println(locoSelected);  // locoNum or LOCO_ID_STATIC
       Serial.println("Item desc = "); Serial.println(rotaryPrompt[rotaryArrayElement].alphaPrompt);  // locoDesc or STATC
-      // At this point, we have already updated the Block Res'n table showing every occupied block is reserved for STATIC,
-      // and MAS and LEG also know about all of the STATIC blocks, so we'll only need to update our own Block Res'n and send
-      // RS485 messages to MAS and LEG if it's occupied by something other than STATIC i.e. a real loco.
+      // We have previously updated the Block Res'n table showing every occupied block is reserved for STATIC, and also sent that
+      // to MAS and LEG.  But if the operator chose anything other than STATIC for this occupied block (i.e. a real loco), then we
+      // and MAS and LEG will all need to update the Block Reservation table to reflect this loco being in that block.
       if (rotaryPrompt[locoSelected].referenceNum == LOCO_ID_STATIC) {
-        Serial.print("Setting block STATIC: "); Serial.println(blockNum);
         // Add this to the Occupancy_LEDs static block array (all were initialized above to not-STATIC.)  This is ONLY used
         // when painting Block Occupancy RED/BLUE LEDs, since we can't derive this from Train Progress.
         pOccupancyLEDs->setBlockStatic(blockNum);
         // No need to update Block Res'n or RS485, since they'll already have flagged all occupied blocks as STATIC, until
         // told otherwise.
-      }
-      else {  // Operator chose an actual loco that is occupying the block
-        // First flag their selection as expired...
-        rotaryPrompt[locoSelected].expired = true;
-        // Now notify everyone that we have a real loco to register!  rotaryPrompt[locoSelected].referenceNum is locoNum.
+      } else {  // Operator chose an actual loco that is occupying the block, NOT STATIC
+        // Notify everyone that we have a real loco to register!  rotaryPrompt[locoSelected].referenceNum is locoNum.
         // MAS and LEG will use this to establish initial Train Progress Route, and LEG will startup loco etc.
         pMessage->sendOCCtoALLTrainLocation(rotaryPrompt[locoSelected].referenceNum, initialBlock);
         // Now take the same action ourselves when a new train is registered: establish new Train Progress rec for this loco.
         pTrainProgress->setInitialRoute(rotaryPrompt[locoSelected].referenceNum, initialBlock);
         // And update our local Block Reservation table to change the block status reservation from STATIC to this loco.
         pBlockReservation->reserveBlock(blockNum, initialBlock.routeRecType, rotaryPrompt[locoSelected].referenceNum);
+        // I don't *think* we need to do anything with pOccupancyLEDs...
       }
     }
   }
+  pRotaryEncoderPrompter->clearDisplay();
   // All occupied sensors are accounted for.
   // A Train Progress table has been initialized for this loco, with it sitting in it's originating block.
   // Block reservations are set up for every occupied block (as either STATIC or a real loco.)
@@ -607,30 +655,32 @@ void OCCRegistrationMode() {
   routeElement tempElement;
   tempElement.routeRecVal = 0;    // Block 0
   tempElement.routeRecType = BE;  // n/a
-  pMessage->sendOCCtoALLTrainLocation(0, tempElement);  // locoNum 0, block BE00.
+  pMessage->sendOCCtoALLTrainLocation(LOCO_ID_NULL, tempElement);  // locoNum 0 means we're done with Registration
 
-  // *** REGISTRATION COMPLETE! ***
-  // Now just wait for MAS to send us a Registration mode STOPPED message.
-  do {
-    msgType = pMessage->available();
-  } while (msgType != ' ');  // Wait for a message
-
-  // We received a message.  It had better be Register mode Stopped!
-  if (msgType != 'M') {
-    // WE HAVE A BIG PROBLEM because we would only expect a Register Mode Stopped message at this point
-    sprintf(lcdString, "REG MODE MSG ERR 1!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
-  }
-  // Okay we've received a Mode message.  So far, so good.
-  pMessage->getMAStoALLModeState(&modeCurrent, &stateCurrent);
-  // It had better be Register mode stopped, nothing else makes sense.
-  if ((modeCurrent != MODE_REGISTER) || (stateCurrent != STATE_STOPPED)) {
-    sprintf(lcdString, "REG MODE UPDT ERR 2!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
-  }
-  // Okay they want to stop Register mode.
-  // When REGISTER mode is stopped, all there is to do is turn off all the Control Panel LEDs.
+  // When REGISTER mode is finished, all there is to do is turn off all the Control Panel LEDs.
   pOccupancyLEDs->paintOneOccupancySensorLED(0);  // Sending 0 will turn off all WHITE LEDs
   pOccupancyLEDs->paintOneBlockOccupancyLED(0);  // Sending 0 will turn off all RED/BLUE LEDs
 
+  // *** REGISTRATION COMPLETE! ***
+  // We're done, so just wait for the mode-change message from MAS to exit back to main loop...
+
+  do {
+    haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, release relays and just stop
+    msgType = pMessage->available();  // Could only be ' ' or 'M' i.e. nothing or MODE message
+    if (msgType == 'M') {  // If we get a Mode message it can only be Registration Stopped.
+      pMessage->getMAStoALLModeState(&modeCurrent, &stateCurrent);
+      if ((modeCurrent != MODE_REGISTER) || (stateCurrent != STATE_STOPPED)) {
+        sprintf(lcdString, "REG MODE UPDT ERR!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
+      }
+      // Okay they want to stop Registration mode.
+    }
+    else if (msgType != ' ') {  // Remember, pMessage->available() returns ' ' if there is no message.
+      // WE HAVE A BIG PROBLEM with an unexpected message type at this point
+      sprintf(lcdString, "REG MODE MSG ERR!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
+    }
+  } while (stateCurrent != STATE_STOPPED);  // We'll just assume mode is still Register
+  sprintf(lcdString, "END REG MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
+  return;
 }
 
 // ********************************************************************************************************************************
@@ -813,7 +863,7 @@ void OCCAutoParkMode() {
   // When AUTO/PARK mode is stopped, turn off all the Control Panel LEDs to make it clear that Auto/Park mode has stopped.
   pOccupancyLEDs->paintOneOccupancySensorLED(0);  // Sending 0 will turn off all WHITE LEDs
   pOccupancyLEDs->paintOneBlockOccupancyLED(0);   // Sending 0 will turn off all RED/BLUE LEDs
-
+  return;
 }
 
 // ********************************************************************************************************************************

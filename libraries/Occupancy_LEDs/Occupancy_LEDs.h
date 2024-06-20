@@ -1,5 +1,8 @@
-// OCCUPANCY_LEDs.H Rev: 04/07/24.  FINISHED BUT NOT YET TESTED.
+// OCCUPANCY_LEDs.H Rev: 06/18/24.  FINISHED BUT NOT YET TESTED.
 // Part of O_OCC.
+// 06/18/24: Deleted getSensorStatus() as we don't need it.  Use SENSOR_BLOCK to keep track of sensor status T/C.  I.e. for
+//           purposes of occupancy LEDs, we'll update the sensor status as necessary, but we'll never need to retrieve those
+//           values outside of this class.  See pSensorBlock->setSensorStatus(), pSensorBlock->getSensorStatus().
 // This class is responsible for lighting the Control Panel WHITE SENSOR OCCUPANCY SENSOR LEDs and BLUE/RED BLOCK OCCUPANCY LEDs.
 // Illumination depends on Mode and State.
 // For this class to function properly, it is critical to call updateSensorStatus() every time a sensor change occurs.
@@ -24,10 +27,6 @@ class Occupancy_LEDs {
     // Update our private sensor status array.  This does not change the illumination of any LEDs.
     // Appropriate for ALL MODES.  We will only receive Sensor Change messages when MAS deems them appropriate.
     // Call this function EVERY TIME a Sensor Change message is received, to keep our private m_sensorStatus[] array up to date.
-
-    char getSensorStatus(const byte t_sensorNum);
-    // Does NOT return actual sensor status; returns the status per our internal array which *should* match actual.
-    // Returns SENSOR_STATUS_TRIPPED ('T') or SENSOR_STATUS_CLEARED ('C')
 
     void setBlockStatic(const byte t_blockNum);
     // Populated during Registration, used during Auto/Park when illuminating RED/BLUE BLOCK OCCUPANCY LEDs.

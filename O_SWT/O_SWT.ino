@@ -153,7 +153,7 @@ void setup() {
   // *** INITIALIZE WATCHDOG TIMER ***
   wdtSetup();                                 // Set up the watchdog timer to prevent solenoids from burning out
 
-}
+}  // End of setup()
 
 // *****************************************************************************************
 // ***************************************  L O O P  ***************************************
@@ -233,7 +233,7 @@ void loop() {
   // So this is a safe place to reset the watchdog counter.
   wdt_reset();
 
-}
+}  // End of loop()
 
 // *****************************************************************************************
 // ************************ F U N C T I O N   D E F I N I T I O N S ************************

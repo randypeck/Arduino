@@ -1,6 +1,7 @@
-// MESSAGE.CPP Rev: 03/04/24.  COMPLETE AND READY FOR TESTING *****************************************************************************************************************
+// MESSAGE.CPP Rev: 06/17/24.  COMPLETE AND READY FOR TESTING *****************************************************************************************************************
 
 // 03/04/24: Added code to filter out Mode message STATE_STOPPING for OCC as no OCC mode cares about STOPPING.
+// 06/17/24: Removed check for locoNum < 1 in getOCCtoALLTrainLocation since loco 0 used to indicate "done."
 
 // LEFT OFF HERE 8/17/22 ERROR:
 // There is a problem with sendMAStoALLRoute and getMAStoALLRoute - transferring two bytes to/from m_RS485Buf.
@@ -127,7 +128,7 @@ char Message::available() {
     // Now wait for a reply...
     // There is NO legitimate reason why we would get ANY RS485 message from anyone except BTN at this point.
     m_RS485Buf[RS485_TO_OFFSET] = 0;  // Anything other than ARDUINO_BTN
-    while (getMessageRS485(m_RS485Buf) == false) { }  // Wait until we have a complete new incoming message.
+    while (getMessageRS485(m_RS485Buf) == false) {}  // Wait until we have a complete new incoming message.
     // We should NEVER get a message that isn't to MAS from BTN, but we'll check anyway...
     if ((m_RS485Buf[RS485_FROM_OFFSET] != ARDUINO_BTN) ||
         (m_RS485Buf[RS485_TO_OFFSET] != ARDUINO_MAS)||
@@ -146,7 +147,7 @@ char Message::available() {
     // Now wait for a reply...
     // There is NO legitimate reason why we would get ANY RS485 message from anyone except SNS at this point.
     m_RS485Buf[RS485_TO_OFFSET] = 0;   // Anything other than ARDUINO_SNS
-    while (getMessageRS485(m_RS485Buf) == false) { }  // Wait until we have a complete new incoming message.
+    while (getMessageRS485(m_RS485Buf) == false) {}  // Wait until we have a complete new incoming message.
     // We should NEVER get a message that isn't to MAS from SNS, but we'll check anyway...
     if ((m_RS485Buf[RS485_FROM_OFFSET] != ARDUINO_SNS) ||
         (m_RS485Buf[RS485_TO_OFFSET] != ARDUINO_ALL) ||
@@ -259,7 +260,6 @@ void Message::getOCCtoLEGAudioOn(char* t_audioOrNoAudio) {
   return;
 }
 
-
 void Message::sendOCCtoLEGDebugOn(const char t_debugOrNoDebug) {  // t_debugOrNoDebug = D|N
   int recLen = 6;
   m_RS485Buf[RS485_LEN_OFFSET] = recLen;  // Length is 6 bytes: Length, From, To, 'D', D|N, CRC
@@ -298,10 +298,7 @@ void Message::sendOCCtoALLTrainLocation(const byte t_locoNum, const routeElement
 
 void Message::getOCCtoALLTrainLocation(byte* t_locoNum, routeElement* t_locoBlock) {
   // Note that although we pass a routeElement as a function parm, i.e. BW03, we pass byte blockNum and char blockDir in message.
-  *t_locoNum = m_RS485Buf[RS485_OCC_ALL_REGISTER_LOCO_NUM_OFFSET];  // locoNum should be 1..n, or 99 for static train.
-  if (*t_locoNum < 1) {
-    sprintf(lcdString, "RS485 no train zero!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
-  }
+  *t_locoNum = m_RS485Buf[RS485_OCC_ALL_REGISTER_LOCO_NUM_OFFSET];  // locoNum should be 1..n, or 99 for static or 0 for "done."
   // Here is some tricky handling of a struct element passed via pointer...
   // Explanation: https://stackoverflow.com/questions/16841018/modifying-a-struct-passed-as-a-pointer-c
   (*t_locoBlock).routeRecVal = m_RS485Buf[RS485_OCC_ALL_REGISTER_BLOCK_NUM_OFFSET];  // Same as t_locoBlock->routeRecVal
@@ -644,8 +641,8 @@ void Message::sendMessageRS485(byte t_msg[]) {
   // This seems most likely to happen when LEG is receiving a long route, and also trying to populate and execute commands in the
   // Delayed Action table.  We should know if this happens because the receive function *should* detect a full input buffer and
   // do an emergency stop.  May not be a good permanent fix.  See header.
-  while ((millis() - m_messageLastSentTime) < RS485_MESSAGE_DELAY_MS) { }  // Pause to help prevent receiver's in buffer overflow.
-  while (m_mySerial->availableForWrite() < tMsgLen) { }  // Wait until there is enough room in the outgoing buffer for this message.
+  while ((millis() - m_messageLastSentTime) < RS485_MESSAGE_DELAY_MS) {}  // Pause to help prevent receiver's in buffer overflow.
+  while (m_mySerial->availableForWrite() < tMsgLen) {}  // Wait until there is enough room in the outgoing buffer for this message.
   m_mySerial->write(t_msg, tMsgLen);  
   // 12/15/20: In addition to waiting *before* we transmit, to avoid overflowing our own output buffer, and the recipient's input
   // buffer, we will now pause until the entire message has been transmitted.  If we eliminate the flush() command, then we will

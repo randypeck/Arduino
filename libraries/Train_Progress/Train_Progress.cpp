@@ -39,6 +39,7 @@ Train_Progress::Train_Progress() {   // Constructor
 void Train_Progress::begin(Block_Reservation* t_pBlockReservation, Route_Reference* t_pRoute) {
   // Rev: 04/15/24.
   // Initialize the header and route for all 50 trains to zero.
+  // Okay to call this every time we begin Registration, not allocating anything new.
   m_pBlockReservation = t_pBlockReservation;
   if (m_pBlockReservation == nullptr) {
     sprintf(lcdString, "UN-INIT'd BR PTR"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(5);
@@ -567,7 +568,6 @@ void Train_Progress::setNextToTripPtr(const byte t_locoNum, const byte t_nextToT
   m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
   m_pTrainProgress[m_trainProgressLocoTableNum].nextToTripPtr = t_nextToTripPtr;
   return;
-
 }
 
 void Train_Progress::setNextToClearPtr(const byte t_locoNum, const byte t_nextToClearPtr) {
@@ -579,7 +579,6 @@ void Train_Progress::setNextToClearPtr(const byte t_locoNum, const byte t_nextTo
   m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
   m_pTrainProgress[m_trainProgressLocoTableNum].nextToClearPtr = t_nextToClearPtr;
   return;
-
 }
 
 void Train_Progress::setTailPtr(const byte t_locoNum, const byte t_tailPtr) {
@@ -591,7 +590,6 @@ void Train_Progress::setTailPtr(const byte t_locoNum, const byte t_tailPtr) {
   m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
   m_pTrainProgress[m_trainProgressLocoTableNum].tailPtr = t_tailPtr;
   return;
-
 }
 
 // ***** PRIVATE FUNCTIONS ***
