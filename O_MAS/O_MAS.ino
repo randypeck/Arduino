@@ -1,4 +1,4 @@
-// O_MAS.INO Rev: 06/18/24.
+// O_MAS.INO Rev: 06/21/24.
 // MAS is the master controller; everyone else is a slave.
 
 // 03/03/24: No more Dispatch Board object.
@@ -52,7 +52,7 @@
 #include <Train_Consts_Global.h>
 #include <Train_Functions.h>
 const byte THIS_MODULE = ARDUINO_MAS;  // Global needed by Train_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "MAS 06/18/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "MAS 06/21/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Train_Functions.h>" includes the line "extern char lcdString[];" which effectively makes it a global.
 // No need to pass lcdString[] to any functions that use it!
 
@@ -456,7 +456,7 @@ void MASRegistrationMode() {
   }
 
   delay(3000);  // Pause to let other modules (esp. OCC) perform their initialization before receiving.
-
+  sprintf(lcdString, "GETTING SENSORS..."); pLCD2004->println(lcdString); Serial.println(lcdString);
   // When starting REGISTRATION mode, SNS will always immediately send status of every sensor.
   // Standby and recieve a Sensor Status from every sensor.  No need to clear first as we'll get them all.
   for (int i = 1; i <= TOTAL_SENSORS; i++) {
@@ -469,6 +469,7 @@ void MASRegistrationMode() {
     if ((trippedOrCleared != SENSOR_STATUS_TRIPPED) && (trippedOrCleared != SENSOR_STATUS_CLEARED)) {
       sprintf(lcdString, "SNS %i %c T|C ERR", sensorNum, trippedOrCleared); pLCD2004->println(lcdString); endWithFlashingLED(1);
     }
+    sprintf(lcdString, "SNS %i %c", sensorNum, trippedOrCleared); pLCD2004->println(lcdString); Serial.println(lcdString);
 
     // Store the sensor status T/C in the Sensor Block table.
     pSensorBlock->setSensorStatus(sensorNum, trippedOrCleared);
@@ -476,9 +477,12 @@ void MASRegistrationMode() {
     // If the sensor is TRIPPED, then reserve the corresponding block as Static in the Block Reservation table. Later, as we prompt
     // the user for the loco ID of each occupied block, we'll update the block reservation for each non-STATIC train.
     if (trippedOrCleared == 'T') {
+      sprintf(lcdString, "Res Blk "); pLCD2004->println(lcdString); Serial.print(lcdString);
       if (pSensorBlock->whichEnd(sensorNum) == LOCO_DIRECTION_EAST) {  // 'E'
+        sprintf(lcdString, "%i E",pSensorBlock->whichBlock(sensorNum)); pLCD2004->println(lcdString); Serial.println(lcdString);
         pBlockReservation->reserveBlock(pSensorBlock->whichBlock(sensorNum), BE, LOCO_ID_STATIC);
       } else if (pSensorBlock->whichEnd(sensorNum) == LOCO_DIRECTION_WEST) {  // 'W'
+        sprintf(lcdString, "%i W", pSensorBlock->whichBlock(sensorNum)); pLCD2004->println(lcdString); Serial.println(lcdString);
         pBlockReservation->reserveBlock(pSensorBlock->whichBlock(sensorNum), BW, LOCO_ID_STATIC);
       } else {  // Not E or W, we have a problem!
         sprintf(lcdString, "BLK END %i %c", sensorNum, pSensorBlock->whichEnd(sensorNum)); pLCD2004->println(lcdString); endWithFlashingLED(1);
@@ -486,9 +490,12 @@ void MASRegistrationMode() {
     }
     delay(50);  // To avoid overwhelming OCC's incoming RS485 buffer which will overflow without a delay here
   }
+  sprintf(lcdString, "Thru BK RES loop"); pLCD2004->println(lcdString); Serial.println(lcdString);
+
 
   // *** NOW OCC WILL PROMPT OPERATOR FOR STARTUP FAST/SLOW, SMOKE ON/OFF, AUDIO ON/OFF, DEBUG ON/OFF (and send to us) ***
   while (pMessage->available() != 'F') {}  // Wait for Fast/Slow startup message
+  sprintf(lcdString, "Rec'd F/S Msg"); pLCD2004->println(lcdString); Serial.println(lcdString);
   pMessage->getOCCtoLEGFastOrSlow(&fastOrSlow);
   if ((fastOrSlow != 'F') && (fastOrSlow != 'S')) {
     sprintf(lcdString, "FAST SLOW MSG ERR"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);

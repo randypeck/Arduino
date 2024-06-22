@@ -1,4 +1,4 @@
-// O_LEG.INO Rev: 06/17/24.
+// O_LEG.INO Rev: 06/21/24.
 // LEG controls physical trains via the Train Progress and Delayed Action tables, and also controls accessories.
 // LEG also monitors the control panel track-power toggle switches, to turn the four PowerMasters on and off at any time.
 // 04/02/24: LEG Conductor/Engineer and Train Progress will always assume that Turnouts are being thrown elsewhere and won't worry
@@ -61,7 +61,7 @@
 #include <Train_Consts_Global.h>
 #include <Train_Functions.h>
 const byte THIS_MODULE = ARDUINO_LEG;  // Global needed by Train_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "LEG 06/17/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "LEG 06/21/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 
 // *** SERIAL LCD DISPLAY CLASS ***
 // #include <Display_2004.h> is already in <Train_Functions.h> so not needed here.
@@ -468,7 +468,9 @@ sprintf(lcdString, "3"); pLCD2004->println(lcdString);
   }
 
   // *** NOW OCC WILL PROMPT OPERATOR FOR STARTUP FAST/SLOW, SMOKE ON/OFF, AUDIO ON/OFF, DEBUG ON/OFF (and send to us) ***
+  sprintf(lcdString, "Waiting FAST SLOW"); pLCD2004->println(lcdString); Serial.println(lcdString);
   while (pMessage->available() != 'F') {}  // Wait for Fast/Slow startup message
+  sprintf(lcdString, "Got FAST SLOW"); pLCD2004->println(lcdString); Serial.println(lcdString);
   pMessage->getOCCtoLEGFastOrSlow(&fastOrSlow);
   if ((fastOrSlow != 'F') && (fastOrSlow != 'S')) {
     sprintf(lcdString, "FAST SLOW MSG ERR"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
@@ -515,22 +517,28 @@ sprintf(lcdString, "3"); pLCD2004->println(lcdString);
       } else {  // Slow startup
         pDelayedAction->populateLocoCommand(millis(), locoNum, LEGACY_ACTION_STARTUP_SLOW, 0, 0);
       }
-      if (smokeOn == 'K') {  // Turn on smoke.  Possible levels are 0..3
-        pDelayedAction->populateLocoCommand(millis() + 100, locoNum, LEGACY_ACTION_SET_SMOKE, 3, 0);
+      if (smokeOn == 'S') {  // Turn on smoke.  Possible levels are 0..3
+        pDelayedAction->populateLocoCommand(millis() + 500, locoNum, LEGACY_ACTION_SET_SMOKE, 3, 0);
         // If we start with smoke on, add a command to turn it off in five minutes.
-        pDelayedAction->populateLocoCommand(millis() + SMOKE_TIME_LIMIT, locoNum, LEGACY_ACTION_SET_SMOKE, 0, 0);
+        //pDelayedAction->populateLocoCommand(millis() + SMOKE_TIME_LIMIT, locoNum, LEGACY_ACTION_SET_SMOKE, 0, 0);
+        pDelayedAction->populateLocoCommand(millis() + 5000, locoNum, LEGACY_ACTION_SET_SMOKE, 0, 0);
       } else {  // No smoke
-        pDelayedAction->populateLocoCommand(millis() + 100, locoNum, LEGACY_ACTION_SET_SMOKE, 0, 0);
+        pDelayedAction->populateLocoCommand(millis() + 500, locoNum, LEGACY_ACTION_SET_SMOKE, 0, 0);
       }
+
+// Adding some extra commands here to test out some features...
+      pDelayedAction->populateLocoWhistleHorn(millis() + 3000, locoNum, LEGACY_PATTERN_BACKING);
+      pDelayedAction->populateLocoSpeedChange(millis() + 1500, locoNum, 2, 200, 50);
+
+
       sprintf(lcdString, "REG'D LOCO %i", locoNum); pLCD2004->println(lcdString); Serial.println(lcdString);
     } else {  // Loconum == 0 == LOCO_ID_NULL means we're done
       sprintf(lcdString, "REG'N COMPLETE!"); pLCD2004->println(lcdString); Serial.println(lcdString);
     }
   }
   // When we fall through to here, OCC Registrar has finished sending us train locations.
-  // Theoretically we could still have un-executed ripe Delayed Action commands created for last loco i.e. smoke on/off, but only
-  // if the operator pressed "Done" in less than 100ms (the delay we added to turn smoke on/off for the last-registered loco.)
-  // So we won't bother adding pEngineer->executeConductorCommand() here.
+  // We could still have un-executed ripe Delayed Action commands created for last loco, so we will continue to call
+  // pEngineer->executeConductorCommand(); upon our return to loop().
 
   // *** REGISTRATION COMPLETE! ***
   // We're done, so just wait for the mode-change message from MAS to exit back to main loop...

@@ -1,4 +1,4 @@
-// O_OCC.INO Rev: 06/18/24.  FINISHED BUT NOT TESTED.
+// O_OCC.INO Rev: 06/21/24.  FINISHED BUT NOT TESTED.
 // OCC paints the WHITE Occupancy Sensor LEDs and RED/BLUE Block Occupancy LEDs on the Control Panel.
 // In Registration mode, OCC also prompts operator for initial data, using the Control Panel's Rotary Encoder and 8-Char display.
 // In Auto/Park modes, OCC also autonomously sends arrival and departure announcements to various stations around the layout.
@@ -75,7 +75,7 @@
 #include <Train_Consts_Global.h>
 #include <Train_Functions.h>
 const byte THIS_MODULE = ARDUINO_OCC;  // Global needed by Train_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "OCC 06/18/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "OCC 06/21/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 
 // *** SERIAL LCD DISPLAY CLASS ***
 // #include <Display_2004.h> is already in <Train_Functions.h> so not needed here.
@@ -157,7 +157,7 @@ char debugOn    = ' ';  // Debug can be D|N
 // 'STATIC'.  If we ever add support for 'DONE' then dimension to TOTAL_TRAINS + 2.
 const byte MAX_ROTARY_PROMPTS = TOTAL_TRAINS + 1;  // + 1 allows up to every train plus STATIC; the most we'd ever need.
 rotaryEncoderPromptStruct rotaryPrompt[MAX_ROTARY_PROMPTS];  // expired (bool), referenceNum, and alphaPrompt[9]
-byte numRotaryPrompts = 0;  // Gets passed to pRotaryEncoderPrompter->getSelection() as number of elements to use.
+byte topRotaryElement = 0;  // Gets passed to pRotaryEncoderPrompter->getSelection() as number of elements to use.
 
 // *****************************************************************************************
 // **************************************  S E T U P  **************************************
@@ -514,7 +514,7 @@ void OCCRegistrationMode() {
   rotaryPrompt[1].expired = false;
   rotaryPrompt[1].referenceNum = 0;
   strcpy(rotaryPrompt[1].alphaPrompt, "SLOW PWR");
-  byte promptSelected = pRotaryEncoderPrompter->getSelection(rotaryPrompt, 2, 0);
+  byte promptSelected = pRotaryEncoderPrompter->getSelection(rotaryPrompt, 1, 0);
   if (promptSelected == 0) {
     fastOrSlow = 'F';
   } else {
@@ -525,7 +525,7 @@ void OCCRegistrationMode() {
   // Prompt for Smoke on or off.  Note: we may want LEG to always turn off smoke after 10 minutes automatically.
   strcpy(rotaryPrompt[0].alphaPrompt, "SMOKE N");
   strcpy(rotaryPrompt[1].alphaPrompt, "SMOKE Y");
-  promptSelected = pRotaryEncoderPrompter->getSelection(rotaryPrompt, 2, 0);
+  promptSelected = pRotaryEncoderPrompter->getSelection(rotaryPrompt, 1, 0);
   if (promptSelected == 0) {
     smokeOn = 'N';
   } else {
@@ -536,7 +536,7 @@ void OCCRegistrationMode() {
   // Prompt for Audio on or off (can apply to OCC station announcements and/or LEG loco dialogue
   strcpy(rotaryPrompt[0].alphaPrompt, "AUDIO N");
   strcpy(rotaryPrompt[1].alphaPrompt, "AUDIO Y");
-  promptSelected = pRotaryEncoderPrompter->getSelection(rotaryPrompt, 2, 0);
+  promptSelected = pRotaryEncoderPrompter->getSelection(rotaryPrompt, 1, 0);
   if (promptSelected == 0) {
     audioOn = 'N';
   } else {
@@ -547,7 +547,7 @@ void OCCRegistrationMode() {
   // Prompt for Debug Mode on or off.
   strcpy(rotaryPrompt[0].alphaPrompt, "DEBUG N");
   strcpy(rotaryPrompt[1].alphaPrompt, "DEBUG Y");
-  promptSelected = pRotaryEncoderPrompter->getSelection(rotaryPrompt, 2, 0);
+  promptSelected = pRotaryEncoderPrompter->getSelection(rotaryPrompt, 1, 0);
   if (promptSelected == 0) {
     pMessage->sendOCCtoLEGDebugOn('N');  // No debug
   } else {
@@ -562,26 +562,26 @@ void OCCRegistrationMode() {
   pOccupancyLEDs->paintAllOccupancySensorLEDs(modeCurrent, stateCurrent);
   // Populate local array for the set of Loco Description prompts to use with the 8-char A/N display and Rotary Encoder.
   // The first choice for the operator will be "STATIC"
-  numRotaryPrompts = 0;
-  rotaryPrompt[numRotaryPrompts].expired = false;
-  rotaryPrompt[numRotaryPrompts].referenceNum = LOCO_ID_STATIC;  // ID is 99, but will go in element 0.
-  strcpy(rotaryPrompt[numRotaryPrompts].alphaPrompt, "STATIC");
+  topRotaryElement = 0;
+  rotaryPrompt[topRotaryElement].expired = false;
+  rotaryPrompt[topRotaryElement].referenceNum = LOCO_ID_STATIC;  // ID is 99, but will go in element 0.
+  strcpy(rotaryPrompt[topRotaryElement].alphaPrompt, "STATIC");
   // Scan the entire Loco Ref table and ADD EVERY ACTIVE LOCO IN LOCOREF to the rotaryPrompt[] array.
   for (byte locoNum = 1; locoNum <= TOTAL_TRAINS; locoNum++) {
     if (pLoco->active(locoNum) == true) {  // If this is a Loco Ref record with an actual loco's data in it
-      numRotaryPrompts++;
-      rotaryPrompt[numRotaryPrompts].expired = false;
+      topRotaryElement++;
+      rotaryPrompt[topRotaryElement].expired = false;
       if (pLoco->locoNum(locoNum) != locoNum) {
         sprintf(lcdString, "UNEXPECTED LOCONUM"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
       }
-      rotaryPrompt[numRotaryPrompts].referenceNum = locoNum;
-      pLoco->alphaDesc(locoNum, rotaryPrompt[numRotaryPrompts].alphaPrompt, 8);  // Returns text via pointer (array)
+      rotaryPrompt[topRotaryElement].referenceNum = locoNum;
+      pLoco->alphaDesc(locoNum, rotaryPrompt[topRotaryElement].alphaPrompt, 8);  // Returns text via pointer (array)
       sprintf(lcdString, "Found loco %i", locoNum); pLCD2004->println(lcdString); Serial.println(lcdString);
     }
   }
   sprintf(lcdString, "Done finding locos."); pLCD2004->println(lcdString); Serial.println(lcdString);
   // Now we have a Rotary Encoder array loaded with every active locoRef name, plus STATIC.
-  // Our index into rotaryPrompt[] will be 0..(numRotaryPrompts - 1)
+  // Our index into rotaryPrompt[] will be 0..(topRotaryElement - 1)
   // For each occuped sensor, ask operator what loco is there.
   for (sensorNum = 1; sensorNum <= TOTAL_SENSORS; sensorNum++) {  // sensorNum variable declared above setup()
     sprintf(lcdString, "SNS %i %c", sensorNum, pSensorBlock->getSensorStatus(sensorNum));  pLCD2004->println(lcdString); Serial.println(lcdString);
@@ -589,6 +589,7 @@ void OCCRegistrationMode() {
       sprintf(lcdString, "Tripped sensor %i", sensorNum); pLCD2004->println(lcdString); Serial.println(lcdString);
       byte blockNum = pSensorBlock->whichBlock(sensorNum);
       char whichEnd = pSensorBlock->whichEnd(sensorNum);  // LOCO_DIRECTION_EAST == 'E', or LOCO_DIRECTION_WEST == 'W'
+      sprintf(lcdString, "BLOCK %i", blockNum); Serial.print(lcdString);
       // So we know that block blockNum is occupied and at which end (thus, which direction the equipment is facing.)
       // Create a temp route element to store the block/dir (if it's a non-STATIC train) that MAS/OCC/LEG can use to populate the
       // Train Progress table's initial route for this loco (will disregard if this is ID'd as a STATIC train.)
@@ -596,8 +597,10 @@ void OCCRegistrationMode() {
       initialBlock.routeRecVal = blockNum;
       if (whichEnd == LOCO_DIRECTION_EAST) {
         initialBlock.routeRecType = BE;
+        sprintf(lcdString, "EAST"); Serial.println(lcdString);
       } else {  // Better be LOCO_DIRECTION_WEST!
         initialBlock.routeRecType = BW;
+        sprintf(lcdString, "WEST"); Serial.println(lcdString);
       }
       // Illuminate the RED block-occupancy LED we want to prompt user about.  Turns all others off automatically.
       pOccupancyLEDs->paintOneBlockOccupancyLED(blockNum);
@@ -608,7 +611,7 @@ void OCCRegistrationMode() {
       // going to have to pass the rotaryPrompt[] array index that contains the locoNum and description for our default loco.
       // So scan rotaryPrompt[].referencNum (locoNum) until we find defaultLocoInThisBlock[blockNum - 1]
       byte startElement = 0;  // We'll default to rotary prompt element 0 = STATIC, but try to find a previously-occupying loco.
-      for (byte rotaryElementToCheck = 0; rotaryElementToCheck < numRotaryPrompts; rotaryElementToCheck++) {
+      for (byte rotaryElementToCheck = 0; rotaryElementToCheck <= topRotaryElement; rotaryElementToCheck++) {
         if (rotaryPrompt[rotaryElementToCheck].referenceNum == defaultLocoInThisBlock[blockNum - 1]) {
           startElement = rotaryElementToCheck;
           break;
@@ -617,18 +620,18 @@ void OCCRegistrationMode() {
       // Now if this loco was previously found in the Block Res'n table, we'll use it as our default choice for the user.
       // Prompt user for loco, starting with startElement (could be STATIC or the last-known loco in this block.)
       // getSelection() returns the offset into the rotary array that the user selected.
-      byte rotaryArrayElement = pRotaryEncoderPrompter->getSelection(rotaryPrompt, numRotaryPrompts, startElement);
-      // rotaryArrayElement will be the rotaryPrompt[] array index the user chose, 0..numRotaryPrompts - 1.
+      byte rotaryArrayElement = pRotaryEncoderPrompter->getSelection(rotaryPrompt, topRotaryElement, startElement);
+      // rotaryArrayElement will be the rotaryPrompt[] array index the user chose, 0..topRotaryElement - 1.
       byte locoSelected = rotaryPrompt[rotaryArrayElement].referenceNum;
       // Before we forget, flag their selection as expired as we won't ever say a loco is on two blocks at the same time!
-      rotaryPrompt[locoSelected].expired = true;
+      rotaryPrompt[rotaryArrayElement].expired = true;
       Serial.print("Loco selected array offset = "); Serial.println(rotaryArrayElement);
       Serial.print("Ref Num = "); Serial.println(locoSelected);  // locoNum or LOCO_ID_STATIC
-      Serial.println("Item desc = "); Serial.println(rotaryPrompt[rotaryArrayElement].alphaPrompt);  // locoDesc or STATC
+      Serial.print("Item desc = "); Serial.println(rotaryPrompt[rotaryArrayElement].alphaPrompt);  // locoDesc or STATC
       // We have previously updated the Block Res'n table showing every occupied block is reserved for STATIC, and also sent that
       // to MAS and LEG.  But if the operator chose anything other than STATIC for this occupied block (i.e. a real loco), then we
       // and MAS and LEG will all need to update the Block Reservation table to reflect this loco being in that block.
-      if (rotaryPrompt[locoSelected].referenceNum == LOCO_ID_STATIC) {
+      if (locoSelected == LOCO_ID_STATIC) {
         // Add this to the Occupancy_LEDs static block array (all were initialized above to not-STATIC.)  This is ONLY used
         // when painting Block Occupancy RED/BLUE LEDs, since we can't derive this from Train Progress.
         pOccupancyLEDs->setBlockStatic(blockNum);
@@ -637,19 +640,24 @@ void OCCRegistrationMode() {
       } else {  // Operator chose an actual loco that is occupying the block, NOT STATIC
         // Notify everyone that we have a real loco to register!  rotaryPrompt[locoSelected].referenceNum is locoNum.
         // MAS and LEG will use this to establish initial Train Progress Route, and LEG will startup loco etc.
-        pMessage->sendOCCtoALLTrainLocation(rotaryPrompt[locoSelected].referenceNum, initialBlock);
+        pMessage->sendOCCtoALLTrainLocation(locoSelected, initialBlock);
         // Now take the same action ourselves when a new train is registered: establish new Train Progress rec for this loco.
-        pTrainProgress->setInitialRoute(rotaryPrompt[locoSelected].referenceNum, initialBlock);
+        pTrainProgress->setInitialRoute(locoSelected, initialBlock);
         // And update our local Block Reservation table to change the block status reservation from STATIC to this loco.
-        pBlockReservation->reserveBlock(blockNum, initialBlock.routeRecType, rotaryPrompt[locoSelected].referenceNum);
+        pBlockReservation->reserveBlock(blockNum, initialBlock.routeRecType, locoSelected);
         // I don't *think* we need to do anything with pOccupancyLEDs...
       }
     }
   }
   pRotaryEncoderPrompter->clearDisplay();
+  sprintf(lcdString, "DISPLAY CLEARED"); pLCD2004->println(lcdString); Serial.println(lcdString);
   // All occupied sensors are accounted for.
   // A Train Progress table has been initialized for this loco, with it sitting in it's originating block.
   // Block reservations are set up for every occupied block (as either STATIC or a real loco.)
+
+  // Now that we're done, turn off all the Control Panel LEDs.
+  pOccupancyLEDs->paintOneOccupancySensorLED(0);  // Sending 0 will turn off all WHITE LEDs
+  pOccupancyLEDs->paintOneBlockOccupancyLED(0);  // Sending 0 will turn off all RED/BLUE LEDs
 
   // Send a "train location" message with locoNum 0 to signal we're done.
   routeElement tempElement;
@@ -657,13 +665,9 @@ void OCCRegistrationMode() {
   tempElement.routeRecType = BE;  // n/a
   pMessage->sendOCCtoALLTrainLocation(LOCO_ID_NULL, tempElement);  // locoNum 0 means we're done with Registration
 
-  // When REGISTER mode is finished, all there is to do is turn off all the Control Panel LEDs.
-  pOccupancyLEDs->paintOneOccupancySensorLED(0);  // Sending 0 will turn off all WHITE LEDs
-  pOccupancyLEDs->paintOneBlockOccupancyLED(0);  // Sending 0 will turn off all RED/BLUE LEDs
-
   // *** REGISTRATION COMPLETE! ***
   // We're done, so just wait for the mode-change message from MAS to exit back to main loop...
-
+  sprintf(lcdString, "WAITING FOR MODE CHG"); pLCD2004->println(lcdString); Serial.println(lcdString);
   do {
     haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, release relays and just stop
     msgType = pMessage->available();  // Could only be ' ' or 'M' i.e. nothing or MODE message

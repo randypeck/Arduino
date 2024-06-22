@@ -21,14 +21,14 @@ void Rotary_Prompt::clearDisplay() {
   return;
 }
 
-byte Rotary_Prompt::getSelection(rotaryEncoderPromptStruct* t_encoderPromptArray, byte t_numElements, byte t_startElement) {
-  // Rev: 03/14/23.
+byte Rotary_Prompt::getSelection(rotaryEncoderPromptStruct* t_encoderPromptArray, byte t_topElement, byte t_startElement) {
+  // Rev: 06/21/24.  Re-wrote.
   // t_encoderPromptArray is an array of 8-character strings to use as prompts, including some other details.
-  // t_numElement is the number of elements in the passed array (1..n)
-  // t_startElement is the element number to use as the first prompt (0..n-1)
+  // t_topElement is the number of the highest element in the passed array (0..t_topElement)
+  // t_startElement is the element number to use as the first prompt (0..t_topElement)
   // Send strings one at a time to the 8-char a/n LED backpack and wait for operator to either turn the dial left, right, or press.
   // Upon turning left or right, display the next element/string below or above the current one, as a circular buffer.
-  // Upon registering a press, return array index value 0..n-1 of the element/string that was selected.
+  // Upon registering a press, return array index value 0..t_topElement of the element/string that was selected.
   // Special feature is if caller sets t_encoderPromptArray[t_startElement].expired == true, that element will be skipped.
   // However there is no checking to confirm if *every* element is expired, in which case this function will hang.
   // Also there is no checking if the first element to display (t_startElement) is expired; we assume it won't be.
@@ -40,16 +40,21 @@ byte Rotary_Prompt::getSelection(rotaryEncoderPromptStruct* t_encoderPromptArray
     byte rotaryResponse = getRotaryResponse();  // Returns DIR_CCW, DIR_CW, or DIR_PUSH
 
     if (rotaryResponse == DIR_CCW) {        // Operator turned left; point at the next previous un-expired element
-      // Strange but true -- this magical hocus pokus will convert -1 into t_numElements - 1.
-      // I.e. if t_numElements = 100, and we send t_startElement = 0, this function will return 99.
-      // Same as take mod of number and then check if the result is less than 0, if so, just add the modular number.
       do {
-        t_startElement = (((t_startElement - 1) % t_numElements) + t_numElements) % t_numElements;
+        if (t_startElement == 0) {
+          t_startElement = t_topElement;
+        }
+        else {
+          t_startElement = t_startElement - 1;
+        }
       } while (t_encoderPromptArray[t_startElement].expired == true);
 
     } else if (rotaryResponse == DIR_CW) {    // Operator turned right; point at the next un-expired element
       do {
-        t_startElement = (t_startElement + 1) % t_numElements;
+        t_startElement = t_startElement + 1;
+        if (t_startElement > t_topElement) {
+          t_startElement = 0;
+        }
       } while (t_encoderPromptArray[t_startElement].expired == true);
 
     } else if (rotaryResponse == DIR_PUSH) {  // Operator selected something!

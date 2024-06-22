@@ -1,5 +1,6 @@
-// MESSAGE.CPP Rev: 06/17/24.  COMPLETE AND READY FOR TESTING *****************************************************************************************************************
+// MESSAGE.CPP Rev: 06/21/24.  COMPLETE AND READY FOR TESTING *****************************************************************************************************************
 
+// 06/21/24: Re-worked forThisModule() which messages which modules want to know about.
 // 03/04/24: Added code to filter out Mode message STATE_STOPPING for OCC as no OCC mode cares about STOPPING.
 // 06/17/24: Removed check for locoNum < 1 in getOCCtoALLTrainLocation since loco 0 used to indicate "done."
 
@@ -536,11 +537,17 @@ void Message::getSNStoALLSensorStatus(byte* t_sensorNum, char* t_sensorStatus) {
 // *****************************************************************************************
 
 bool Message::forThisModule(const byte t_msg[]) {  // Check if the message in the buffer is for the calling module or not.
+  // Rev: 06/21/24.  Re-worked which messages which modules want to know about.
   // This function only works if it is called with a legitimate incoming message in the t_msg[] buffer.
   // For any given module, it will only care about incoming messages that are address specifically to it, and also *some* messages
   // that are addressed to ALL.
   char mType = t_msg[RS485_TYPE_OFFSET];  // mType just saves us from constantly typing t_msg[RS485_TYPE_OFFSET] below
-  // First, let's just check/eliminate messages addressed specifically to the calling module...
+  // MAS wants to see everything, even i.e. OCC to LEG transmitting Fast/Slow, Smoke/No Smoke, etc.
+  if (THIS_MODULE == ARDUINO_MAS) {  // Check types of messages that MAS cares about...
+    // MAS cares about all messages to it and to all, so simply return true (available() will return msg type to caller.)
+    return true;
+  }
+  // All modules will want to see messages addressed to them, EXCEPT for a few exceptions that BTN/SNS/LEG don't need to see.
   if (t_msg[RS485_TO_OFFSET] == THIS_MODULE) {  // Everyone cares about messages specifically addressed to them!
     // EXCEPT, BTN doesn't care about receiving (here) a message from MAS "okay to transmit", because we read that
     // message as part of the sendBTNtoMASButton() function.
@@ -559,18 +566,18 @@ bool Message::forThisModule(const byte t_msg[]) {  // Check if the message in th
     // If we ever have data that LEG wants to transmit to MAS, then we'll need to evaluate here whether or not it's "relevant."
     // I.e. if it's just an "okay to transmit" from MAS, then we will likely want to ignore it hear and handle it similarly to the
     // way we handle this in BTN.  But if we ever want to solicit anything from LEG, we'll need to allow that here.
+    // NOW, FOR ALL OTHER MESSAGES ADDRESSED SPECIFICALLY TO THIS_MODULE, they'll want to see it.
     return true;
   }
-  // Now if the message is to any module other than ALL, then THIS_MODULE won't care about it, so eliminate those...
-  if ((t_msg[RS485_TO_OFFSET] != THIS_MODULE) && (t_msg[RS485_TO_OFFSET] != ARDUINO_ALL)) {
+  // If we get here, the message isn't addressed specifically addressed to THIS_MODULE or to MAS.
+  // Thus we're looking at THIS_MODULE = OCC/LEG/SNS/SWT/LED/BTN addressed to any OTHER module other than MAS.
+  // So if the message is to any module other than ALL, then THIS_MODULE won't care about it, so eliminate those...
+  if (t_msg[RS485_TO_OFFSET] != ARDUINO_ALL) {
     return false;
   }
   // If we get here, the message must be to ARDUINO_ALL.
+  // Messages to ALL include registration Location, auto/park Route, Turnout throw, and Sensor update.
   // Now we only care about messages to ALL and whether or not this specific module cares about it based on message type...
-  if (THIS_MODULE == ARDUINO_MAS) {  // Check types of messages that MAS cares about...
-    // MAS cares about all messages to it and to all, so simply return true (available() will return msg type to caller.)
-    return true;
-  }
   if (THIS_MODULE == ARDUINO_OCC) {  // What to:ALL messages does OCC care about?  Route, Sensor, and Mode (conditionally)
     // Route, Sensor
     if ((mType == 'R') || (mType == 'S')) {
