@@ -1,4 +1,4 @@
-// O_LED.INO Rev: 03/08/23.  Finished but not tested.
+// O_LED.INO Rev: 06/22/24.  Finished but not tested.
 // LED paints the GREEN LEDs on the control panel, which indicate turnout orientation.
 // LED listens for RS485 incoming commands (addressed to SWT) to know how turnouts are set, and illuminates turnout LEDs
 // accordingly (mode/state permitting.)
@@ -18,7 +18,7 @@
 #include <Train_Consts_Global.h>
 #include <Train_Functions.h>
 const byte THIS_MODULE = ARDUINO_LED;  // Global needed by Train_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "LED 04/15/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "LED 06/22/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 
 // *** SERIAL LCD DISPLAY CLASS ***
 // #include <Display_2004.h> is already in <Train_Functions.h> so not needed here.
@@ -198,11 +198,11 @@ void loop() {
       case 'M' :  // New mode/state message in incoming RS485 buffer.
         pMessage->getMAStoALLModeState(&modeCurrent, &stateCurrent);
         // Just calling the function updates modeCurrent and modeState ;-)
-        sprintf(lcdString, "M %i S %i", modeCurrent, stateCurrent); pLCD2004->println(lcdString); Serial.println(lcdString);
+        sprintf(lcdString, "M %i S %i", modeCurrent, stateCurrent); Serial.println(lcdString);
         break;
       case 'T' :  // New Turnout message in incoming RS485 buffer.
         pMessage->getMAStoALLTurnout(&turnoutNum, &turnoutDir);
-        sprintf(lcdString, "Rec'd: %2i %c", turnoutNum, turnoutDir); pLCD2004->println(lcdString); Serial.println(lcdString);
+        sprintf(lcdString, "Rec'd: %i %c", turnoutNum, turnoutDir); pLCD2004->println(lcdString); Serial.println(lcdString);
         // Add the turnout command to the circular buffer for later processing...
         turnoutCmdBufEnqueue(turnoutNum, turnoutDir);
         break;
@@ -298,11 +298,11 @@ void turnoutCmdBufProcess() {   // Special version for LED, not the same as used
 
     // First tell the operator what we are going to do...
     if (t_turnoutDir == TURNOUT_DIR_NORMAL) {  // 'N'
-      sprintf(lcdString, "Throw %2i N", t_turnoutNum);
+      sprintf(lcdString, "Throw %i N", t_turnoutNum);
       pLCD2004->println(lcdString);
       Serial.println(lcdString);
     } else if (t_turnoutDir == TURNOUT_DIR_REVERSE) {  // 'R'
-      sprintf(lcdString, "Throw %2i R", t_turnoutNum);
+      sprintf(lcdString, "Throw %i R", t_turnoutNum);
       pLCD2004->println(lcdString);
       Serial.println(lcdString);
     } else {

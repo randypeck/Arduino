@@ -1,4 +1,4 @@
-// O_LEG.INO Rev: 06/21/24.
+// O_LEG.INO Rev: 06/22/24.
 // LEG controls physical trains via the Train Progress and Delayed Action tables, and also controls accessories.
 // LEG also monitors the control panel track-power toggle switches, to turn the four PowerMasters on and off at any time.
 // 04/02/24: LEG Conductor/Engineer and Train Progress will always assume that Turnouts are being thrown elsewhere and won't worry
@@ -61,7 +61,7 @@
 #include <Train_Consts_Global.h>
 #include <Train_Functions.h>
 const byte THIS_MODULE = ARDUINO_LEG;  // Global needed by Train_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "LEG 06/21/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "LEG 06/22/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 
 // *** SERIAL LCD DISPLAY CLASS ***
 // #include <Display_2004.h> is already in <Train_Functions.h> so not needed here.
@@ -310,7 +310,9 @@ void loop() {
       if ((modeCurrent == MODE_MANUAL) && (stateCurrent == STATE_RUNNING)) {
 
         // Run in Manual mode until stopped.
+        sprintf(lcdString, "BEGIN MAN MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
         LEGManualMode();
+        sprintf(lcdString, "END MAN MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
         // Now, modeCurrent == MODE_MANUAL and stateCurrent == STATE_STOPPED
 
       }  // *** MANUAL MODE COMPLETE! ***
@@ -318,7 +320,9 @@ void loop() {
       if ((modeCurrent == MODE_REGISTER) && (stateCurrent == STATE_RUNNING)) {
 
         // Run in Register mode until complete.
+        sprintf(lcdString, "BEGIN REG MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
         LEGRegistrationMode();
+        sprintf(lcdString, "END REG MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
         // Now, modeCurrent == MODE_REGISTER and stateCurrent == STATE_STOPPED
 
       }  // *** REGISTER MODE COMPLETE! ***
@@ -326,7 +330,9 @@ void loop() {
       if (((modeCurrent == MODE_AUTO) || (modeCurrent == MODE_PARK)) && (stateCurrent == STATE_RUNNING)) {
 
         // Run in Auto/Park mode until complete.
+        sprintf(lcdString, "BEGIN AUTO MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
         LEGAutoParkMode();
+        sprintf(lcdString, "END AUTO MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
         // Now, modeCurrent == MODE_AUTO or MODE_PARK, and stateCurrent == STATE_STOPPED
 
       }  // *** AUTO/PARK MODE COMPLETE! ***
@@ -351,7 +357,6 @@ void loop() {
 
 void LEGManualMode() {  // CLEAN THIS UP SO THAT MAS/OCC/LEG ARE MORE CONSISTENT WHEN DOING THE SAME THING I.E. RETRIEVING SENSORS AND UPDATING SENSOR-BLOCK *******************************
 
-  sprintf(lcdString, "BEGIN MAN MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
   // When starting MANUAL mode, MAS/SNS will always immediately send status of every sensor.
   // Recieve a Sensor Status from every sensor.  No need to clear first as we'll get them all.
   // We don't care about sensors in LEG Manual mode, so we disregard them (but other modules will see and want.)
@@ -360,10 +365,15 @@ void LEGManualMode() {  // CLEAN THIS UP SO THAT MAS/OCC/LEG ARE MORE CONSISTENT
     while (pMessage->available() != 'S') {}  // Do nothing until we have a new message
     pMessage->getSNStoALLSensorStatus(&sensorNum, &trippedOrCleared);
     if (i != sensorNum) {
-      sprintf(lcdString, "SNS %i %i NUM ERR", i, sensorNum); pLCD2004->println(lcdString); endWithFlashingLED(1);
+      sprintf(lcdString, "SNS %i %i NUM ERR", i, sensorNum); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
     }
     if ((trippedOrCleared != SENSOR_STATUS_TRIPPED) && (trippedOrCleared != SENSOR_STATUS_CLEARED)) {
-      sprintf(lcdString, "SNS %i %c T|C ERR", i, trippedOrCleared); pLCD2004->println(lcdString); endWithFlashingLED(1);
+      sprintf(lcdString, "SNS %i %c T|C ERR", i, trippedOrCleared); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
+    }
+    if (trippedOrCleared == SENSOR_STATUS_TRIPPED) {
+      sprintf(lcdString, "Sensor %i Tripped", i); pLCD2004->println(lcdString); Serial.println(lcdString);
+    } else {
+      sprintf(lcdString, "Sensor %i Cleared", i); Serial.println(lcdString);  // Not to LCD
     }
   }
   // Okay, we've received all TOTAL_SENSORS sensor status updates (and disregarded them.)
@@ -378,9 +388,9 @@ void LEGManualMode() {  // CLEAN THIS UP SO THAT MAS/OCC/LEG ARE MORE CONSISTENT
     if (msgType == 'S') {  // Got a sensor message in Manual mode; nothing to do though.
       pMessage->getSNStoALLSensorStatus(&sensorNum, &trippedOrCleared);
       if (trippedOrCleared == SENSOR_STATUS_TRIPPED) {
-        sprintf(lcdString, "Sensor %2d Tripped.", sensorNum); pLCD2004->println(lcdString); Serial.println(lcdString);
+        sprintf(lcdString, "Sensor %i Tripped", sensorNum); pLCD2004->println(lcdString); Serial.println(lcdString);
       } else {
-        sprintf(lcdString, "Sensor %2d Cleared.", sensorNum); pLCD2004->println(lcdString); Serial.println(lcdString);
+        sprintf(lcdString, "Sensor %i Cleared", sensorNum); pLCD2004->println(lcdString); Serial.println(lcdString);
       }
     } else if (msgType == 'M') {  // If we get a Mode message it can only be Manual Stopped.
       pMessage->getMAStoALLModeState(&modeCurrent, &stateCurrent);
@@ -392,7 +402,6 @@ void LEGManualMode() {  // CLEAN THIS UP SO THAT MAS/OCC/LEG ARE MORE CONSISTENT
       sprintf(lcdString, "MAN MSG ERR %c", msgType); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
     }
   } while (stateCurrent != STATE_STOPPED);  // We'll just assume mode is still Manual
-  sprintf(lcdString, "END MAN MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
   return;
 }
 
@@ -413,8 +422,6 @@ void LEGRegistrationMode() {
   //     Create new entry in Train Progress for this new loco.
   //     Startup the train
 
-  sprintf(lcdString, "BEGIN REG MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
-
   // Initialize the Delayed Action table as we'll use it when establishing initial Train Progress loco/startup.
   pDelayedAction->initDelayedActionTable();
 
@@ -423,17 +430,14 @@ void LEGRegistrationMode() {
 
   // This is as good a place as any to release all accessory relays
   pEngineer->initAccessoryRelays();
-sprintf(lcdString, "1"); pLCD2004->println(lcdString);
 
   // Release all block reservations.
   pBlockReservation->releaseAllBlocks();
-sprintf(lcdString, "2"); pLCD2004->println(lcdString);
 
   // Initialize the Train Progress table for every possible train (1..TOTAL_TRAINS)
   for (locoNum = 1; locoNum <= TOTAL_TRAINS; locoNum++) {  // i.e. 1..50 trains
     pTrainProgress->resetTrainProgress(locoNum);  // Initialize the header and no route for a single train.
   }
-sprintf(lcdString, "3"); pLCD2004->println(lcdString);
 
   // When starting REGISTRATION mode, SNS will always immediately send status of every sensor.
   // Standby and recieve a Sensor Status from every sensor.  No need to clear first as we'll get them all.
@@ -442,12 +446,11 @@ sprintf(lcdString, "3"); pLCD2004->println(lcdString);
     while (pMessage->available() != 'S') {}  // Do nothing until we have a new message
     pMessage->getSNStoALLSensorStatus(&sensorNum, &trippedOrCleared);
     if (i != sensorNum) {
-      sprintf(lcdString, "SNS %i %i NUM ERR", i, sensorNum); pLCD2004->println(lcdString); endWithFlashingLED(1);
+      sprintf(lcdString, "SNS %i %i NUM ERR", i, sensorNum); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
     }
     if ((trippedOrCleared != SENSOR_STATUS_TRIPPED) && (trippedOrCleared != SENSOR_STATUS_CLEARED)) {
-      sprintf(lcdString, "SNS %i %c T|C ERR", i, trippedOrCleared); pLCD2004->println(lcdString); endWithFlashingLED(1);
+      sprintf(lcdString, "SNS %i %c T|C ERR", i, trippedOrCleared); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
     }
-    sprintf(lcdString, "SNS %i %c", sensorNum, trippedOrCleared); pLCD2004->println(lcdString); Serial.println(lcdString);
 
     // Store the sensor status T/C in the Sensor Block table.
     pSensorBlock->setSensorStatus(sensorNum, trippedOrCleared);
@@ -462,32 +465,34 @@ sprintf(lcdString, "3"); pLCD2004->println(lcdString);
         pBlockReservation->reserveBlock(pSensorBlock->whichBlock(sensorNum), BW, LOCO_ID_STATIC);
       }
       else {  // Not E or W, we have a problem!
-        sprintf(lcdString, "BLK END %i %c", sensorNum, pSensorBlock->whichEnd(sensorNum)); pLCD2004->println(lcdString); endWithFlashingLED(1);
+        sprintf(lcdString, "BLK END %i %c", sensorNum, pSensorBlock->whichEnd(sensorNum)); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
       }
     }
   }
+  sprintf(lcdString, "Sensors Rec'd"); pLCD2004->println(lcdString); Serial.println(lcdString);
 
   // *** NOW OCC WILL PROMPT OPERATOR FOR STARTUP FAST/SLOW, SMOKE ON/OFF, AUDIO ON/OFF, DEBUG ON/OFF (and send to us) ***
-  sprintf(lcdString, "Waiting FAST SLOW"); pLCD2004->println(lcdString); Serial.println(lcdString);
   while (pMessage->available() != 'F') {}  // Wait for Fast/Slow startup message
-  sprintf(lcdString, "Got FAST SLOW"); pLCD2004->println(lcdString); Serial.println(lcdString);
   pMessage->getOCCtoLEGFastOrSlow(&fastOrSlow);
   if ((fastOrSlow != 'F') && (fastOrSlow != 'S')) {
     sprintf(lcdString, "FAST SLOW MSG ERR"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
   }
   sprintf(lcdString, "FAST/SLOW %c", fastOrSlow); pLCD2004->println(lcdString); Serial.println(lcdString);
+
   while (pMessage->available() != 'K') {}  // Wait for Smoke/No Smoke message
   pMessage->getOCCtoLEGSmokeOn(&smokeOn);
   if ((smokeOn != 'S') && (smokeOn != 'N')) {
     sprintf(lcdString, "SMOKE MSG ERR"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
   }
   sprintf(lcdString, "SMOKE %c", smokeOn); pLCD2004->println(lcdString); Serial.println(lcdString);
+
   while (pMessage->available() != 'A') {}  // Wait for Audio/No Audio message
   pMessage->getOCCtoLEGAudioOn(&audioOn);
   if ((audioOn != 'A') && (audioOn != 'N')) {
     sprintf(lcdString, "AUDIO MSG ERR"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
   }
   sprintf(lcdString, "AUDIO %c", audioOn); pLCD2004->println(lcdString); Serial.println(lcdString);
+
   while (pMessage->available() != 'D') {}  // Wait for Debug/No Debug message
   pMessage->getOCCtoLEGDebugOn(&debugOn);
   if ((debugOn != 'D') && (debugOn != 'N')) {
@@ -556,7 +561,6 @@ sprintf(lcdString, "3"); pLCD2004->println(lcdString);
       sprintf(lcdString, "REG MODE MSG ERR!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
     }
   } while (stateCurrent != STATE_STOPPED);  // We'll just assume mode is still Register
-  sprintf(lcdString, "END REG MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
   return;
 }
 
@@ -566,9 +570,6 @@ sprintf(lcdString, "3"); pLCD2004->println(lcdString);
 
 void LEGAutoParkMode() {
 
-  sprintf(lcdString, "BEGIN A/P MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
-
-
   // IF OPERATOR SELECTS SMOKE ON (or works regardless) MIGHT WANT TO AUTOMATICALLY TURN OFF AFTER i.e. 10 MINUTES ***************************************************************************
 
   // Mode is allowed to change from Auto/Running to Park/Running, without first Auto/Stopping or Auto/Stop.
@@ -577,7 +578,6 @@ void LEGAutoParkMode() {
   haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, release relays and just stop
 
 
-  sprintf(lcdString, "END A/P MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
   return;
 }
 

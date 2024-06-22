@@ -1,4 +1,4 @@
-// O_BTN.INO Rev: 03/08/23.  Finished but not tested.
+// O_BTN.INO Rev: 06/22/24.  Finished but not tested.
 // BTN reads button presses and forwards them along to MAS (mode/state permitting.)
 
 // Re-wrote on 3/2/21 to check Centipede via two port reads rather than 32 bit reads -- much faster.
@@ -10,7 +10,7 @@
 #include <Train_Consts_Global.h>
 #include <Train_Functions.h>
 const byte THIS_MODULE = ARDUINO_BTN;  // Global needed by Train_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "BTN 04/15/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "BTN 06/22/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 
 // *** SERIAL LCD DISPLAY CLASS ***
 // #include <Display_2004.h> is already in <Train_Functions.h> so not needed here.
@@ -108,7 +108,7 @@ void loop() {
       case 'M' :  // New mode/state message in incoming RS485 buffer.  Tested and working 10/15/20.
         pMessage->getMAStoALLModeState(&modeCurrent, &stateCurrent);
         // Just calling the function updates modeCurrent and modeState ;-)
-        sprintf(lcdString, "M %i S %i", modeCurrent, stateCurrent); pLCD2004->println(lcdString); Serial.println(lcdString);
+        sprintf(lcdString, "M %i S %i", modeCurrent, stateCurrent); Serial.println(lcdString);
         break;
       default:
         sprintf(lcdString, "MSG TYPE ERROR!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
@@ -168,7 +168,7 @@ byte turnoutButtonPressed() {
       for (byte bitToRead = 0; bitToRead <= 15; bitToRead++) {  // 16 bits per chip
         if ((readBit(bankContents, bitToRead)) == 0) {   // Returns true if bit set; false if bit clear
           buttonPressed = (((pinBank * 16) + bitToRead) + 1);  // Add 1 to return button number 1..n (not 0..n-1)
-          sprintf(lcdString, "BTN %i", buttonPressed); pLCD2004->println(lcdString); Serial.println(lcdString);
+          sprintf(lcdString, "Button %i Pressed", buttonPressed); pLCD2004->println(lcdString); Serial.println(lcdString);
           chirp();  // operator feedback!
           return buttonPressed;
         }

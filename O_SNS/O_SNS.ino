@@ -1,4 +1,4 @@
-// O_SNS.INO Rev: 03/08/23.  Finished but not tested.
+// O_SNS.INO Rev: 06/22/24.  Finished but not tested.
 // SNS reads occupancy sensors and forwards them along to MAS and anyone else who cares to listen (mode/state permitting.)
 // MAS can also *request* a sensor status regardless of mode or state; we won't argue.
 
@@ -36,7 +36,7 @@
 #include <Train_Consts_Global.h>
 #include <Train_Functions.h>
 const byte THIS_MODULE = ARDUINO_SNS;  // Global needed by Train_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "SNS 04/15/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "SNS 06/22/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 
 // *** SERIAL LCD DISPLAY CLASS ***
 // #include <Display_2004.h> is already in <Train_Functions.h> so not needed here.
@@ -157,7 +157,7 @@ void loop() {
       case 'M' :  // New mode/state message in incoming RS485 buffer.
         pMessage->getMAStoALLModeState(&modeCurrent, &stateCurrent);
         // Just calling the function updates modeCurrent and modeState ;-)
-        sprintf(lcdString, "M %i S %i", modeCurrent, stateCurrent); pLCD2004->println(lcdString); Serial.println(lcdString);
+        sprintf(lcdString, "M %i S %i", modeCurrent, stateCurrent); Serial.println(lcdString);
         break;
       case 'S' :  // Request from MAS to send the status of a specific sensor.
         // So, which sensor number does MAS want the status of?  It better be 1..52, and *not* 0..51.
@@ -165,6 +165,11 @@ void loop() {
         // Look at the Centipede shift register to find the status of the specified sensor in stateOfSensor().
         // We may immediately transmit that information back to MAS -- permission to xmit was implicit with the message
         pMessage->sendSNStoALLSensorStatus(sensorNum, stateOfSensor(sensorNum));
+        if (stateOfSensor(sensorNum) == SENSOR_STATUS_TRIPPED) {
+          sprintf(lcdString, "Sensor %i Tripped", sensorNum); pLCD2004->println(lcdString); Serial.println(lcdString);
+        } else {
+          sprintf(lcdString, "Sensor %i Cleared", sensorNum); Serial.println(lcdString);  // Not to LCD
+        }
         break;
       default:
         sprintf(lcdString, "MSG TYPE ERROR!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
@@ -207,10 +212,10 @@ void loop() {
           // We only do a test here (rather than do it in a single clever statement) so we can display English on the LCD.
           if (bitRead(sensorNewState[pinBank], pinBit) == 1) {     // Bit changed to 1 means it is clear (not grounded)
             sensorUpdate.sensorStatus = SENSOR_STATUS_CLEARED;     // Cleared
-            sprintf(lcdString, "Sensor %2d Cleared.", sensorNum);  // Always displays, but will only send msg if mode/state allows.
+            sprintf(lcdString, "Sensor %i Cleared", sensorNum);  // Always displays, but will only send msg if mode/state allows.
           } else {                                                 // Bit changed to 0 means it was tripped (i.e. grounded)
             sensorUpdate.sensorStatus = SENSOR_STATUS_TRIPPED;     // Tripped
-            sprintf(lcdString, "Sensor %2d Tripped.", sensorNum);
+            sprintf(lcdString, "Sensor %i Tripped", sensorNum);
           }
           sensorUpdate.sensorNum = sensorNum;
           // We need a slight delay in the event that we have a flurry of sensor changes to transmit to MAS, to give the

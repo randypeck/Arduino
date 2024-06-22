@@ -1,4 +1,4 @@
-// O_MAS.INO Rev: 06/21/24.
+// O_MAS.INO Rev: 06/22/24.
 // MAS is the master controller; everyone else is a slave.
 
 // 03/03/24: No more Dispatch Board object.
@@ -52,7 +52,7 @@
 #include <Train_Consts_Global.h>
 #include <Train_Functions.h>
 const byte THIS_MODULE = ARDUINO_MAS;  // Global needed by Train_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "MAS 06/21/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "MAS 06/22/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Train_Functions.h>" includes the line "extern char lcdString[];" which effectively makes it a global.
 // No need to pass lcdString[] to any functions that use it!
 
@@ -101,14 +101,6 @@ Deadlock_Reference* pDeadlock = nullptr;
 // *** TRAIN PROGRESS TABLE CLASS (ON HEAP) ***
 #include <Train_Progress.h>
 Train_Progress* pTrainProgress = nullptr;
-
-// *** OPERATOR CLASS ***
-//#include <Operator.h>    // Called to operate in Manual mode
-//Operator* pOperator;
-
-// *** REGISTRAR CLASS ***
-//#include <Registrar.h>   // Called to operate in Register mode
-//Registrar* pRegistrar;
 
 // *** DISPATCHER CLASS ***
 #include <Dispatcher.h>  // Called to operate in Auto/Park mode
@@ -172,7 +164,7 @@ void setup() {
   // WARNING: Instantiating Message class hangs the system if hardware is not connected.
   pMessage = new Message;  // C++ quirk: no parens in ctor call if no parms; else thinks it's fn decl'n.
   pMessage->begin(&Serial2, SERIAL2_SPEED);
-  delay(1000);  // O_MAS-only delay gives the slaves a chance to get ready to receive data.
+//  delay(1000);  // O_MAS-only delay gives the slaves a chance to get ready to receive data.
 
   // *** INITIALIZE CONTROL PANEL MODE DIAL CLASS AND OBJECT *** (Heap uses 31 bytes)
   pModeSelector = new Mode_Dial;  //  C++ quirk: no parens in ctor call if no parms; else thinks it's fn decl'n.
@@ -207,15 +199,6 @@ void setup() {
   // WARNING: TRAIN PROGRESS MUST BE INSTANTIATED *AFTER* BLOCK RESERVATION AND ROUTE REFERENCE.
   pTrainProgress = new Train_Progress;  // C++ quirk: no parens in ctor call if no parms; else thinks it's fn decl'n.
   pTrainProgress->begin(pBlockReservation, pRoute);
-
-  // *** INITIALIZE OPERATOR CLASS AND OBJECT ***
-  // WARNING: OPERATOR MUST BE INSTANTIATED *AFTER* TURNOUT RESERVATION.
-  //pOperator = new Operator;  //  C++ quirk: no parens in ctor call if no parms; else thinks it's fn decl'n.
-  //pOperator->begin(pStorage, pMessage, pTurnoutReservation);
-
-  // *** INITIALIZE REGISTRAR CLASS AND OBJECT ***
-  //pRegistrar = new Registrar;  //  C++ quirk: no parens in ctor call if no parms; else thinks it's fn decl'n.
-  //pRegistrar->begin();  // Don't yet know what pointers I'll need to pass
 
   // *** INITIALIZE DISPATCHER CLASS AND OBJECT ***
   // WARNING: DISPATCHER MUST BE INSTANTIATED *AFTER* ALMOST ALL OTHER CLASSES.
@@ -301,13 +284,14 @@ void loop() {
     // mode if we did not previously complete Registration mode.
     // modeCurrent and stateCurrent will now be populated with the newly-started Mode and State selected by the operator.
     pMessage->sendMAStoALLModeState(modeCurrent, stateCurrent);  // Broadcast the new MODE and STATE.
-    sprintf(lcdString, "START M%i S%i", modeCurrent, stateCurrent); pLCD2004->println(lcdString); Serial.println(lcdString);
     // We are now in a new Mode (Manual, Register, Auto, or Park) and State is RUNNING.
 
     if ((modeCurrent == MODE_MANUAL) && (stateCurrent == STATE_RUNNING)) {
 
       // Run in Manual mode until stopped.
+      sprintf(lcdString, "BEGIN MAN MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
       MASManualMode();
+      sprintf(lcdString, "END MAN MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
       // Upon return, modeCurrent == MODE_MANUAL and stateCurrent == STATE_STOPPED
 
     }  // *** MANUAL MODE COMPLETE! ***
@@ -315,7 +299,9 @@ void loop() {
     if ((modeCurrent == MODE_REGISTER) && (stateCurrent == STATE_RUNNING)) {
 
       // Run in Register mode until complete.
+      sprintf(lcdString, "BEGIN REG MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
       MASRegistrationMode();
+      sprintf(lcdString, "END REG MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
       // Upon return, modeCurrent == MODE_REGISTER and stateCurrent == STATE_STOPPED
 
     }  // *** REGISTER MODE COMPLETE! ***
@@ -323,7 +309,9 @@ void loop() {
     if (((modeCurrent == MODE_AUTO) || (modeCurrent == MODE_PARK)) && (stateCurrent == STATE_RUNNING)) {
 
       // Run in Auto/Park mode until complete.
+      sprintf(lcdString, "BEGIN AUTO MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
       MASAutoParkMode();
+      sprintf(lcdString, "END AUTO MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
       // Upon return, modeCurrent == MODE_AUTO or MODE_PARK, and stateCurrent == STATE_STOPPED
 
     }  // *** AUTO/PARK MODE COMPLETE! ***
@@ -341,7 +329,6 @@ void loop() {
 
 void MASManualMode() {  // CLEAN THIS UP SO THAT MAS/OCC/LEG ARE MORE CONSISTENT WHEN DOING THE SAME THING I.E. RETRIEVING SENSORS AND UPDATING SENSOR-BLOCK *******************************
 
-  sprintf(lcdString, "BEGIN MAN MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
   // Paint the control panel Mode Dial LEDs to reflect Manual mode, and illuminate the Stop button so operator can press Stop.
   pModeSelector->paintModeLEDs(modeCurrent, stateCurrent);
 
@@ -356,11 +343,17 @@ void MASManualMode() {  // CLEAN THIS UP SO THAT MAS/OCC/LEG ARE MORE CONSISTENT
     while (pMessage->available() != 'S') {}  // Do nothing until we have a new message
     pMessage->getSNStoALLSensorStatus(&sensorNum, &trippedOrCleared);
     if (i != sensorNum) {
-      sprintf(lcdString, "SNS %i %i NUM ERR", i, sensorNum); pLCD2004->println(lcdString); endWithFlashingLED(1);
+      sprintf(lcdString, "SNS %i %i NUM ERR", i, sensorNum); pLCD2004->println(lcdString);  Serial.println(lcdString); endWithFlashingLED(1);
     }
     if ((trippedOrCleared != SENSOR_STATUS_TRIPPED) && (trippedOrCleared != SENSOR_STATUS_CLEARED)) {
-      sprintf(lcdString, "SNS %i %c T|C ERR",i, trippedOrCleared); pLCD2004->println(lcdString); endWithFlashingLED(1);
+      sprintf(lcdString, "SNS %i %c T|C ERR", i, trippedOrCleared); pLCD2004->println(lcdString);  Serial.println(lcdString); endWithFlashingLED(1);
     }
+    if (trippedOrCleared == SENSOR_STATUS_TRIPPED) {
+      sprintf(lcdString, "Sensor %i Tripped", i); pLCD2004->println(lcdString); Serial.println(lcdString);
+    } else {
+      sprintf(lcdString, "Sensor %i Cleared", i); Serial.println(lcdString);  // Not to LCD
+    }
+    delay(20);  // Not too fast or we'll overflow LEG's input buffer
   }
   // Okay, we've received all TOTAL_SENSORS sensor status updates (and disregarded them.)
   // Now throw all turnouts to a known default starting position, and update the current position in the Turnout Reservation table.
@@ -380,7 +373,7 @@ void MASManualMode() {  // CLEAN THIS UP SO THAT MAS/OCC/LEG ARE MORE CONSISTENT
       byte buttonNum = 0;   // Will be set to 1..30
       char position = ' ';  // Will be set to N or R
       pMessage->getBTNtoMASButton(&buttonNum);  // Will return buttonNum 1..30 corresponding to turnout 1..30
-      sprintf(lcdString, "Button press %i", (int)buttonNum); pLCD2004->println(lcdString); Serial.println(lcdString);
+      sprintf(lcdString, "Button %i Pressed", buttonNum); pLCD2004->println(lcdString); Serial.println(lcdString);
       // Get position of turnout from Turnout_Reservation
       position = pTurnoutReservation->getLastOrientation(buttonNum);  // N or R
       // However it's set, reverse it: Normal<->Reverse
@@ -398,7 +391,11 @@ void MASManualMode() {  // CLEAN THIS UP SO THAT MAS/OCC/LEG ARE MORE CONSISTENT
       sensorNum = 0;  // Will be set to 1..52
       char trippedOrCleared = ' ';  // Will be set to T or C
       pMessage->getSNStoALLSensorStatus(&sensorNum, &trippedOrCleared);
-      sprintf(lcdString, "S: %i %c", (int)sensorNum, trippedOrCleared); pLCD2004->println(lcdString); Serial.println(lcdString);
+      if (trippedOrCleared == SENSOR_STATUS_TRIPPED) {
+        sprintf(lcdString, "Sensor %i Tripped", sensorNum); pLCD2004->println(lcdString); Serial.println(lcdString);
+      } else {
+        sprintf(lcdString, "Sensor %i Cleared", sensorNum); pLCD2004->println(lcdString); Serial.println(lcdString);  // Not to LCD
+      }
       // Just receive the message.  Nothing to do here, but OCC will see the message and update the white occupancy LEDs.
     } else if (msgType != ' ') {  // If it's not Button, Sensor, or blank, we have a bug!
       sprintf(lcdString, "MAN MSG ERR %c", msgType); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
@@ -413,7 +410,6 @@ void MASManualMode() {  // CLEAN THIS UP SO THAT MAS/OCC/LEG ARE MORE CONSISTENT
   }
   // Let everyone know what we are in Manual mode, Stopped...
   pMessage->sendMAStoALLModeState(modeCurrent, stateCurrent);  // Broadcast MODE (Manual) and STATE (Stopped.)
-  sprintf(lcdString, "END MAN MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
   return;
 }
 
@@ -436,8 +432,6 @@ void MASRegistrationMode() {
   //     Update Block Reservation to reflect that loco (will overwrite previous status as reserved for STATIC.)
   //     Create new entry in Train Progress for this new loco.
 
-  sprintf(lcdString, "BEGIN REG MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
-
   // Paint the control panel Mode Dial LEDs to reflect Register mode.  Stop button LED will be dark.
   pModeSelector->paintModeLEDs(modeCurrent, stateCurrent);
 
@@ -455,7 +449,7 @@ void MASRegistrationMode() {
     pTrainProgress->resetTrainProgress(locoNum);  // Initialize the header and no route for a single train.
   }
 
-  delay(3000);  // Pause to let other modules (esp. OCC) perform their initialization before receiving.
+  delay(1000);  // Pause to let other modules (esp. OCC) perform their initialization before receiving.
   sprintf(lcdString, "GETTING SENSORS..."); pLCD2004->println(lcdString); Serial.println(lcdString);
   // When starting REGISTRATION mode, SNS will always immediately send status of every sensor.
   // Standby and recieve a Sensor Status from every sensor.  No need to clear first as we'll get them all.
@@ -464,10 +458,10 @@ void MASRegistrationMode() {
     while (pMessage->available() != 'S') {}  // Don't do anything until we have a Sensor message incoming from SNS
     pMessage->getSNStoALLSensorStatus(&sensorNum, &trippedOrCleared);
     if (i != sensorNum) {
-      sprintf(lcdString, "SNS %i %i NUM ERR", i, sensorNum); pLCD2004->println(lcdString); endWithFlashingLED(1);
+      sprintf(lcdString, "SNS %i %i NUM ERR", i, sensorNum); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
     }
     if ((trippedOrCleared != SENSOR_STATUS_TRIPPED) && (trippedOrCleared != SENSOR_STATUS_CLEARED)) {
-      sprintf(lcdString, "SNS %i %c T|C ERR", sensorNum, trippedOrCleared); pLCD2004->println(lcdString); endWithFlashingLED(1);
+      sprintf(lcdString, "SNS %i %c T|C ERR", sensorNum, trippedOrCleared); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
     }
     sprintf(lcdString, "SNS %i %c", sensorNum, trippedOrCleared); pLCD2004->println(lcdString); Serial.println(lcdString);
 
@@ -485,7 +479,7 @@ void MASRegistrationMode() {
         sprintf(lcdString, "%i W", pSensorBlock->whichBlock(sensorNum)); pLCD2004->println(lcdString); Serial.println(lcdString);
         pBlockReservation->reserveBlock(pSensorBlock->whichBlock(sensorNum), BW, LOCO_ID_STATIC);
       } else {  // Not E or W, we have a problem!
-        sprintf(lcdString, "BLK END %i %c", sensorNum, pSensorBlock->whichEnd(sensorNum)); pLCD2004->println(lcdString); endWithFlashingLED(1);
+        sprintf(lcdString, "BLK END %i %c", sensorNum, pSensorBlock->whichEnd(sensorNum)); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
       }
     }
     delay(50);  // To avoid overwhelming OCC's incoming RS485 buffer which will overflow without a delay here
@@ -545,7 +539,6 @@ void MASRegistrationMode() {
   // Now that Registration mode is done, update stateCurrent to reflect that.  modeCurrent remains unchanged.
   pModeSelector->setStateToSTOPPED(modeCurrent, &stateCurrent);  // Will change stateCurrent to STOPPED, update mode LEDs
   pMessage->sendMAStoALLModeState(modeCurrent, stateCurrent);  // Broadcast that we are in REGISTRATION STOPPED
-  sprintf(lcdString, "END REG MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
   return;
 }
 

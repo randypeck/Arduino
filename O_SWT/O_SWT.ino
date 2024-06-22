@@ -1,4 +1,4 @@
-// O_SWT.INO Rev: 03/08/23.  Finished but not tested.
+// O_SWT.INO Rev: 06/22/24.  Finished but not tested.
 // SWT receives Set Turnout messages from MAS to throw turnout solenoids, regardless of Mode or State.
 // NOTE regarding turnout numbers: Turnout numbers 1..32 correspond to Centipede pins 0..31.
 // All modules (other than SWT and BTN internally) refer to Turnout numbers and Button numbers starting at 1, not 0.
@@ -19,7 +19,7 @@
 #include <Train_Consts_Global.h>
 #include <Train_Functions.h>
 const byte THIS_MODULE = ARDUINO_SWT;  // Global needed by Train_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "SWT 04/15/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "SWT 06/22/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 
 // *** SERIAL LCD DISPLAY CLASS ***
 // #include <Display_2004.h> is already in <Train_Functions.h> so not needed here.
@@ -195,7 +195,7 @@ void loop() {
     switch(msgType) {
       case 'T' :  // New Turnout message in incoming RS485 buffer.
         pMessage->getMAStoALLTurnout(&turnoutNum, &turnoutDir);
-        sprintf(lcdString, "Rec'd: %2i %c", turnoutNum, turnoutDir); pLCD2004->println(lcdString); Serial.println(lcdString);
+        sprintf(lcdString, "Rec'd: %i %c", turnoutNum, turnoutDir); pLCD2004->println(lcdString); Serial.println(lcdString);
         // Add the turnout command to the circular buffer for later processing...
         turnoutCmdBufEnqueue(turnoutNum, turnoutDir);
         break;
@@ -296,12 +296,12 @@ bool turnoutCmdBufProcess() {   // Special version for SWT, not the same as used
     // turnoutNum will be turnout number 1..32
     if (t_turnoutDir == TURNOUT_DIR_NORMAL) {  // 'N'
       bitToWrite = turnoutCrossRef[t_turnoutNum - 1];
-      sprintf(lcdString, "Throw %2i N", t_turnoutNum);
+      sprintf(lcdString, "Throw %i N", t_turnoutNum);
       pLCD2004->println(lcdString);
       Serial.println(lcdString);
     } else if (t_turnoutDir == TURNOUT_DIR_REVERSE) {  // 'R'
       bitToWrite = turnoutCrossRef[(t_turnoutNum + 32) - 1];
-      sprintf(lcdString, "Throw %2i R", t_turnoutNum);
+      sprintf(lcdString, "Throw %i R", t_turnoutNum);
       pLCD2004->println(lcdString);
       Serial.println(lcdString);
     } else {
