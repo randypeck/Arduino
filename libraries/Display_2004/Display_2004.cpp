@@ -62,6 +62,38 @@ void Display_2004::println(const char t_nextLine[]) {
   return;
 }
 
+void Display_2004::printRowCol(const byte row, const byte col, const char t_nextLine[]) {
+  // Rev: 06-30-24.
+  // Row 1..4, Col 1..20.
+  // Prints char(s) of text at a specific row and column, rather than scrolling up lines 2..4 and printing on row 4, col 1.
+  // If the incoming char array (string) is longer than the 21-byte array (20 chars plus null), then we will
+  // have stepped on memory and must declare a fatal programming error.
+  if ((row < 1) || (row > 4) || (col < 1) || (col > 20) ||
+      (t_nextLine == (char *)NULL) ||
+      ((strlen(t_nextLine) + col - 1) > LCD_WIDTH)) {
+      endWithFlashingLED(2);
+  }
+  // We are assured via above test that our new string at it's position won't exceed the width of the LCD.
+  if (row == 1) {
+    memcpy(lineA + col - 1, t_nextLine, strlen(t_nextLine));  // Drop the new text into the line.
+    DigoleSerialDisp::setPrintPos(0, 0);
+    DigoleSerialDisp::print(lineA);
+  } else if (row == 2) {
+    memcpy(lineB + col - 1, t_nextLine, strlen(t_nextLine));  // Drop the new text into the line.
+    DigoleSerialDisp::setPrintPos(0, 1);
+    DigoleSerialDisp::print(lineB);
+  } else if (row == 3) {
+    memcpy(lineC + col - 1, t_nextLine, strlen(t_nextLine));  // Drop the new text into the line.
+    DigoleSerialDisp::setPrintPos(0, 2);
+    DigoleSerialDisp::print(lineC);
+  } else if (row == 4) {
+    memcpy(lineD + col - 1, t_nextLine, strlen(t_nextLine));  // Drop the new text into the line.
+    DigoleSerialDisp::setPrintPos(0, 3);
+    DigoleSerialDisp::print(lineD);
+  }
+  return;
+}
+
 // *****************************************************************
 // *************** OLD NOTES JUST KEPT FOR REFERENCE ***************
 // *****************************************************************

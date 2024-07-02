@@ -314,14 +314,17 @@ void Loco_Reference::display(const byte t_locoNum) {
   }
   Serial.print("', ");
 
-  if ((Loco_Reference::devType(t_locoNum) != DEV_TYPE_LEGACY_ENGINE) &&
-      (Loco_Reference::devType(t_locoNum) != DEV_TYPE_LEGACY_TRAIN) &&
-      (Loco_Reference::devType(t_locoNum) != DEV_TYPE_TMCC_ENGINE) &&
-      (Loco_Reference::devType(t_locoNum) != DEV_TYPE_TMCC_TRAIN)) {
-       sprintf(lcdString, "BAD LR D.T. %c", Loco_Reference::devType(t_locoNum)); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(5);
-
+  if (Loco_Reference::devType(t_locoNum) == DEV_TYPE_LEGACY_ENGINE) {
+    Serial.print("Legacy Engine, ");
+  } else if (Loco_Reference::devType(t_locoNum) == DEV_TYPE_LEGACY_TRAIN) {
+    Serial.print("Legacy Train,  ");
+  } else if (Loco_Reference::devType(t_locoNum) == DEV_TYPE_TMCC_ENGINE) {
+    Serial.print("TMCC Engine,   ");
+  } else if (Loco_Reference::devType(t_locoNum) == DEV_TYPE_TMCC_TRAIN) {
+    Serial.print("TMCC Train,    ");
+  } else {
+    sprintf(lcdString, "BAD LR D.T. %c", Loco_Reference::devType(t_locoNum)); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(5);
   }
-  Serial.print("TMCC/LEG ENG/TRAIN E|T|N|R: "); Serial.println(Loco_Reference::devType(t_locoNum));
 
   if (Loco_Reference::steamOrDiesel(t_locoNum) == POWER_TYPE_STEAM) {
     Serial.print("Steam,  ");
@@ -359,28 +362,28 @@ void Loco_Reference::display(const byte t_locoNum) {
 
   sprintf(lcdString, "Length %4i, ", Loco_Reference::length(t_locoNum)); Serial.print(lcdString);
 
-  sprintf(lcdString, "Op car %2i, ", Loco_Reference::opCarLocoNum(t_locoNum)); Serial.print(lcdString);
+  sprintf(lcdString, "Op car %2i.", Loco_Reference::opCarLocoNum(t_locoNum)); Serial.println(lcdString);
 
-  sprintf(lcdString, "%3i ", Loco_Reference::crawlSpeed(t_locoNum)); Serial.print(lcdString);
-  sprintf(lcdString, "%3i ", Loco_Reference::crawlMmPerSec(t_locoNum)); Serial.print(lcdString);
+  sprintf(lcdString, "Crawl Legacy %3i, ", Loco_Reference::crawlSpeed(t_locoNum)); Serial.print(lcdString);
+  sprintf(lcdString, "%4i mm/sec.", Loco_Reference::crawlMmPerSec(t_locoNum)); Serial.println(lcdString);
 
-  sprintf(lcdString, "%3i ", Loco_Reference::lowSpeed(t_locoNum)); Serial.print(lcdString);
-  sprintf(lcdString, "%3i ", Loco_Reference::lowMmPerSec(t_locoNum)); Serial.print(lcdString);
-  sprintf(lcdString, "%2i ", Loco_Reference::lowSpeedSteps(t_locoNum)); Serial.print(lcdString);
-  sprintf(lcdString, "%4i ", Loco_Reference::lowMsStepDelay(t_locoNum)); Serial.print(lcdString);
-  sprintf(lcdString, "%4i ", Loco_Reference::lowMmToCrawl(t_locoNum)); Serial.print(lcdString);
+  sprintf(lcdString, "Low   Legacy %3i, ", Loco_Reference::lowSpeed(t_locoNum)); Serial.print(lcdString);
+  sprintf(lcdString, "%4i mm/sec, ", Loco_Reference::lowMmPerSec(t_locoNum)); Serial.print(lcdString);
+  sprintf(lcdString, "Step %2i, ", Loco_Reference::lowSpeedSteps(t_locoNum)); Serial.print(lcdString);
+  sprintf(lcdString, "Delay %4i, ", Loco_Reference::lowMsStepDelay(t_locoNum)); Serial.print(lcdString);
+  sprintf(lcdString, "%4i mm to Crawl.", Loco_Reference::lowMmToCrawl(t_locoNum)); Serial.println(lcdString);
 
-  sprintf(lcdString, "%3i ", Loco_Reference::medSpeed(t_locoNum)); Serial.print(lcdString);
-  sprintf(lcdString, "%3i ", Loco_Reference::medMmPerSec(t_locoNum)); Serial.print(lcdString);
-  sprintf(lcdString, "%2i ", Loco_Reference::medSpeedSteps(t_locoNum)); Serial.print(lcdString);
-  sprintf(lcdString, "%4i ", Loco_Reference::medMsStepDelay(t_locoNum)); Serial.print(lcdString);
-  sprintf(lcdString, "%4i ", Loco_Reference::medMmToCrawl(t_locoNum)); Serial.print(lcdString);
+  sprintf(lcdString, "Med   Legacy %3i, ", Loco_Reference::medSpeed(t_locoNum)); Serial.print(lcdString);
+  sprintf(lcdString, "%4i mm/sec, ", Loco_Reference::medMmPerSec(t_locoNum)); Serial.print(lcdString);
+  sprintf(lcdString, "Step %2i, ", Loco_Reference::medSpeedSteps(t_locoNum)); Serial.print(lcdString);
+  sprintf(lcdString, "Delay %4i, ", Loco_Reference::medMsStepDelay(t_locoNum)); Serial.print(lcdString);
+  sprintf(lcdString, "%4i mm to Crawl.", Loco_Reference::medMmToCrawl(t_locoNum)); Serial.println(lcdString);
 
-  sprintf(lcdString, "%3i ", Loco_Reference::highSpeed(t_locoNum)); Serial.print(lcdString);
-  sprintf(lcdString, "%3i ", Loco_Reference::highMmPerSec(t_locoNum)); Serial.print(lcdString);
-  sprintf(lcdString, "%2i ", Loco_Reference::highSpeedSteps(t_locoNum)); Serial.print(lcdString);
-  sprintf(lcdString, "%4i ", Loco_Reference::highMsStepDelay(t_locoNum)); Serial.print(lcdString);
-  sprintf(lcdString, "%4i ", Loco_Reference::highMmToCrawl(t_locoNum)); Serial.print(lcdString);
+  sprintf(lcdString, "High  Legacy %3i, ", Loco_Reference::highSpeed(t_locoNum)); Serial.print(lcdString);
+  sprintf(lcdString, "%4i mm/sec, ", Loco_Reference::highMmPerSec(t_locoNum)); Serial.print(lcdString);
+  sprintf(lcdString, "Step %2i, ", Loco_Reference::highSpeedSteps(t_locoNum)); Serial.print(lcdString);
+  sprintf(lcdString, "Delay %4i, ", Loco_Reference::highMsStepDelay(t_locoNum)); Serial.print(lcdString);
+  sprintf(lcdString, "%4i mm to Crawl.", Loco_Reference::highMmToCrawl(t_locoNum)); Serial.println(lcdString);
 
   Serial.println();
   return;
@@ -393,18 +396,18 @@ void Loco_Reference::populate() {
   // some data changes (i.e. speed parameters most likely.)
   // Note that loco number 1 corresponds with element 0.
   // Careful don't call this m_locoReference, which would confuse with our "regular" variable that holds just one record.
-  Serial.println(F("Memory in populateLoco before new: ")); freeMemory();
+  // Serial.println(F("Memory in populateLoco before new: ")); freeMemory();
   unsigned int numRecsToLoad = TOTAL_TRAINS;  // 0..TOTAL_TRAINS - 1; 50 trains.  In case I ever need to do this in batches.
   locoReferenceStruct* lr = new locoReferenceStruct[numRecsToLoad];  // Offset 0 thru (TOTAL_TRAINS - 1)
-    //locoReferenceStruct lr[TOTAL_TRAINS];  // This is the way to do it using SRAM instead of heap
-  Serial.println(F("Memory in populateLoco after new: ")); freeMemory();
+  //locoReferenceStruct lr[TOTAL_TRAINS];  // This is the way to do it using SRAM instead of heap
+  // Serial.println(F("Memory in populateLoco after new: ")); freeMemory();
   //      Loco  Active?                            Dev Stm Pas                      Len Op Car Crawl Crawl   Low   Low   Low   Low   Low   Med   Med   Med   Med   Med  High  High  High  High  High
   //       Num  |   1   2   3   4   5   6   7   8  Typ Dsl Frt ...Restrictions...    mm Loco # Leg'y  mm/s Leg'y  mm/s  Step Delay  Dist Leg'y  mm/s  Step Delay  Dist Leg'y  mm/s  Step Delay  Dist
-  lr[ 0] = { 1, 1, 'S','H','A','Y',' ',' ',' ',' ','E','D','F','z','x','q','s','r',1510,   0,     20,   47,   38,   93,    2,  320,  603,   64,  186,    2,  320, 2007,   83,  279,    2,  320, 3289};
+  lr[ 0] = { 1, 1, 'S','H','A','Y',' ',' ',' ',' ','E','S','f','z','x','q','s','r',1510,   0,     20,   47,   38,   93,    2,  320,  603,   64,  186,    2,  320, 2007,   83,  279,    2,  320, 3289};
   lr[ 1] = { 2, 0, 'B','L','G','D','2','9','6','3','T','D','p',' ',' ',' ',' ',' ',1520,   0,     21,   48,   39,   94,    2,  330,  703,   65,  187,    2,  420, 2107,   93,  289,    2,  329, 3189};
-  lr[ 2] = { 3, 0, 'C','M','K',' ','3','8','7','2','E','S','P','s','d','f','h','j',1530,   2,     22,   49,   30,   95,    3,  340,  803,   66,  188,    4,  520, 2207,   03,  299,    4,  328, 3089};
-  lr[ 3] = { 4, 1, 'S','F',' ','N','W','-','2',' ','E','S','f',' ',' ',' ',' ',' ',1535,   0,     20,   23,   63,   90,    2,  500,  622,  100,  180,    2,  500, 1867,  114,  223,    2,  400, 2096};
-  lr[ 4] = { 5, 0, 'D','N','J',' ','4','7','8','1','E','D','F',' ',' ',' ',' ',' ',1540,   0,     24,   41,   32,   97,    2,  360,  003,   83,  180,    2,  720, 2407,   23,  219,    2,  326, 3889};
+  lr[ 2] = { 3, 1, 'T','M','C','C',' ','E','N','G','N','S','P','s','d','f','h','j',1530,   2,     22,   49,   30,   95,    3,  340,  803,   66,  188,    4,  520, 2207,   03,  299,    4,  328, 3089};
+  lr[ 3] = { 4, 1, 'S','F',' ','N','W','-','2',' ','E','D','f',' ',' ',' ',' ',' ',1535,   0,     20,   23,   64,   93,    2,  500,  622,  100,  180,    2,  500, 1867,  114,  223,    2,  400, 2096};
+  lr[ 4] = { 5, 1, 'T','M','C','C',' ','T','R','N','R','D','F',' ',' ',' ',' ',' ',1540,   0,     24,   41,   32,   97,    2,  360,  003,   83,  180,    2,  720, 2407,   23,  219,    2,  326, 3889};
   lr[ 5] = { 6, 0, 'F','P','G','T','6','5','0','9','T','D','P',' ',' ',' ',' ',' ',1560,   0,     25,   42,   33,   98,    2,  370,  103,   69,  181,    2,  820, 2507,   33,  229,    2,  325, 3789};
   lr[ 6] = { 7, 0, 'G','Q','F','R','7','4','1','8','E','S','P',' ',' ',' ',' ',' ',1570,   0,     26,   43,   34,   99,    2,  380,  203,   60,  182,    2,  920, 2607,   43,  239,    2,  324, 3689};
   lr[ 7] = { 8, 0, 'H','R','D','E','8','3','2','7','T','S','F',' ',' ',' ',' ',' ',1580,   7,     27,   44,   35,   10,    2,  390,  303,   61,  183,    2,  120, 2707,   53,  249,    2,  323, 3589};
@@ -477,10 +480,10 @@ void Loco_Reference::populate() {
 
   }
 
-  Serial.println(F("Memory in populateLoco after writing w/ pFRAMDataBuf, before delete: ")); freeMemory();
+  // Serial.println(F("Memory in populateLoco after writing w/ pFRAMDataBuf, before delete: ")); freeMemory();
   delete[] pFRAMDataBuf;  // IMPORTANT!  Must delete pFRAMDataBuf before lr if we want to free up lr memory; the order is important.
   delete[] lr;  // Free up the heap array memory reserved by "new"
-  Serial.println(F("Memory in populateLoco after delete: ")); freeMemory();
+  // Serial.println(F("Memory in populateLoco after delete: ")); freeMemory();
   m_pStorage->setFRAMRevDate(01, 26, 23);  // ALWAYS UPDATE FRAM DATE IF WE CHANGE A FILE!
   return;
 }

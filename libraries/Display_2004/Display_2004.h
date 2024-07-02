@@ -1,8 +1,9 @@
-// DISPLAY_2004.H Rev: 12/06/20.
+// DISPLAY_2004.H Rev: 06-30-24.
 // Handles display of messages from the modules to the 20-char, 4-line (2004) Digole LCD display.
 // It simplifies use of the LCD display by encapsulating all of the initialization and scrolling logic within the class.
 // Display_2004 is a child class of parent DigoleSerialDisp, in order to be able to make both of them static, via a
 // single instantiation from the main program.
+// 06-30-24: Added printRowCol() function to print char(s) at specific row 1..4 and col 1..20.
 // 12/06/20: SAVED 84 BYTES SRAM!  Re-wrote to put the four 21-char arrays on the heap.
 
 #ifndef DISPLAY_2004_H
@@ -22,7 +23,8 @@ class Display_2004 : private DigoleSerialDisp {
 
     void begin();  // Initialize the Digole serial LCD display, must be called in setup() before using the display.
 
-    void println(const char t_nextLine[]);
+    void println(const char t_nextLine[]);  // Scroll rows 2..4 up to rows 1..3, and display new line at row 4.
+    void printRowCol(const byte row, const byte col, const char t_nextLine[]);  // Row 1..4, Col 1..20
 
   protected:
 

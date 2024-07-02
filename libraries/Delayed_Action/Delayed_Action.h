@@ -1,7 +1,8 @@
-// DELAYED_ACTION.H Rev: 02/22/23.  HEAP STORAGE.  TESTED AND WORKING with a few exceptions such as Accessory activation.
+// DELAYED_ACTION.H Rev: 06/30/24.  HEAP STORAGE.  TESTED AND WORKING with a few exceptions such as Accessory activation.
 // Part of O_LEG (Conductor and Engineer.)
 // Delayed Action table is used ONLY by LEG.  Populated by LEG Conductor and de-populated by LEG Engineer.
 // Uses about 10K on HEAP.
+// 06/30/24: Added debug switch.
 // 02/15/23: populateLocoCommand() no longer needs to send devType as a parm.  Uses ptr to Loco Ref to just lookup.
 
 // AT SOME POINT, keep track of how big the Delayed Action table gets i.e. the number of the highest record used.
@@ -115,7 +116,8 @@ class Delayed_Action {
     // ***** HERE ARE FUNCTIONS THAT LEG CONDUCTOR IS GOING TO WANT ACCESS TO *****
     // ****************************************************************************
 
-    void initDelayedActionTable();  // Will always have HEAP_RECS_DELAYED_ACTION records
+    void initDelayedActionTable(bool t_debugOn);
+    // Will always have HEAP_RECS_DELAYED_ACTION records
     // Init Delayed Action to empty; set all records to 'E'xpired.
     // Whenever Registration (re)starts, we must re-initialize the whole Delayed Access table.
 
@@ -256,6 +258,7 @@ class Delayed_Action {
 
     Loco_Reference* m_pLoco;  // Pointer to the Loco Ref class so we can lookup Legacy/TMCC Engine/Train
     Train_Progress* m_pTrainProgress;   // Pointer to the Train Progress class so we can update loco current speed/time.
+    bool m_debugOn = false;
 
 };
 

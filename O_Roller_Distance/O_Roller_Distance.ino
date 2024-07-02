@@ -187,24 +187,12 @@ const float bearingQuarterCircumference = 10.1833;  // Since we count quarter re
 const byte PIN_LED_ON_BOARD = 13;  // OUPTUT.  Arduino on-board LED.  Pull LOW to turn on.
 const byte PIN_RPM_SENSOR = 2;
 
-unsigned long currentTime;
 unsigned long endTime;
 unsigned long startTime;
-unsigned long loopTime;  // How long did it take to count the number of revs we were waiting for
 unsigned long totalTime;
 unsigned long totalDistance;
-unsigned long RPM = 0;
-unsigned long SMPH = 0;
-float calcRPM = 0;  // Use this for floating point calcs, but can't print float values with sprintf
-float calcSMPH = 0;  // This will store the scale mph based on RPM
 
-// NOT SURE ABOUT THESE NUMBERS:
-// RPM / mm/sec = 1.5 (was 3.0)
-// Since 1.5 (was 3) RPM = 1 mm/sec, 9.313333 mm/sec * 1.5 = 13.97
-// 1 RPM = 27.94 smph
-const float RPMtoSMPH = 27.94; // smph = RPM / 27.94 NOT USING THIS YET BUT WILL WANT TO SO MAY NEED TO TWEAK CONSTANT
-
-byte deviceNumber = 0;  // 14 = big boy, 40 = SP 1440, 80 = WP 803-A, 2 = Shay
+byte devNum = 4;  // 4 = ATSF 2405, 14 = big boy, 40 = SP 1440, 80 = WP 803-A, 2 = Shay
 byte legacy11 = 0;
 byte legacy12 = 0;
 byte legacy13 = 0;
@@ -302,62 +290,8 @@ void setup() {
   // The timer interrupt will call ISR_Read_IR_Sensor() each interrupt.
   Timer1.attachInterrupt(ISR_Read_IR_Sensor);
 
-  deviceNumber = 2;  // 14 = big boy, 40 = SP 1440, 80 = WP 803-A, 2 = Shay
-  
-  // Always set loco momentum to zero
-  legacy11 = 0xF8;  // Legacy Engine
-  legacy12 = (deviceNumber * 2);  // Shift loco num left one bit, fill with zero
-  legacy13 = 0xC8;  // Momentum 0 (Momentum 7 would b 0xCF)
-  Serial3.write(legacy11); Serial3.write(legacy12); Serial3.write(legacy13);  // Send all 3 bytes to Legacy base
-  delay(30);  // 30ms delay before next command, just being sure here
-  // Don't forget we'll need at least 30ms delay before sending another command
-
-/*
-// TMCC HORN COMMAND:
-  const byte TMCCHorn = B11100;  // TMCC horn command
-  legacy11 = 0xFE;  // For TMCC, 0xFE is *always* the first byte
-  byte typeEngine = B00000000;  // TMCC device type for Engine (1..99)
-  byte typeTrain = B11001000;   // TMCC device type for Train (1..9)
-  byte deviceType = typeEngine;
-  byte deviceID = 14;  // UP Big Boy 4014
-  byte commandField = 0;  // 00 for many commands including horn
-  byte dataField = B00011100;  // Horn 1 (Horn 2 does not work on Big Boy for either TMCC or Legacy)
-  legacy12 = deviceType | (deviceID >> 1); // Byte 2 is combination of type field and first 7 bit of TMCC address
-  legacy13 = (deviceID << 7) | (commandField << 5) | dataField; // Byte 3 is last bit of TMCC address, command field (2 bits), plus data field
-  blowHornCrossing();
-  delay(4000);
-  blowHornReverse();
-  delay(4000);
-*/
-
-// LEGACY HORN COMMAND:
-  legacy11 = 0xF8;  // Legacy Engine command (Legacy Train command = 0xF9)
-  legacy12 = (deviceNumber * 2) + 1;  // Shift loco num left one bit, fill with zero; add 1 since this is a horn command
-  legacy13 = 0x1C;  // Horn byte 1C
-//  blowHornCrossing();
-//  delay(4000);
-//  blowHornReverse();
-//  delay(4000);
-
-// LEGACY QUILLING HORN
-  legacy11 = 0xF8;  // Legacy Engine command (Legacy Train command = 0xF9)
-  legacy12 = (deviceNumber * 2) + 1;  // Shift loco num left one bit, fill with zero; add 1 since this is a quilling horn command
-  legacy13 = 239;  // Quilling horn 1 (other values are 224 thru 239)
-//  blowHornCrossingQuilling();
-//  delay(4000);
-//  blowHornReverseQuilling();
-//  delay(4000);
-
-
   sprintf(lcdString, "Begin test."); Serial.println(lcdString);
 
-// ACCELERATING AND DECELERATING 5/1/22
-// Accelerating/decelerating using multiple steps up to about 5 you really can't even tell, EXCEPT at the very lowest speeds.
-// So maybe write the code so that acceleration starts from stopped in single steps until you hit about 20, and then can jump
-// to 4 steps at 4x the delay.
-// Similarly, when slowing down, begin slowing in steps of 4 at 4x delay, and then slow in single steps below about speed 20 or 10.
-
-  blowHornToot(deviceNumber); delay(30);
   unsigned long momentumDelay = 80; // 160;  // ms delay between successive speed commands
   byte speedStep = 1; // 1;
   byte maxSpeed = 80;
@@ -366,15 +300,15 @@ void setup() {
   // Legacy speed can be 0..199
   for (byte i = 0; i < maxSpeed + 1; i=i + speedStep) {
     sprintf(lcdString, "Speed %3i", i); pLCD2004->println(lcdString);  // THIS WILL CERTAINLY THROW OFF MOMENTUM DOING IT THIS WAY ********************************
-    legacy12 = (deviceNumber * 2) + 0;  // Shift loco num left one bit, fill with zero; add 0 for abs speed command
+    legacy12 = (devNum * 2) + 0;  // Shift loco num left one bit, fill with zero; add 0 for abs speed command
     legacy13 = i;  // Absolute speed
     Serial3.write(legacy11); Serial3.write(legacy12); Serial3.write(legacy13);  // Send all 3 bytes to Legacy base
     delay(momentumDelay);
   }
-  blowHornToot(deviceNumber); delay(30);
-delay(2000);  // Let the train reach maximum speed in case of minor momentum
+  blowHornToot(devNum); delay(30);
+  delay(2000);  // Let the train reach maximum speed in case of minor momentum
 
-sprintf(lcdString, "Mid test."); Serial.println(lcdString);
+  sprintf(lcdString, "Mid test."); Serial.println(lcdString);
 
   // Let's count some revs!
   noInterrupts();  // Disable timer IRQ so we can (re)set variables that it uses (plus our own)
@@ -388,14 +322,14 @@ sprintf(lcdString, "Mid test."); Serial.println(lcdString);
   interrupts();
 
   for (byte i = maxSpeed; i > 0; i = i - speedStep) {  // Caution don't let i < 0 or will crash Legacy
-    legacy12 = (deviceNumber * 2) + 0;  // Shift loco num left one bit, fill with zero; add 0 for abs speed command
+    legacy12 = (devNum * 2) + 0;  // Shift loco num left one bit, fill with zero; add 0 for abs speed command
     legacy13 = i;  // Absolute speed
     Serial3.write(legacy11); Serial3.write(legacy12); Serial3.write(legacy13);  // Send all 3 bytes to Legacy base
     delay(momentumDelay);
   }
   legacy13 = 0;  // Full stop
   Serial3.write(legacy11); Serial3.write(legacy12); Serial3.write(legacy13);  // Send all 3 bytes to Legacy base
-  blowHornToot(deviceNumber); delay(30);
+  blowHornToot(devNum); delay(30);
 
   sprintf(lcdString, "Qtrs: %10ld", tempBearingQuarterRevs); pLCD2004->println(lcdString); Serial2.println(lcdString);
   totalDistance = (bearingQuarterCircumference * tempBearingQuarterRevs);

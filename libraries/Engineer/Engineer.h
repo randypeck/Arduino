@@ -1,5 +1,7 @@
-// ENGINEER.H Rev: 03/02/23. COMPLETE AND SEEMS TO WORK BUT NEEDS RIGOROUS TESTING.
+// ENGINEER.H Rev: 07/01/24. COMPLETE AND SEEMS TO WORK BUT NEEDS RIGOROUS TESTING.
 // Part of O_LEG.
+// 07/01/24: Moved "Update Train Progress loco speed" from getDelayedActionCommand() into sendCommandToTrain().
+// 06/30/24: Added debug switch
 // 03/02/23: Complete and generally works but needs more rigorous testing, including Accessories.
 
 // The Conductor sends commands to the Engineer via the Delayed Action Table, to be exectuted at specific times.
@@ -46,7 +48,6 @@ class Engineer {
 
     Engineer();  // Constructor must be called above setup() so the object will be global to the module.
 
-//    void begin(Centipede* t_pShift_Register, Loco_Reference* t_pLoco, Delayed_Action* t_pDelayedAction, Train_Progress* t_pTrainProgress);
     void begin(Loco_Reference* t_pLoco, Train_Progress* t_pTrainProgress, Delayed_Action* t_pDelayedAction);
     // We'll call Engineer::begin() when we initialize the Engineer object right after calling the constructor.
     // WE MUST ALSO CALL THIS FUNCTION each time Reg'n begins, to properly reset the Legacy Cmd Buf and release Accessory relays.
@@ -55,7 +56,7 @@ class Engineer {
     // One of the few classes where we don't pass the "FRAM* t_pStorage" parm or maintain the "FRAM* m_pStorage" local variable, as
     // this class doesn't need any access to FRAM (at least not as of this writing.)
     
-    void initLegacyCommandBuf();  // Always LEGACY_CMD_HEAP_RECS elements
+    void initLegacyCommandBuf(bool t_debugOn);  // Always LEGACY_CMD_HEAP_RECS elements
     // (Re)init the whole m_pLegacyCommandBuf[] array.
     // Must be called whenever Registration mode (re)starts.
 
@@ -153,6 +154,7 @@ class Engineer {
     Loco_Reference* m_pLoco;
     Delayed_Action* m_pDelayedAction;   // Pointer to the Delayed Action class so we can call its functions.
     Train_Progress* m_pTrainProgress;   // Pointer to the Train Progress class so we can update loco current speed/time.
+    bool m_debugOn = false;
 
 };
 

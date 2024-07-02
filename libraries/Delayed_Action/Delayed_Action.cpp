@@ -1,8 +1,9 @@
-// DELAYED_ACTION.CPP Rev: 05/03/24.  TESTED AND WORKING with a few exceptions such as PowerMasters and Accessory activation.
+// DELAYED_ACTION.CPP Rev: 06/30/24.  TESTED AND WORKING with a few exceptions such as PowerMasters and Accessory activation.
 // Part of O_LEG (Conductor and Engineer.)
 // One set of functions POPULATES the Delayed Action table (for Conductor)
 // Another set of functions DE-POPULATES the Delayed Action table (for Engineer)
 // ALL DEVICES INCLUDING ACCESSORIES START AT 1, not 0.
+// 06/30/24: Added debug switch.
 
 #include "Delayed_Action.h"
 
@@ -38,7 +39,7 @@ void Delayed_Action::begin(Loco_Reference* t_pLoco, Train_Progress* t_pTrainProg
   if ((m_pLoco == nullptr) || (m_pTrainProgress == nullptr)) {
     sprintf(lcdString, "UN-INIT'd DA PTR"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(5);
   }
-  initDelayedActionTable();                          // Clear the entire Delayed Access table for a fresh start.
+  initDelayedActionTable(false);         // Clear the entire Delayed Access table for a fresh start.
   return;
 }
 
@@ -46,8 +47,9 @@ void Delayed_Action::begin(Loco_Reference* t_pLoco, Train_Progress* t_pTrainProg
 // ***** HERE ARE FUNCTIONS THAT LEG CONDUCTOR IS GOING TO WANT ACCESS TO (Typically, WRITING COMMAND RECORDS) *****
 // *****************************************************************************************************************
 
-void Delayed_Action::initDelayedActionTable() {  // Size will always be HEAP_RECS_DELAYED_ACTION records
-  // Rev: 06/09/22.
+void Delayed_Action::initDelayedActionTable(bool t_debugOn) {  // Size will always be HEAP_RECS_DELAYED_ACTION records
+  // Rev: 06/30/24.
+  // 06/30/24: Added debug switch.  Not done in begin() because we can't prompt operator that early in the program.
   // Whenever Registration (re)starts, we must re-initialize the whole Delayed Access table.
   m_TopActiveRec = -1;  // Highest record used so far in Delayed Action table/array, so we don't search all 1000 recs every scan.
   // Note that m_TopActiveRec == 0 means there is ONE active record; i.e. start at record zero.
@@ -60,6 +62,7 @@ void Delayed_Action::initDelayedActionTable() {  // Size will always be HEAP_REC
     m_pDelayedAction[i].deviceParm1 = 0;
     m_pDelayedAction[i].deviceParm2 = 0;
   }
+  m_debugOn = t_debugOn;
 }
 
 void Delayed_Action::populateLocoCommand(const unsigned long t_startTime, const byte t_devNum, const byte t_devCommand,
@@ -69,9 +72,10 @@ void Delayed_Action::populateLocoCommand(const unsigned long t_startTime, const 
   // such as LEGACY_ACTION_STARTUP_SLOW, LEGACY_ACTION_REVERSE, LEGACY_ACTION_ABS_SPEED, LEGACY_SOUND_BELL_ON and LEGACY_DIALOGUE.
   // Some commands, such as LEGACY_DIALOGUE, require parm1 such as LEGACY_DIALOGUE_E2T_ARRIVING.
   // ALL DEVICES INCLUDING ACCESSORIES START AT 1, not 0.
+  // Note that we use keywords LEGACY_ACTION_xxx even when passing to TMCC devices.
   // Speed changes and whistle/horn sequences are handled by other functions.
   // Absolute Speed commands requested from populateLocoCommand() are done at the caller's peril, because we don't know what speed
-  // we might already be moving at.  So really it should only be used to stop a loco in an emergency.
+  // we might already be moving at (but can check Train Progress.)
   // Here are the commands that I've tested as of 2/22/23:
   //   LEGACY_ACTION_STARTUP_FAST -- Equivalent to quick tap on controller, sens Startup Sequence 2 only.
   //   LEGACY_ACTION_STARTUP_SLOW -- Startup Sequence 1.  MUST ALSO SEND FAST (Seq 2.)  Allow 10 seconds total.
@@ -82,13 +86,14 @@ void Delayed_Action::populateLocoCommand(const unsigned long t_startTime, const 
   //   LEGACY_ACTION_SHUTDOWN_FAST
   //   LEGACY_ACTION_SHUTDOWN_SLOW -- PLAYS AUDIO ONLY, MUST ALSO SHUTDOWN FAST
   //   LEGACY_ACTION_ABS_SPEED, STOP_IMMED, and EMERGENCY_STOP (and also wipes existing speed commands)
+  //     NOTE: TMCC does not support a "Stop Immediate" command, and TMCC Emergency Stop will be handled as a Legacy command.
   //   LEGACY_ACTION_SET_SMOKE
   //   LEGACY_ACTION_FORWARD, LEGACY_ACTION_REVERSE
   //   LEGACY_ACTION_FRONT_COUPLER, LEGACY_ACTION_REAR_COUPLER
   //   LEGACY_SOUND_HORN_NORMAL, LEGACY_SOUND_HORN_QUILLING
   //   LEGACY_SOUND_BELL_ON, BELL_OFF
   //   LEGACY_SOUND_MSTR_VOL_UP, VOL_DOWN does not work **************************************************
-  //   LEGACY_SOUND_BLEND_VOL_UP, VOL_DOWN also does not work
+  //   LEGACY_SOUND_BLEND_VOL_UP, VOL_DOWN also does not work ********************************************
   //   LEGACY_NUMERIC_PRESS = Parm1 = 1 works to turn VOLUME UP a notch, but must be spaced at least 300ms apart
   //   LEGACY_NUMERIC_PRESS = Parm1 = 4 works to turn VOLUME DOWN a notch, but must be spaced at least 300ms apart
   //   LEGACY_SOUND_LONG_LETOFF
@@ -111,7 +116,8 @@ void Delayed_Action::populateLocoCommand(const unsigned long t_startTime, const 
     if (t_devNum <= TOTAL_TRAINS) {  // I.e. not a PowerMaster (devNum 91..94)
       // It's a speed-affecting loco command; wipe any existing speed commands for this loco from Delayed Action.
       if (wipeLocoSpeedCommands(t_devNum)) {  // Returns true if there were commands that were wiped, so display a bit of info.
-        sprintf(lcdString, "PLC D%2i C%3i P%3i", t_devNum, t_devCommand, t_devParm1); pLCD2004->println(lcdString); Serial.println(lcdString);
+        sprintf(lcdString, "WIPED SPEED CMDS! "); Serial.print(lcdString);
+        sprintf(lcdString, "PLC D%2i C%3i P%3i", t_devNum, t_devCommand, t_devParm1); Serial.println(lcdString);
       }
     }
   }
@@ -207,6 +213,10 @@ void Delayed_Action::populateLocoSlowToStop(const byte t_devNum) {
   // Slows from current speed to Legacy speed 1 in one second, then rolls at speed 1 for two seconds, then stops.
   // We could roll at speed 1 for only 1 sec instead of 2, but we travel so little distance and 2 secs at Crawl looks better.
   // This should be a reasonably smooth stop even if we aren't yet at Crawl speed; i.e. for any reasonably slow speed.
+  // Because we must stop from the current speed to zero using "step -2", we divide the number of steps into one second to
+  // determine the delay between speed steps.  If we are going very fast, such as speed 50, that results in 25 steps in 1 second,
+  // which is one command each 40ms.  Not too fast for Legacy to manage, but much faster than our ideal 300ms-between-commands-
+  // for-a-single-loco ideal (thus we could manage up to 10 locos which would be a command each 30ms.)
   // ALL DEVICES INCLUDING ACCESSORIES START AT 1, not 0.
   // In order to ensure a smooth speed change even in the event that there are still un-executed "ripe" speed commands in the
   // Delayed Action table, both populateLocoSpeedChange() and populateLocoSlowToStop() will automatically do two things:
@@ -261,15 +271,20 @@ void Delayed_Action::populateLocoSlowToStop(const byte t_devNum) {
   // 10 = 4  250ms delays = Send speed 8, +250ms, speed 6, +250ms, speed 4, +250ms, speed 2, +250ms.
   // 11 = 4  250ms delays = Send speed 9, +250ms, speed 7, +250ms, speed 5, +250ms, speed 3, +250ms.
 
-  // Need a function for values 4 and larger:
-  // INPUT   OUTPUT
-  //   4        1
-  //   5        1
-  //   6        2
-  //   7        2
-  //   8        3
-  //   9        3
+  // Need a function for speeds 4 and larger:
+  //     INPUT   OUTPUT   DELAY
+  //    4 or  5     1    1000 ms
+  //    6 or  7     2     500 ms
+  //    8 or  9     3     333 ms
+  //   10 or 11     4     250 ms
+  //   12 or 13     5     200 ms
+  //   14 or 15     6     167 ms
+  //   16 or 17     7     143 ms
+  //   18 or 19     8     125 ms
+  //   20 or 21     9     111 ms
+  //   22 or 23    10     100 ms
   // Thus: (Original number - 2) / 2  (because integer division rounds DOWN.)
+  // Our highest Legacy Crawl speed is 20 (for the Shay and the NW-2), which would be a command each 111ms.  No big deal.
 
   if (t_startSpeed > 3) {  // else startSpeed will be 1 or 2 or 3 so we won't need this preliminary loop
     byte stepsNeeded = (t_startSpeed - 2) / 2;
@@ -458,8 +473,10 @@ bool Delayed_Action::getAction(char* t_devType, byte* t_devNum, byte* t_devComma
       *t_devCommand = m_pDelayedAction[i].deviceCommand;
       *t_devParm1   = m_pDelayedAction[i].deviceParm1;
       *t_devParm2   = m_pDelayedAction[i].deviceParm2;
-Serial.print("getAction found record for device "); Serial.print(*t_devType); Serial.print(*t_devNum);
-Serial.print(", Command "); Serial.print(*t_devCommand); Serial.print(", Parm "); Serial.println(*t_devParm1);
+      if (m_debugOn) {
+        Serial.print("getAction found record for device "); Serial.print(*t_devType); Serial.print(*t_devNum);
+        Serial.print(", Command "); Serial.print(*t_devCommand); Serial.print(", Parm "); Serial.println(*t_devParm1);
+      }
       m_pDelayedAction[i].status = 'E';  // Expire the record now that we're going to return it; no need to write as it's heap
       return true;  // Found a ripe record, and fields being returned via the pointer
     }
@@ -564,21 +581,21 @@ bool Delayed_Action::wipeLocoSpeedCommands(const byte t_devNum) {
     if ((m_pDelayedAction[i].status == 'A') && (m_pDelayedAction[i].deviceNum == t_devNum)) {
       // We have an Active (yet yet ripe) record for this device number, but it *could* be an accessory not a loco...
       if ((m_pDelayedAction[i].deviceType == DEV_TYPE_LEGACY_ENGINE) ||
-          (m_pDelayedAction[i].deviceType == DEV_TYPE_LEGACY_TRAIN) ||
-          (m_pDelayedAction[i].deviceType == DEV_TYPE_TMCC_ENGINE) ||
-          (m_pDelayedAction[i].deviceType == DEV_TYPE_TMCC_TRAIN)) {
+        (m_pDelayedAction[i].deviceType == DEV_TYPE_LEGACY_TRAIN) ||
+        (m_pDelayedAction[i].deviceType == DEV_TYPE_TMCC_ENGINE) ||
+        (m_pDelayedAction[i].deviceType == DEV_TYPE_TMCC_TRAIN)) {
         // Okay, we have an active (not yet ripe) record for the device in question, *and* we know it's a loco.
         // Now see if it's a command that will affect the loco's speed...
         if ((m_pDelayedAction[i].deviceCommand == LEGACY_ACTION_ABS_SPEED) ||
-            (m_pDelayedAction[i].deviceCommand == LEGACY_ACTION_STOP_IMMED) ||
-            (m_pDelayedAction[i].deviceCommand == LEGACY_ACTION_EMERG_STOP)) {
+          (m_pDelayedAction[i].deviceCommand == LEGACY_ACTION_STOP_IMMED) ||
+          (m_pDelayedAction[i].deviceCommand == LEGACY_ACTION_EMERG_STOP)) {
           // Yikes, we found an active speed-changing command - not what we want, but that's what we're here for!
           m_pDelayedAction[i].status = 'E';  // Expire this baby!  No need to "write" since this is an array.
           // Set debug value "t_nextSpeed" to the FIRST unexpired speed.
-Serial.print("Erasing speed  "); Serial.println(m_pDelayedAction[i].deviceParm1);
-Serial.print("Ripening time  "); Serial.println(m_pDelayedAction[i].timeToExecute);
-Serial.print("Current time   "); Serial.println(millis());
-Serial.println("---------------------------");
+          Serial.print("Erasing speed  "); Serial.println(m_pDelayedAction[i].deviceParm1);
+          Serial.print("Ripening time  "); Serial.println(m_pDelayedAction[i].timeToExecute);
+          Serial.print("Current time   "); Serial.println(millis());
+          Serial.println("---------------------------");
 
           if (t_nextSpeed == 255) {  // If we have not yet set this value, it must be the first unexpired record.
             // Once it's been set to a non-255 value, it'll be left alone for any subsequent speed records.
@@ -604,23 +621,24 @@ Serial.println("---------------------------");
   // If t_nextSpeed is still 255, we didn't find any records to expire; otherwise let's report some data to the operator...
   if (t_nextSpeed != 255) {  // There were records to wipe
     sprintf(lcdString, "WARN: DA not empty!"); pLCD2004->println(lcdString); Serial.println(lcdString);
-    sprintf(lcdString, "Loco     Num    %2i", t_devNum); pLCD2004->println(lcdString); Serial.println(lcdString);
-    sprintf(lcdString, "Next     Speed %3i", t_nextSpeed); pLCD2004->println(lcdString); Serial.println(lcdString);
-    sprintf(lcdString, "Farthest Speed %3i", t_targetSpeed); pLCD2004->println(lcdString); Serial.println(lcdString);
-    sprintf(lcdString, "Time Err %8ld", t_msDelayError); pLCD2004->println(lcdString); Serial.println(lcdString);
+    sprintf(lcdString, "Loco     Num    %2i", t_devNum); Serial.println(lcdString);
+    sprintf(lcdString, "Next     Speed %3i", t_nextSpeed); Serial.println(lcdString);
+    sprintf(lcdString, "Farthest Speed %3i", t_targetSpeed); Serial.println(lcdString);
+    sprintf(lcdString, "Time Err %8ld", t_msDelayError); Serial.println(lcdString);
     return true;  // We DID have at least one un-expired Delayed Action speed command.
   }
   return false;  // No un-expired Delayed Action speed records, which is what we'd hoped for!
 }
 
 void Delayed_Action::populateDelayedAction(const unsigned long t_startTime, const byte t_devNum, const byte t_devCommand,
-                                           const byte t_devParm1, const byte t_devParm2) {
+  const byte t_devParm1, const byte t_devParm2) {
   // Rev: 02/20/23.
   // populateDelayedAction() PRIVATELY adds just about any SINGLE/DISCRETE LOCO command to Delayed Action, such as
   // LEGACY_ACTION_STARTUP_SLOW, LEGACY_ACTION_REVERSE, LEGACY_ACTION_ABS_SPEED, LEGACY_SOUND_BELL_ON and LEGACY_DIALOGUE.
   // Some commands, such as LEGACY_DIALOGUE, require parm1 such as LEGACY_DIALOGUE_E2T_ARRIVING.
-  // There is no error checking and no calling wipeLocoSpeedCommands() -- that must be done by the calling function.
   // ALL DEVICES INCLUDING ACCESSORIES START AT 1, not 0.
+  // There is no error checking and no calling wipeLocoSpeedCommands() -- that must be done by the calling function.
+  // The exception is we will halt if this is a TMCC command
   m_DelayedActionRecord.status = 'A';  // Active
   m_DelayedActionRecord.timeToExecute = t_startTime;
   // There is special code to handle PowerMasters: They are numbered LOC_ID_POWERMASTER_1..4 = 91..94.  A they are out of range of
@@ -629,7 +647,8 @@ void Delayed_Action::populateDelayedAction(const unsigned long t_startTime, cons
   // been to number them within our 1..50 legitimate locoNums.
   if ((t_devNum >= LOCO_ID_POWERMASTER_1) && (t_devNum <= LOCO_ID_POWERMASTER_4)) {
     m_DelayedActionRecord.deviceType = DEV_TYPE_LEGACY_ENGINE;  // Hard code PowerMasters as 'E' Legacy Engines
-  } else {
+  }
+  else {
     m_DelayedActionRecord.deviceType = m_pLoco->devType(t_devNum);  // Look up the loco's type in Loco Reference i.e. E|T|N|R
   }
   m_DelayedActionRecord.deviceNum = t_devNum;
