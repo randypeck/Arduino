@@ -1,6 +1,6 @@
 // Rev: 10/06/20.
 // Stripped-down version of the standard library. No changes, just cut out unused code.
-//Digole Digital Solutions: www.digole.com
+// Digole Digital Solutions: www.digole.com
 #include "DigoleSerial.h"
 #include <stdio.h>
 #include <string.h>

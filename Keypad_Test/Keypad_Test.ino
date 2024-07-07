@@ -1,8 +1,8 @@
 // 3x4 Membrane Keypad test code, based on Arduino Keypad and Key libraries.
 // Rev: 06-30-24 by RDP
 
+// *** NUMERIC KEYPAD ***
 #include <Keypad.h>  // Also includes Key.h
-
 const byte KEYPAD_ROWS = 4; //four KEYPAD_ROWS
 const byte KEYPAD_COLS = 3; //three columns
 char keys[KEYPAD_ROWS][KEYPAD_COLS] = {
@@ -11,8 +11,8 @@ char keys[KEYPAD_ROWS][KEYPAD_COLS] = {
   {'7','8','9'},
   {'*','0','#'}
 };
-// Analog pins A0, A1, etc. are digital pins 54, 55, etc.
-// KEYPAD_ROWS are A3..A6 (57..60), Columns are A0..A2 (54..56)
+// KEYPAD PINS: KEYPAD_ROWS are A3..A6 (57..60), KEYPAD_COLS are A0..A2 (54..56)
+// Note: Analog pins A0, A1, etc. are digital pins 54, 55, etc.
 byte keypadRowPins[KEYPAD_ROWS] = {60, 59, 58, 57}; // Connect to the row pinouts of the keypad
 byte keypadColPins[KEYPAD_COLS] = {56, 55, 54};     // Connect to the column pinouts of the keypad
 Keypad keypad = Keypad( makeKeymap(keys), keypadRowPins, keypadColPins, KEYPAD_ROWS, KEYPAD_COLS );
@@ -39,7 +39,7 @@ unsigned int getKeypadValue() {
   while (true) {
     char charValue = getKeypadPress();  // 0..9 or * or #
     if ((charValue == '#') || (charValue == '*')) {  // Pressed "Enter"
-      return stringValue.toInt();
+      return stringValue.toInt();  // Converts an ASCII string with numberic value to an integer
     } else {  // Otherwise they hit a digit
       stringValue += charValue;
     }

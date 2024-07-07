@@ -1,4 +1,5 @@
 // Roller_Distance Distance Calculator.  Rev: 05/02/22
+// OBSOLETE CODE.  KEEPING FOR REFERENCE ONLY.  Removing lengthy comments that are duplicated in O_Roller_Speed.ino July 7, 2024.
 // This is my new code for blowing horn patterns, and starting and stopping the train using various steps/delays to Legacy.
 // Also allows you to specify locoNum, target speed, and time-at-speed, and displays/prints the number of mm it thinks were travelled.
 // Compare real-world times recorded on the 5-meter stretch on the layout, at a certain speed, and duplicate that speed and time
@@ -6,31 +7,6 @@
 
 // 5/1/22: Cleaned up code to test regular and quilling horn for grade crossing, and forward/backing toots.  Also has code to test
 //         TMCC, but there is no advantage as horn is exactly the same as Legacy horn.
-// IMPORTANT NOTES: We will use this utility to calculate speed and distance-to-decelerate for a given loco, using various starting
-// speeds and deceleration (momentum) rates.  Legacy's built-in deceleration (momentum) rates are:
-//   Note: Although we must delay 30ms between successive 3-byte Legacy commands, the Legacy hardware itself is apparently not
-//   limited by this; hence it is able to issue ever-decreasing speed commands up to every 16ms as seen with Momentum 1.
-// Momentum 1: Issues 1 step about every 16ms.  Stops from speed 62 in one second; nearly instant stopping.
-// Momentum 2: Issues 1 step every  20ms.  Similar to 2 steps every 40ms, 3 steps every 60ms, 4 steps every 80ms, 5 steps every 100ms.
-//                                         Way too fast to appear realistic.
-//                                         A train moving at 30smph would take 1.6 sec to stop (3.3 sec from 60smph.)
-// Momentum 3: Issues 1 step every  40ms.  Still too fast to appear realistic.
-//                                         A train moving at 30smph would take 3.3 sec to stop (6.6 sec from 60smph.)
-// Momentum 4: Issues 1 step every  80ms.  Pretty fast deceleration, but realistic for short/lightweight trains.
-//                                         A train moving at 30smph would take 6.6 sec to stop (13 sec from 60smph.)
-// Momentum 5: Issues 1 step every 160ms.  This is a good rate of deceleration, LOOKS GOOD for most locos such as an F3.
-//                                         A train moving at 30smph would take 13 sec to stop (26 sec from 60smph.)
-// Momentum 6: Issues 1 step every 320ms.  This is too-slow deceleration for most, but LOOKS GOOD for Shay since it's moving so slow.
-//                                         A train moving at 30smph would take 26 sec to stop (52 sec from 60smph.)
-//                                         Since Shay top speed is about 15smph, it will take 13 sec to stop from fast speed.
-
-// Since we can only send serial commands to Legacy every 30ms (any faster and Legacy may ignore them,) we'll need to consider how
-// many trains we might want to be accellerating/decelerating simultaneously.
-// i.e. If we allow for possibly decelerating 10 trains at the same time, we'll only be able to send a command to each train every
-// 300ms, which is about 3 commands per second.  Although that will realistically never happen, let's plan on sending speed
-// commands to any given loco not more than every 320ms.  This will be fine for Momentum 6, but if we want to slow down at momentum
-// 5, then we'll need to slow down TWO Legacy speed steps at a time; and if we want to slow down at momentum 4, then we'll need to
-// slow down FOUR Legacy speed steps at a time.  (NOTE: Once we trip a STOP sensor, we'll send Speed 0 to stop immediately.)
 
 // HORN NOTES 5/1/22: The Quilling horn toot lasts a lot longer than the Horn 1 toot.  The good thing about the Quilling horn is
 // that we can delay much longer between successive horn commands i.e. less serial commands to be sent = less traffic.
@@ -57,12 +33,6 @@ char lcdString[LCD_WIDTH + 1] = "RDS 02/18/24";  // Global array holds 20-char s
 // #include <Display_2004.h> is already in <Train_Functions.h> so not needed here.
 Display_2004* pLCD2004 = nullptr;  // pLCD2004 is #included in Train_Functions.h, so it's effectively a global variable.
 
-// NOTES REGARDING EMPIRICAL TESTING OF BOUNCE AND REV SPEED OF ROLLER BEARING.  5/2/22.
-//   OSCILLOSCOPE ROLLER BEARING BOUNCE TEST with four sections(two black, two white) :
-//     Slowest loco (Shay), slowest speed (1), bounce is usually .3ms but can glitch up to 3.5ms.  Never happens above min. speed.
-//     Fastest loco (Big Boy), fastest speed (199), transitions every 13ms - the fastest I could ever see.
-//     Thus a bounce of 4ms (and up to 10ms) would work fine.
-
 #include <TimerOne.h>  // We will generate an interrupt every 1ms to help us count roller bearing revs
 const byte DEBOUNCE_DELAY = 4;  // Number of ms to allow IR sensor signal to stabilize after changing.
 // Any variables that are used in an interrupt *and* which might be access from outside the interrupt *must* be declared as
@@ -78,10 +48,6 @@ unsigned long tempBearingQuarterRevs = 0;  // We'll grab the interrupt's value a
 
 // *** MISC CONSTANTS AND GLOBALS:
 
-// 5/2/22: **** IMPORTANT **** The following roller-bearing CIRCUMFERENCE data was out-dated once Roller_Speed.ino was used to
-// calculate unique roller-bearing diameters for each loco.  However, the REAL WORLD times collected from the 5-meter section on
-// the layout itself are still valid.
-// 
 // 5/2/22: Measured bearing diameter w/ calipers as 12.84 mm, so that's a good starting point.  Implies approx 40.338mm circ.
 // Real-world testing shows that at slow speeds, times vary quite a lot but maybe not as a percentage of total (longer) time.
 // Real-world testing shows that at high speeds, times vary less but are a higher percentage of the total due to short times.
@@ -89,6 +55,9 @@ unsigned long tempBearingQuarterRevs = 0;  // We'll grab the interrupt's value a
 const float bearingCircumference = 40.7332;  // In mm, with one layer of tape on it.
 const float bearingQuarterCircumference = 10.1833;  // Since we count quarter revs and not whole revs
 
+// 5/2/22: **** IMPORTANT **** The following roller-bearing CIRCUMFERENCE data was out-dated once Roller_Speed.ino was used to
+// calculate unique roller-bearing diameters for each loco.  However, the REAL WORLD times collected from the 5-meter section on
+// the layout itself are still valid.
 // 5/2/22 REAL WORLD TEST RESULTS: SHAY on 5 METER TRACK:
 //   Speed  20: 209.20 sec. ROLLER BEARINGS running for 209.20s => 4989mm = short by  11mm/5000mm = 0.22% short
 //                                           "                     4969mm = short by  31mm/5000mm = 0.62% short
@@ -164,25 +133,6 @@ const float bearingQuarterCircumference = 10.1833;  // Since we count quarter re
 
 
 // CAUTION: If the loco stops when the sensor is between black/white stripes, it may think it's still moving.
-
-// NOTE updated 5/2/22: To calculate between smph and mm/Sec using 1:48 scale: 1 scale mile = 33528mm (exactly 110 ft.)
-//   9.3133 mm/Sec = 1 smph == 558.798 mm/Sec = 60smph.
-//   ROUND NUMBERS: Max speed of about 60smph would be about 559mm/sec.
-// Ran SP 1440 on layout 4/23/22 for 5 meters at Legacy speed 84 in 17.68 seconds.
-//   = 1 meter per 3.536 sec = .2828 meters/sec = 282.8 mm/sec.  This is 30.37smph.
-// Since the bearing is about 41mm circumference, that's about 6.8 revolutions per second at 30smph.
-// That's about 27 DETECTIONS/SECOND at 30smph (for any train,) or 54 detections/second at 60smph.
-// 54 state changes per second (1000 ms) = a state change every 18ms.
-// Thus, DEBOUNCE_DELAY *must* be less than 18 milliseconds.
-// At loco speed 1, bounce is usually about .3ms, but occasional spurious 3.5ms bounces sometimes happen.  So use 4ms bounce delay.
-// At higher speeds, bounce is reliably about .3ms or less.
-// At loco speed 60mph, each 1/4 turn transition lasts 18ms, so a 4ms bounce delay is absolutely no problem.
-// 5/2/22: OSCILLOSCOPE ROLLER BEARING BOUNCE TEST with four sections(two black, two white).  It is IMPORTANT to note that the IR
-//   sensor module has a potentiometer adjustment on it, and if it's not perfectly adjusted then the bounce can be much longer.
-// UP Big Boy:
-//   MIN SPEED 1, bounce is typically .3ms or less, but rarely can be up to 3.5ms.  Confirmed w/ Shay running at Speed 1.
-//   MAX SAFE SPEED 120, transitions every 19ms.  This is likely the fastest we *would* ever transition in actual operation.
-//   TOP SPEED 199, transitions every 13ms.  This is the absolute fastest we *could* ever transition.
 
 const byte PIN_LED_ON_BOARD = 13;  // OUPTUT.  Arduino on-board LED.  Pull LOW to turn on.
 const byte PIN_RPM_SENSOR = 2;
