@@ -1,5 +1,7 @@
-// Roller_Speed Speedometer and Deceleration Distance calculator.  Rev: 07/07/24
+// Roller_Speed Populator, Speedometer, and Deceleration Distance calculator.  Rev: 07/09/24 READY FOR TESTING
 // 
+// IMPORTANT: Calibration of roller-bearing circumference is required FOR EACH LOCO using on-layout 5-meter timing before reliable
+// results can be determined for that loco on the roller bearings with this utility.
 // BEFORE RECORDING SPEED OR DECELERATION RESULTS for any given locomotive, we must calculate actual time to run 5 meters (5000mm)
 // at a certain intermediate (but random, doesn't matter) speed.  Then run on the roller bearings at that same speed and count the
 // quarter revolutions, to determine the appropriate "bearing circumference" to use on that loco's speed calculations.
@@ -15,8 +17,9 @@
 // the local FRAM.  Does the same thing as our O_FRAM_Populator.ino utility, for Loco Reference only.
 
 // SPEEDOMETER UTILITY.  Once accurate roller bearing circumference has been established for a given loco, run the loco on the
-// roller bearings at various Legacy speeds to determine the SMPH and mm/sec, and decide on values for Crawl, Low, Medium, and High
-// speeds.  Record the actual speeds in mm/sec in the Loco Reference table in FRAM.
+// roller bearings at various Legacy speeds to determine the SMPH and mm/sec, and decide on candidate values for Crawl, Low,
+// Medium, and High.  Then put the loco on the layout to confirm these speeds are appropriate.  Finally, plug the values displayed
+// by this utility into the Loco_Reference->populate() data table and transfer to FRAM using the Populator utility.
 
 // DECELERATION UTILITY.  Calculates the distance to decelerate from High/Medium/Low speed to Crawl speed.  The user is prompted
 // for parameters including Legacy (or TMCC) start speed (typ. High, Med, or Low), Legacy end speed (typ. Crawl), Legacy steps to
@@ -49,12 +52,12 @@
 //   Med   is around 186 mm/sec = 20 SMPH
 //   High  is around 326 mm/sec = 35 SMPH
 // For a slow-speed switcher engine (such as an NW-2), we will target:
-//   Crawl is around  23 mm/sec = 2.5 SMPH
+//   Crawl is around  23 mm/sec = 2.5 SMPH (Though perhaps we want to target 3 SMPH for consistency with other locos, and because we don't have to slow down so much before stopping with a small train, and due to boredom waiting if we hit Crawl much ahead of the stop sensor.)
 //   Low   is around  93 mm/sec = 10 SMPH
 //   Med   is around 186 mm/sec = 20 SMPH
 //   High  is around 233 mm/sec = 25 SMPH
 // For ultra-low-speed locos (such as Shay), we will target:
-//   Crawl is around  23 mm/sec = 2.5 SMPH
+//   Crawl is around  23 mm/sec = 2.5 SMPH (Same comments as with slow-speed switcher - maybe Crawl should be 3 SMPH...)
 //   Low   is around  65 mm/sec =  7 SMPH
 //   Med   is around 112 mm/sec = 12 SMPH
 //   High  is around 168 mm/sec = 18 SMPH
@@ -142,7 +145,7 @@
 #include <Train_Consts_Global.h>
 #include <Train_Functions.h>
 const byte THIS_MODULE = ARDUINO_NUL;  // Global just needs to be defined for use by Train_Functions.cpp and Message.cpp.
-char lcdString[LCD_WIDTH + 1] = "RSP 06/30/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "RSP 07/09/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 
 // *** SERIAL LCD DISPLAY CLASS ***
 // #include <Display_2004.h> is already in <Train_Functions.h> so not needed here.
@@ -187,7 +190,7 @@ Delayed_Action* pDelayedAction;
 Engineer* pEngineer;
 
 // *** NUMERIC KEYPAD ***
-#include <Keypad.h>  // Also includes Key.h
+#include <Keypad.h>  // Also includes Key.h.
 const byte KEYPAD_ROWS = 4; //four KEYPAD_ROWS
 const byte KEYPAD_COLS = 3; //three columns
 char keys[KEYPAD_ROWS][KEYPAD_COLS] = {
@@ -198,6 +201,7 @@ char keys[KEYPAD_ROWS][KEYPAD_COLS] = {
 };
 // KEYPAD PINS: KEYPAD_ROWS are A3..A6 (57..60), KEYPAD_COLS are A0..A2 (54..56)
 // Note: Analog pins A0, A1, etc. are digital pins 54, 55, etc.
+// Note: It is NOT necessary to initialize these pins via pinMode(), as the class does it automatically.
 byte keypadRowPins[KEYPAD_ROWS] = {60, 59, 58, 57}; // Connect to the row pinouts of the keypad
 byte keypadColPins[KEYPAD_COLS] = {56, 55, 54};     // Connect to the column pinouts of the keypad
 Keypad keypad = Keypad( makeKeymap(keys), keypadRowPins, keypadColPins, KEYPAD_ROWS, KEYPAD_COLS );
@@ -217,132 +221,33 @@ volatile unsigned int bearingQuarterRevs = 0;  // This will count the number of 
 // math on it, or use it however we want.
 unsigned int tempBearingQuarterRevs = 0;  // We'll grab the interrupt's value and drop in here as a working variable as needed.
 
-// 5/2/22: Measured bearing diameter w/ calipers as 12.84 mm, which implies approx 40.338mm circumference ESTIMATE.
-
-// 5/22/22: MEASURED TIMES ON 5-METER SECTION OF LAYOUT.  Avg times based on fwd direction; reverse times were always about the same.
-// Measured  BIG BOY on 5m track @ Legacy 50 AVG  36.87 sec = 135.61mm/sec.
-// Measured  BIG BOY on bearings @ Legacy 50 AVG .30698 sec/rev @ 135.61mm/sec = 41.6296mm/rev
-// Measured  SP 1440 on 5m track @ Legacy 50 AVG  37.80 sec = 132.28mm/sec.
-// Measured  SP 1440 on bearings @ Legacy 50 AVG .30897 sec/rev @ 132.28mm/sec = 40.8706mm/rev
-// Measured WP 803-A on 5m track @ Legacy 50 AVG  36.63 sec = 136.50mm/sec.
-// Measured WP 803-A on bearings @ Legacy 50 AVG .30562 sec/rev @ 136.50mm/sec = 41.7171mm/rev
-//     Oct 24 2022                               .31300 sec/ref @ 133.30mm/sec
-//          WP 803-A on bearings TRACTION TIRE  .29475 sec/rev @ 141.00mm/sec
-// Measured     SHAY on 5m track @ Legacy 80 AVG  38.29 sec = 130.60mm/sec.
-// Measured     SHAY on bearings @ Legacy 80 AVG .31609 sec/rev @ 130.60mm/sec = 41.2814mm/rev
-// Measured SF 4-4-2 on 5m track @ Legacy 45 AVG  42.80 sec = 116.82mm/sec.
-// Measured SF 4-4-2 on bearings @ Legacy 45 AVG  .3510 sec/rev @ 116.82mm/sec = 41.0024mm/rev (very unreliable at this speed: 220 - 287 on 6/18/22 - ugh.)
-// Measured SF 4-4-2 on 5m track @ Legacy 70 AVG  23.03 sec = 217.11mm/sec.
-// Measured SF 4-4-2 on bearings @ Legacy 70 AVG  .1910 sec/rev @ 217.11mm/sec = 41.4680mm/rev (Use this figure since closer to other values above)
-
-// The following average speeds for C/S/M/F are generally rounded up, so we're less likely to overrun destination when stopping.
-
-// SHAY (Eng 2):
-// NOTE: The fastest Shay ever recorded went 18mph.  So I should probably bump Fast to 18smph.
-// 10/27/22 after cleaning roller bearing, speeds were consistent.  Previously very unpredictable.
-//   Legacy   smph    speed     mm/sec
-//       1    1.8       MIN       17  Ranged from 16.31, 17.21, 16.24, 15.68. 17mm/sec.  50mm in 2", 127mm in 5".  Now 44mm/sec=4.7smph.
-//      20    2.5     CRAWL       23  10/27/22: 23mm/2.5smph.  10/29/22:   45mm, 4.9smph; 51mm, 5.5smph, 48mm, 5.2smph.
-//      49      7       LOW       66  10/27/22: 66mm/7smph.  Ugh, 10/29/22: 130mm/14smph.  Previously varied from 45.4 to 72.9, really unreliable.
-//      72     12       MED      112  10/27/22: 112mm/12smph. Ugh, 10/29/22: 198mm/21smph.  Now back to 187/20smph.
-//      93    17.9     FAST      167  10/27/22: 167mm/18smph.  10/29/22: 196mm/21smph. 190-204
-//   SHAY REAL WORLD TEST RESULTS on 5 METER TRACK (5/2/22):
-//   Speed  20: 209.20 sec.
-//   Speed  40:  99.04 sec.
-//   Speed  60:  58.07 sec. (reverse: 57.70 sec.)
-//   Speed  80   38.35 sec. (reverse: 38.31 sec.)
-//   Speed 100:  27.05 sec. (reverse: 27.11 sec.)
-
-// ATSF 1484 E6 (Eng 5, Trn 7):  Fairly slow small steam loco
-//   NOTE: The E6 steam loco had a top speed of 58mph to 75mph depending on train size.
-//   Legacy   smph    speed     mm/sec
-//       1    1.5       MIN       14
-//       7    2.5     CRAWL       23
-//      25    6.3       LOW       61
-//      50   14.5       MED      136
-//      80   28.4      FAST      268
-
-// BIG BOY (Eng 14): (Huge variation in mm/sec at low speeds; less as speeds increased past Legacy 40.)
-// NOTE: The fastest a Big Boy could ever go is 70mph.
-//   Legacy   smph    speed     mm/sec
-//       1    1.5       MIN       14
-//       8    2.5     CRAWL       23
-//      26     10       LOW       95  // Recently 95mm/sec, previously 61-62 10/29/22, 65 = 7, 61=6.5, 
-//      74     26       MED      239
-//     100     41      FAST      384
-//   BIG BOY REAL WORLD TEST RESULTS on 5 METER TRACK (5/2/22):
-//   Speed  20: 105.64 sec.
-//   Speed  40:  48.85 sec.  Also: 49.08, 49.09, 49.03, 49.00 (fwd), 48.46, 48.65 (rev)
-//   Speed  60:  28.84 sec.
-//   Speed  80:  18.96 sec.
-
-// SP 1440 (Eng 40): Final data as of 5/23/22.
-// NOTE: This is a switcher, so speeds were kept low.  The Alco S-2 switcher had a top speed of 60mph.
-//   Legacy   smph    speed     mm/sec
-//      15      8     CRAWL       73  But as low as 55mm/sec
-//      44     12       LOW      112  Not very accurate, sometimes slower
-//      55     16       MED      151
-//      75     25      FAST      236
-//   SP 1440 REAL WORLD TEST RESULTS: SP 1440 on 5 METER TRACK (5/2/22):
-//   Speed  20: 111.33 sec.
-//   Speed  30:  70.74 sec.
-//   Speed  40:  50.28 sec.
-//   Speed  60:  29.26 sec.
-//   Speed  80:  19.05 sec.
-//   Speed  84:  17.70 sec.
-//   Speed 100:  13.48 sec.
-
-// WP F3 803-A (Eng 83, Trn 8): High-speed passenger train.
-// NOTE: F3/F7 had a top speed of between 65mph and 102mph depending on gearing.
-//   Legacy   smph    speed     mm/sec
-//       1    1.6       MIN       15  14.94/1.6, 15.01/1.6
-//       7    2.5     CRAWL       23
-//      37     10       LOW       95  But as low as 90.  90.1, 90.5, 90.5, 90.0 / 91.0
-//      93     35       MED      330  Consistent
-//     114     50      FAST      463  Consistent 
-//   WP 803-A REAL WORLD TEST RESULTS: WP 803-A on 5 METER TRACK (5/2/22):
-//   Speed  20: 102.70 sec.
-//   Speed  40:  48.96 sec.
-//   Speed  50:  36.76 sec.  Also 36.70, 36.52, 36.48, 36.63, 36.66, 37.02, 36.90 (reverse)
-//   Speed  60:  28.92 sec.
-//   Speed  80:  18.96 sec.
-//   Speed 100:  13.31 sec.
+const byte DEBOUNCE_DELAY   = 4;  // Roller bearing IR state change debounce time in 1ms increments (1ms interrupt countdown.)
 
 // Declare a set of variables that will need to be defined for each engine/train:
-byte locoNum                =  0;   // Train, Engine, Acc'y number etc.
-float bearingCircumference =  0;   // Will be around 41mm but varies slightly with each loco
+byte locoNum               =  0;   // Train, Engine, Acc'y number etc.
 
-byte legacyCrawl           =  0;   // Legacy speed setting 0..199
-int  rateCrawl             =  0;   // Resulting loco speed in mm/sec (can be > 255)
-byte legacyLow             =  0;
-int  rateLow               =  0;
-byte legacyMed             =  0;
-int  rateMed               =  0;
-byte legacyHigh            =  0;
-int  rateHigh              =  0;
+// 5/2/22: Measured bearing diameter w/ calipers as 12.84mm, which implies approx 40.338mm circumference ESTIMATE.
+// But based on actual test results on the roller bearings, the average circumference is 41.1mm, so that will be our default.
+// To see our more accurate circumference of 41.1mm, the diameter would have to be 13.08 mm, a difference of 0.24mm.
+float bearingCircumference =  41.1;  // Will be around 41.1mm but varies slightly (+/- 0.6mm) with each loco
 
-//byte legacySpeed[4] = { 20, 38, 64, 83 };    // Crawl|S|M|F speed for this loco.  0..31 for TMCC or 0..199 for Legacy.//
-//unsigned int decelDelay[3] = { 320, 160, 80 };  // H|M|L momentum settings to t/////////ry
-//byte legacyStep = 1;               // Try 2, 3, 4, etc. w/ Legacy; try 2 w/ TMCC but each TMCC step = 6.25 Legacy steps.
-
-const byte PIN_RPM_SENSOR = 2;   // Arduino MEGA pin number that the IR sensor is plugged into (not a serial pin.)
-const byte PIN_PUSHBUTTON = 3;   // Pushbutton connects ground to Pin 3 when pressed, to tell software when to begin whatever.
+// Pins 0 and 1 are Serial 0, Pins 14-19 are Serial 1, 2, and 3
+// Pins 2..12 are good for general purpose digital I/O
+const byte PIN_RPM_SENSOR        = 2;  // Arduino MEGA pin number that the IR sensor is plugged into (not a serial pin.)
+const byte PIN_FAST_SLOW_STOP    = 3;  // Toggle switch for Decel to determine if Crawl should include 3-second slow-to-stop
+const byte PIN_EXTERNAL_TRIP     = 4;  // Connects to int. trip pushbutton and in parallel to output port occupancy sensor relay.
+const byte PIN_EXTERNAL_TRIP_LED = 5;  // Illuminates built-in pushbutton LED
+// Pins 54..60 (A0..A6) are used for the membrane 3x4 keypad
 
 const float SMPHmmSec = 9.3133;  // mm/sec per 1 SMPH.  UNIVERSAL CONSTANT for O scale, regardless of bearing size or anything else.
 
-// Define global bytes for each of the 9 possible used in Legacy commands
-char devType =  ' ';  // Engine or Train (even if TMCC)
-char testType = ' ';  // 'S' = Speedometer on roller bearings; 'D' = Deceleration time & distance; 'F' = FX; 'P' = Populate FRAM
+char testType = ' ';  // 'S' = Speedometer on roller bearings; 'D' = Deceleration time & distance; 'P' = Populate FRAM
 
 unsigned long startTime = millis();
 unsigned long endTime   = millis();
 
-char locoDesc[8 + 1] = "        ";   // Holds 8-char loco description.  8 chars plus \0 newline.
-char locoRestrict[5 + 1] = "     ";  // Holds 5-chars of restrictions from Loco Ref.  5 chars plus \0 newline.
-byte numBytes = 0;  // Global used to receive from functions via pointer
-bool debugOn = false;  // In deceleration mode, this can produce a lot of output on the Serial monitor.
-bool extTrip = false;  // In deceleration mode, do we begin slowing when pin is grounded (pushbutton or relay) or internally?
-bool fastStop = false;  // In decleration mode, do we want to slow from Crawl to Stop, or Stop Immediate?
+bool debugOn  = false;  // In deceleration mode, this can produce a lot of output on the Serial monitor.
+bool extTrip  = false;  // In deceleration mode, do we begin slowing when pin is grounded (pushbutton or relay) or internally?
 
 // *****************************************************************************************
 // **************************************  S E T U P  **************************************
@@ -353,7 +258,10 @@ void setup() {
   // *** INITIALIZE ARDUINO I/O PINS ***
   initializePinIO();
   pinMode(PIN_RPM_SENSOR, INPUT);
-  pinMode(PIN_PUSHBUTTON, INPUT_PULLUP);
+  pinMode(PIN_FAST_SLOW_STOP, INPUT_PULLUP);
+  pinMode(PIN_EXTERNAL_TRIP, INPUT_PULLUP);
+  pinMode(PIN_EXTERNAL_TRIP_LED, OUTPUT);
+  digitalWrite(PIN_EXTERNAL_TRIP_LED, HIGH);  // Pushbutton internal LED off
 
   // *** QUADRAM EXTERNAL SRAM MODULE ***
   initializeQuadRAM();  // Add-on memory board provides 56,832 bytes for heap
@@ -370,7 +278,7 @@ void setup() {
   pLCD2004->begin();  // 20-char x 4-line LCD display via Serial 1.
   pLCD2004->println(lcdString);  // Display app version, defined above.
   Serial.println(lcdString);        // Serial monitor
-  //Serial2.println(lcdString);       // Mini thermal printer
+  Serial2.println(lcdString);       // Mini thermal printer
 
   // *** INITIALIZE FRAM CLASS AND OBJECT ***
   // We must pass a parm to the constructor (vs begin) because this object has a parent (Hackscribble_Ferro) that needs it.
@@ -422,15 +330,6 @@ void setup() {
   // The timer interrupt will call ISR_Read_IR_Sensor() each interrupt.
   Timer1.attachInterrupt(ISR_Read_IR_Sensor);
 
-  // *** IDENTIFY THE DEVICE AND OTHER PARMS FOR THIS TEST ***  <<<<<<<<--------<<<<<<<<--------<<<<<<<<--------<<<<<<<<--------
-  // locoNum =  2;  // Shay
-  locoNum =  4;  // ATSF NW2
-  // locoNum =  5;  // ATSF 4-4-2 Atlantic E6
-  // locoNum =  8;  // WP 803-A  (Legacy Train 8, programmed as Engine 80, 83)
-  // locoNum = 14;  // Big Boy
-  // locoNum = 40;  // SP 1440
-  // locoNum = 3;  // SP StationSounds Diner
-
   // *** GET TEST TYPE FROM USER ON NUMERIC KEYPAD ***
   sprintf(lcdString, "1) Speedometer"); pLCD2004->println(lcdString); Serial.println(lcdString);
   sprintf(lcdString, "2) Deceleration"); pLCD2004->println(lcdString); Serial.println(lcdString);
@@ -438,12 +337,10 @@ void setup() {
   sprintf(lcdString, "ENTER 1|2|3 + #: "); pLCD2004->println(lcdString); Serial.println(lcdString);
   unsigned int i = getKeypadValue();
   sprintf(lcdString, "%1i", i); pLCD2004->printRowCol(4, 18, lcdString); Serial.println(lcdString);
-//  sprintf(lcdString, "%i", i); pLCD2004->println(lcdString); Serial.println(lcdString);
   if (i == 1) {
     testType = 'S';
   } else if (i == 2) {
     testType = 'D';
-    sprintf(lcdString, "Deceleration"); Serial2.println(lcdString);
   } else if (i == 3) {
     testType = 'P';
   } else {
@@ -461,6 +358,9 @@ void loop() {
   switch (testType) {  // S = Speedometer, D = Decelerometer, P = Populate Loco_Ref FRAM
     // INCLUDE ALL CASE BLOCKS IN CURLY BRACES TO AVOID HANGING.
 
+    // *****************************************************************************************
+    // ***************************  P O P U L A T E   U T I L I T Y  ***************************
+    // *****************************************************************************************
     case 'P':  // Loco ref populate and display data from the Loco Reference table (tested and working 6/6/22)
     {
       sprintf(lcdString, "Populating!"); pLCD2004->println(lcdString); Serial.println(lcdString);
@@ -471,25 +371,17 @@ void loop() {
           pLoco->display(loco);
         }
       }
-//      sprintf(lcdString, "HelloABCDEFGHIJKLMNO"); pLCD2004->println(lcdString);
-//      sprintf(lcdString, "Garbage text hereXYZ"); pLCD2004->println(lcdString);
-//      sprintf(lcdString, "Hello againPDQASDFEW"); pLCD2004->println(lcdString);
-//      sprintf(lcdString, "I'm still here!LKJIO"); pLCD2004->println(lcdString);
-//      delay(3000);
-//      for (int i = 1; i < 200; i++) {
-//        sprintf(lcdString, "Count: %4i", i); pLCD2004->printRowCol(3, 10, lcdString);
-//        sprintf(lcdString, "Count: %4i", i+200); pLCD2004->printRowCol(2, 1, lcdString);
-//        sprintf(lcdString, "Count: %4i", i+100); pLCD2004->printRowCol(1, 5, lcdString);
-//        sprintf(lcdString, "Count: %4i", i+950); pLCD2004->printRowCol(4, 9, lcdString);
-//        delay(100);
-
       sprintf(lcdString, "Done!"); pLCD2004->println(lcdString); Serial.println(lcdString);
-
       while (true) {}
-
     }
 
+    // *****************************************************************************************
+    // ************************  S P E E D O M E T E R   U T I L I T Y  ************************
+    // *****************************************************************************************
     case 'S':  // Speedometer on roller bearings.
+
+// ******************** WAIT, HOW COME WE DON'T JUST DISPLAY THE SPEED ONCE, THEN LOOP AROUND, AND ASK THE USER FOR THE LOCONUM AGAIN??? *********************************
+// ******************** Seems like we should have a do..while (true) forever loop to keep updating the speed. ************************************************************
     {
       // This function helps us determine Legacy speed settings 1..199 (and SMPH) for our four standard speeds C/L/M/H.
       // I.e. if we want to know the Legacy speed setting for 10 SMPH, play with the throttle until the display shows 10 SMPH.
@@ -499,10 +391,10 @@ void loop() {
       // So the user should calculate the roller bearing diameter for each loco based on running the loco on the layout for 5
       // meters at an intermediate speed, and repeat using this speedometer function until a good roller bearing diameter value is
       // established.
-      // So each time we run this function, we'll prompt the user to enter the locoNum and then look up the pre-determined value to
-      // use.  If the user selects loco 0, we'll default to the average value of 41.1 which will likely be within an error margin
-      // of +/- 1.5% of actual.
-      sprintf(lcdString, "ENTER locoNum: "); pLCD2004->println(lcdString); Serial.println(lcdString);
+      // So each time we run this function, we'll prompt the user to enter the locoNum and then look up the pre-determined roller
+      // bearing circumference that's been previously calculated for this loco.  If the user selects loco 0, we'll default to the
+      // average value of 41.1 which will likely be within an error margin of +/- 1.5% of actual.
+      sprintf(lcdString, "Enter locoNum: "); pLCD2004->println(lcdString); Serial.println(lcdString);
       locoNum = getKeypadValue();
       sprintf(lcdString, "%2i", locoNum); pLCD2004->printRowCol(4, 16, lcdString); Serial.println(lcdString);
       sprintf(lcdString, "Loco: %2i", locoNum); Serial2.println(lcdString);
@@ -510,9 +402,6 @@ void loop() {
         sprintf(lcdString, "Out of range."); pLCD2004->println(lcdString);  Serial.println(lcdString);endWithFlashingLED(4);
       }
       bearingCircumference = getBearingCircumference(locoNum);
-      if (locoNum == 4) {
-        bearingCircumference =  40.5279;  // Accurate for ATSF NW2 as of 6/27/24
-      }
 
       float revTime = timePerRev();  // milliseconds/bearingCircumference.  Can take several seconds at very low speeds.
       // First, display the current processor time so we can easily see when display changes...
@@ -538,23 +427,35 @@ void loop() {
       break;
     }
 
+    // *****************************************************************************************
+    // ***********************  D E C E L E R A T I O N   U T I L I T Y  ***********************
+    // *****************************************************************************************
     case 'D':  // Deceleration test
     {
       // We'll be using TimerOne 1ms interrupts to count the number of quarter revs of the roller bearing during our decel tests.
+
       // NOTE regarding getKeypadValue(): If user simply presses # to default to a value, it gets returned as 0.  Thus we can't
       // have a prompt which accepts 0 as a valid return value unless we don't want to allow # as "choose default."
+
+      // A couple of variables that will control the inner and outer loops of this utility...
+      bool decelRestart = false;  // Set true if we want to re-enter new speed parms for this loco.
+      bool decelRepeat  = false;  // Set true if we want to repeat using the same speed parms for this loco (default.)
+
+
+      // *** GET DEBUG MODE? ***
       // First ask if they want debug info on the Serial monitor (it's a lot.)  The potential problem is that it takes a lot of
       // time to serial print/display the debug info, which may throw off the timing of the test.  So generally don't use debug.
-      sprintf(lcdString, "Debug? 1=Y [2]=N"); pLCD2004->println(lcdString); Serial.println(lcdString);
+      sprintf(lcdString, "Debug? 1=Y [2]=N"); pLCD2004->println(lcdString);
       byte d = getKeypadValue();
       debugOn = false;
       if (d == 1) {
         debugOn = true;
-        sprintf(lcdString, "Yes     "); pLCD2004->printRowCol(4, 10, lcdString); Serial.println(lcdString);
+        sprintf(lcdString, "Debug mode ON   "); pLCD2004->printRowCol(4, 1, lcdString); Serial.println(lcdString);
       } else {  // The either entered 2# or simply pressed # to accept default of "N"
-        sprintf(lcdString, "No      "); pLCD2004->printRowCol(4, 10, lcdString); Serial.println(lcdString);
+        sprintf(lcdString, "Debug mode OFF  "); pLCD2004->printRowCol(4, 1, lcdString); Serial.println(lcdString);
       }
 
+      // *** GET EXTERNAL TRIP? ***
       // Are we going to trigger the start of deceleration independently, or by grounding a pin?  This would be for when we want to
       // slow the loco on the actual layout (vs the roller bearings) so we can:
       // 1. Watch how the slowing parameters look on the layout i.e. are we skipping too many speed steps; and
@@ -565,41 +466,27 @@ void loop() {
       //    option that slows from Crawl to Stop in 3 seconds.)
       // 2. A time-delay relay connected to a layout sensor, so we could more easily determine the precise distance required to
       //    slow to Crawl (and use the option that stops immediate.)
-      sprintf(lcdString, "Ext trip? 1=Y 2=N"); pLCD2004->println(lcdString); Serial.println(lcdString);
+      sprintf(lcdString, "Ext trip? 1=Y [2]=N"); pLCD2004->println(lcdString);
       d = getKeypadValue();
       extTrip = false;
       if (d == 1) {
         extTrip = true;
-        sprintf(lcdString, "Yes     "); pLCD2004->printRowCol(4, 11, lcdString); Serial.println(lcdString);
+        sprintf(lcdString, "External trip ON   "); pLCD2004->printRowCol(4, 1, lcdString); Serial.println(lcdString);
       } else {
-        sprintf(lcdString, "No      "); pLCD2004->printRowCol(4, 11, lcdString); Serial.println(lcdString);
+        sprintf(lcdString, "Internal trip      "); pLCD2004->printRowCol(4, 1, lcdString); Serial.println(lcdString);
       }
 
-      // So now we'll also need to ask if the user wants us to use "Slow From Crawl to Stop in 3 seconds" vs "Stop Immediate."
-      // The reason we'd use the "Slow From Crawl" option is so we can see exactly what the loco will look like on the layout as it
-      // stops.  The reason we'd use "Stop Immediate" is whenever we want to see on the actual layout exactly how far we travel
-      // using the supplied parameters (using either a pushbutton or layout-controlled sensor relay.)
-      sprintf(lcdString, "Fast stop? 1=Y 2=N"); pLCD2004->println(lcdString); Serial.println(lcdString);
-      d = getKeypadValue();
-      fastStop = false;
-      if (d == 1) {
-        fastStop = true;
-        sprintf(lcdString, "Yes     "); pLCD2004->printRowCol(4, 12, lcdString); Serial.println(lcdString);
-      } else {
-        sprintf(lcdString, "No      "); pLCD2004->printRowCol(4, 12, lcdString); Serial.println(lcdString);
-      }
-
-      // Now we need to locoNum from the user...
-      sprintf(lcdString, "ENTER locoNum: "); pLCD2004->println(lcdString); Serial.println(lcdString);
+      // *** GET LOCONUM ***
+      sprintf(lcdString, "Enter locoNum: "); pLCD2004->println(lcdString);
       locoNum = getKeypadValue();
-      sprintf(lcdString, "%2i", locoNum); pLCD2004->printRowCol(4, 16, lcdString); Serial.println(lcdString);
-      sprintf(lcdString, "Loco: %2i", locoNum); Serial2.println(lcdString);
+      sprintf(lcdString, "Loco %2i       ", locoNum); pLCD2004->printRowCol(4, 1, lcdString); Serial.println(lcdString);
+                                                                                              Serial2.println(lcdString);
       if ((locoNum < 1) || (locoNum > TOTAL_TRAINS)) {
         sprintf(lcdString, "Out of range."); pLCD2004->println(lcdString);  Serial.println(lcdString);endWithFlashingLED(4);
       }
-      if (locoNum == 4) {
-        bearingCircumference =  40.5279;  // Accurate for ATSF NW2 as of 6/27/24
-      }
+
+      bearingCircumference = getBearingCircumference(locoNum);
+
       // NOTE: The following startup commands can all be given the same startTime because the Engineer will ensure they are separated
       // by the minimum required delay between successive Legacy commands (25ms.)  However we can add a slight delay if we want them to
       // be executed in a certain order...
@@ -627,269 +514,261 @@ void loop() {
         pEngineer->executeConductorCommand();  // Get a Delayed Action command and send to the Legacy base as quickly as possible
       }
 
-      sprintf(lcdString, "Start speed: "); pLCD2004->println(lcdString); Serial.println(lcdString);  // Generally this will be Low/Med/High
-      byte startSpeed = getKeypadValue();
-      sprintf(lcdString, "%3i", startSpeed); pLCD2004->printRowCol(4, 14, lcdString); Serial.println(lcdString);
-      sprintf(lcdString, "Start speed: %3i", startSpeed); Serial2.println(lcdString);
-      if ((startSpeed < 1) || (startSpeed > 199)) {
-        sprintf(lcdString, "Out of range."); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(4);
-      }
+      // In order to change any of the above (Debug mode, External Trip, and/or locoNum), user must power off and re-start.
+      // Starting here, the user can repeat tests with the above info, but can (re)specify new speed parms if desired.
+      do {  // Allow user to (re)input start speed, end speed, steps/speed, and step delay...
 
-      sprintf(lcdString, "End speed: "); pLCD2004->println(lcdString); Serial.println(lcdString);  // Generally this will be Crawl
-      byte targetSpeed = getKeypadValue();
-      sprintf(lcdString, "%3i", targetSpeed); pLCD2004->printRowCol(4, 12, lcdString); Serial.println(lcdString);
-      sprintf(lcdString, "End   speed: %3i", targetSpeed); Serial2.println(lcdString);
-      if ((targetSpeed < 0) || (targetSpeed > 199)) {
-        sprintf(lcdString, "Out of range."); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(4);
-      }
-
-      sprintf(lcdString, "Steps/speed: "); pLCD2004->println(lcdString); Serial.println(lcdString);  // Generally this will be 1, 2, or 3
-      byte speedSteps = getKeypadValue();
-      sprintf(lcdString, "%1i", speedSteps); pLCD2004->printRowCol(4, 14, lcdString); Serial.println(lcdString);
-      sprintf(lcdString, "Speed steps: %3i", speedSteps); Serial2.println(lcdString);
-      if ((speedSteps < 0) || (speedSteps > 10)) {
-        sprintf(lcdString, "Out of range."); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(4);
-       }
-
-      sprintf(lcdString, "Step delay: "); pLCD2004->println(lcdString); Serial.println(lcdString);  // Generally this will be at least 330ms
-      unsigned int stepDelay = getKeypadValue();
-      sprintf(lcdString, "%4i", stepDelay); pLCD2004->printRowCol(4, 13, lcdString); Serial.println(lcdString);
-      sprintf(lcdString, "Step delay: %4i", stepDelay); Serial2.println(lcdString);
-      if ((stepDelay < 0) || (stepDelay > 5000)) {
-        sprintf(lcdString, "Out of range."); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(4);
-      }
-
-
-      while (true) {
-        // Calculate estimated time to slow from startSpeed to targetSpeed
-        unsigned long estimatedTimeToSlow = pDelayedAction->speedChangeTime(startSpeed, speedSteps, stepDelay, targetSpeed);
-        sprintf(lcdString, "Est %lu ms.", estimatedTimeToSlow); pLCD2004->println(lcdString); Serial.println(lcdString);
-
-        // Confirm we are starting at speed zero...
-        byte TPSpeed = pTrainProgress->currentSpeed(locoNum);
-        sprintf(lcdString, "TP Speed: %i", TPSpeed);  pLCD2004->println(lcdString); Serial.println(lcdString);
-
-        // Populate Delayed Action with commands to speed up to our starting speed, 1 step at a time, every 50ms.
-        startTime = millis() + 1000;
-        pDelayedAction->populateLocoSpeedChange(startTime, locoNum, 1, 50, startSpeed);  // Assume starting speed is zero per Train Progress
-
-        do {
-          pEngineer->executeConductorCommand();
-        } while (pTrainProgress->currentSpeed(locoNum) != startSpeed);
-
-        // Now we are up to speed, according to Train Progress loco's current speed
-        TPSpeed = pTrainProgress->currentSpeed(locoNum);
-        sprintf(lcdString, "TP Speed: %i", TPSpeed); pLCD2004->println(lcdString); Serial.println(lcdString);
-        delay(2000);  // Just run at our starting speed for a couple seconds to let everything normalize
-
-        // To begin slowing, are we acting on our own or are we waiting for a pin to be grounded (button press or sensor relay)?
-        if (extTrip) {  // Wait for our pin to be grounded, either by a pushbutton or by a layout sensor relay closure
-
-
+        // *** GET START SPEED ***
+        sprintf(lcdString, "Start speed: "); pLCD2004->println(lcdString);  // Generally this will be Low/Med/High
+        byte startSpeed = getKeypadValue();
+        sprintf(lcdString, "Start speed: %3i", startSpeed); pLCD2004->printRowCol(4, 1, lcdString); Serial.println(lcdString);
+                                                                                                    Serial2.println(lcdString);
+        if ((startSpeed < 1) || (startSpeed > 199)) {
+          sprintf(lcdString, "Out of range."); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(4);
         }
 
-        // Whether we were waiting for an external signal, or can start on our own -- start slowing down now!
-        startTime = millis();  // Start slowing immediately now
-        // The following "slow down" sequence assume a starting speed as retrieved from Train Progress, per above confirmation.
-        pDelayedAction->populateLocoSpeedChange(startTime, locoNum, speedSteps, stepDelay, targetSpeed);
-        // Let's count some revs!
-        noInterrupts();  // Disable timer IRQ so we can (re)set variables that it uses (plus our own)
-        bearingQuarterRevs = 0;  // This will count the number of state changes seen by the IR sensor on the bearing
-        interrupts();
+        // *** GET END SPEED ***
+        sprintf(lcdString, "End speed: "); pLCD2004->println(lcdString);  // Generally this will be Crawl
+        byte targetSpeed = getKeypadValue();
+        sprintf(lcdString, "End speed: %3i", targetSpeed); pLCD2004->printRowCol(4, 1, lcdString); Serial.println(lcdString);
+                                                                                                   Serial2.println(lcdString);
+        if ((targetSpeed < 0) || (targetSpeed > 199)) {
+          sprintf(lcdString, "Out of range."); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(4);
+        }
 
-        do {
-          pEngineer->executeConductorCommand();
-        } while (pTrainProgress->currentSpeed(locoNum) != targetSpeed);
+        // *** GET STEPS/SPEED TO SKIP ***
+        sprintf(lcdString, "Steps/speed: "); pLCD2004->println(lcdString);  // Generally this will be 1, 2, or 3
+        byte speedSteps = getKeypadValue();
+        sprintf(lcdString, "Steps/speed: %1i", speedSteps); pLCD2004->printRowCol(4, 1, lcdString); Serial.println(lcdString);
+                                                                                                    Serial2.println(lcdString);
+        if ((speedSteps < 0) || (speedSteps > 9)) {
+          sprintf(lcdString, "Out of range."); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(4);
+         }
+
+        // *** GET DELAY MS BETWEEN SPEED STEPS ***
+        sprintf(lcdString, "Step delay: "); pLCD2004->println(lcdString);  // Generally this will be at least 330ms
+        unsigned int stepDelay = getKeypadValue();
+        sprintf(lcdString, "Step delay: %4i", stepDelay); pLCD2004->printRowCol(4, 1, lcdString); Serial.println(lcdString);
+                                                                                                  Serial2.println(lcdString);
+        if ((stepDelay < 0) || (stepDelay > 5000)) {
+          sprintf(lcdString, "Out of range."); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(4);
+        }
+
+        // Starting here, the user can repeat tests with the same loco *and* same speed parms as many times as desired.
+        do {  // Repeat deceleration using above parms as many times as user wants...
+
+          // Calculate estimated time to slow from startSpeed to targetSpeed, just for fun to compare with actual time to slow.
+          unsigned long estimatedTimeToSlow = pDelayedAction->speedChangeTime(startSpeed, speedSteps, stepDelay, targetSpeed);
+          sprintf(lcdString, "Est %lu ms.", estimatedTimeToSlow); pLCD2004->println(lcdString); Serial.println(lcdString);
+
+          // Confirm we are starting at speed zero...if not, just wait until we are at zero (operator's responsibility.)
+          // Note that we are relying on the Train Progress speed field, which will not reflect any adjustments made on the CAB-2
+          // remote.  So the user better be dang sure the loco is stopped before he gets to this point.
+          while (pTrainProgress->currentSpeed(locoNum) > 0) { }  // Almost pointless test, but no harm done.
+
+          // Populate Delayed Action with commands to speed up to our starting speed, 1 step at a time, every 50ms.
+          startTime = millis() + 1000;
+          pDelayedAction->populateLocoSpeedChange(startTime, locoNum, 1, 50, startSpeed);  // Assumes starting speed is zero
+
+          // Let the Engineer execute ripe commands until we have accelerated to our start speed.
+          do {
+            pEngineer->executeConductorCommand();
+          } while (pTrainProgress->currentSpeed(locoNum) < startSpeed);
+
+          // Now we are up to speed, according to Train Progress loco's current speed.  Confirm to user.
+          sprintf(lcdString, "Speed: %i", pTrainProgress->currentSpeed(locoNum)); pLCD2004->println(lcdString); Serial.println(lcdString);
+          delay(2000);  // Just run at our starting speed for a couple seconds to let everything normalize
+
+          // To begin slowing, are we acting on our own or are we waiting for a button press or sensor relay?
+          if (extTrip) {  // Wait for our pin to be grounded, either by a pushbutton or by a layout sensor relay closure
+            digitalWrite(PIN_EXTERNAL_TRIP_LED, LOW);  // Turn on push button built-in LED so user knows it's okay to press button
+            while (digitalRead(PIN_EXTERNAL_TRIP) != LOW) { }  // Wait for pushbutton or relay contacts to ground this pin.
+            digitalWrite(PIN_EXTERNAL_TRIP_LED, HIGH);  // Pushbutton internal LED off once it's been pressed
+          }
+
+          // Whether we were waiting for an external signal or can start on our own -- start slowing down now!
+          startTime = millis();  // Start slowing immediately now
+          // The following "slow down" sequence assume a starting speed as retrieved from Train Progress, per above confirmation.
+          pDelayedAction->populateLocoSpeedChange(startTime, locoNum, speedSteps, stepDelay, targetSpeed);
+
+          // Let's count some revs!
+          noInterrupts();  // Disable timer IRQ so we can (re)set variables that it uses (plus our own)
+          bearingQuarterRevs = 0;  // This will count the number of state changes seen by the IR sensor on the bearing
+          interrupts();
+
+  unsigned long populateTime = millis();  // Let's note how long it took to populate Delayed Action b/c we still haven't started slowing! *****************
+
+          do {
+            pEngineer->executeConductorCommand();
+          } while (pTrainProgress->currentSpeed(locoNum) != targetSpeed);
         
-        // We've reached the target speed!  Snag the value of how many quarter revs we've counted...
-        noInterrupts();  // Disable timer IRQ so we can (re)set variables that it uses (plus our own)
-        tempBearingQuarterRevs = bearingQuarterRevs;  // Grab our ISR "volatile" value
-        interrupts();
-        endTime = millis();
-        // The following accounts for the average error of counting approx 1/4 rev (10mm) too far a distance travelled.
-        // The error can be anywhere from 0 to 2 quarter-revs = 0mm to 20mm.  So we'll average the error and assume 10mm too far.
-        // See the comments under ISR_Read_IR_Sensor() for full details.
-        tempBearingQuarterRevs = tempBearingQuarterRevs - 1;
+          // We've reached the Crawl speed!  Snag the value of how many quarter revs we've counted...
+          noInterrupts();  // Disable timer IRQ so we can (re)set variables that it uses (plus our own)
+          tempBearingQuarterRevs = bearingQuarterRevs;  // Grab our ISR "volatile" value
+          interrupts();
+          endTime = millis();
+          // The following accounts for the average error of counting approx 1/4 rev (10mm) too far a distance travelled.
+          // The error can be anywhere from 0 to 2 quarter-revs = 0mm to 20mm.  So we'll average the error and assume 10mm too far.
+          // See the comments under ISR_Read_IR_Sensor() for full details.
+          tempBearingQuarterRevs = tempBearingQuarterRevs - 1;
 
-        if (fastStop) {
-          pDelayedAction->populateLocoCommand(millis(), locoNum, LEGACY_ACTION_STOP_IMMED, 0, 0);
-        } else {
-          pDelayedAction->populateLocoSlowToStop(locoNum);
-        }
+          // *** FAST OR SLOW STOP FROM CRAWL? ***
+          // Do we "Stop Immediate" or "Slow From Crawl to Stop in 3 seconds" when we reach Crawl speed?
+          // Rather than prompt the user, we'll read the status of a toggle switch on the control box to determine if the user
+          // wants to do an immediate stop, or a Crawl-to-Stop-in-3-Seconds.  The toggle switch allows the user to re-run a test
+          // multiple times and try it both ways on the layout -- to measure accurate stopping distance (immediate stop) vs. to
+          // visualize what a 3-second stop-from-Crawl will look like (delayed stop.)
+          // It's a moot point for Auto mode (not ext. trip) as it won't affect any numbers.
+          if (digitalRead(PIN_FAST_SLOW_STOP) == LOW) {
+            pDelayedAction->populateLocoCommand(millis(), locoNum, LEGACY_ACTION_STOP_IMMED, 0, 0);
+          } else {
+            pDelayedAction->populateLocoSlowToStop(locoNum);
+          }
 
-        // Now stop the loco slowly or instantly...won't affect our distance calc either way...
-        do {
-          pEngineer->executeConductorCommand();
-        } while (pTrainProgress->currentSpeed(locoNum) > 0);
+          // Now stop the loco slowly or instantly...won't affect our distance calc either way...
+          do {
+            pEngineer->executeConductorCommand();
+          } while (pTrainProgress->currentSpeed(locoNum) > 0);
 
-        // Display/print the time and distance travelled from incoming speed to Crawl, in mm.  This will be:
-        unsigned int distanceTravelled = tempBearingQuarterRevs * (bearingCircumference / 4.0);
-        // INTERESTING TIMING: We start the timer the moment we give the command to slow to entry speed *minus* Legacy step-down,
-        // which is what we will do the moment we trip the destination entry sensor (actually, probably beyond that, after we
-        // continue at the incoming speed until it's time to start slowing down.)  But we stop the timer one Legacy-delay period
-        // *after* giving the Crawl speed command, because that is the first moment we would want to give a "stop" command.  I.e.
-        // we don't want to time this so that we give the Crawl speed command as we trip the exit sensor, but rather we want to give
-        // the Crawl speed command one Legacy-delay period (i.e. 500ms) *before* we trip the exit sensor, so that we can give a
-        // "stop" command (or slow to a stop from Crawl) just at the moment we trip the exit sensor.
-        // Also, although there is some variation in the *distance* that we travel from the incoming speed until Crawl speed, the
-        // *time* that we're recording is going to be very consistent and very accurate -- because the time won't change regardless
-        // of the circumference of the bearings or whatever.  In fact, you can pretty much *calculate* the time required to slow to
-        // Crawl speed simply by multiplying the number of speed step-downs by the delay time.
-        sprintf(lcdString, "QRevs  : %5i", tempBearingQuarterRevs); pLCD2004->println(lcdString); Serial.println(lcdString); Serial2.println(lcdString);
-        sprintf(lcdString, "Dist mm: %5i", distanceTravelled); pLCD2004->println(lcdString); Serial.println(lcdString); Serial2.println(lcdString);
-        sprintf(lcdString, "Est  ms: %5lu", estimatedTimeToSlow); pLCD2004->println(lcdString); Serial.println(lcdString); Serial2.println(lcdString);
-        sprintf(lcdString, "Act  ms: %5lu", (endTime - startTime)); pLCD2004->println(lcdString); Serial.println(lcdString); Serial2.println(lcdString);
+          // We have stopped!
+          // Display/print the time and distance travelled from incoming speed to Crawl, in mm.  This will be:
+          unsigned int distanceTravelled = tempBearingQuarterRevs * (bearingCircumference / 4.0);
+          // INTERESTING TIMING: We start the timer the moment we give the command to slow to entry speed *minus* Legacy step-down,
+          // which is what we will do the moment we trip the destination entry sensor (actually, usually beyond that, after we
+          // continue at the incoming speed until it's time to start slowing down.)  But we stop the timer one Legacy-delay period
+          // *after* giving the Crawl speed command, because that is the first moment we would want to give a "stop" command.  I.e.
+          // we don't want to time this so that we give the Crawl speed command as we trip the exit sensor, but rather we want to
+          // give the Crawl speed command one Legacy-delay period (i.e. 500ms) *before* we trip the exit sensor, so that we can
+          // give a "stop" command (or slow to a stop from Crawl) just at the moment we trip the exit sensor.
+          // This is kind of silly because our error margins far exceed this level of accuracy, but at least we can do what we can
+          // to try!
+          // Also, although there is some variation in the *distance* that we travel from the incoming speed until Crawl speed, the
+          // *time* that we're recording is going to be very consistent and very accurate -- because the time won't change
+          // regardless of the circumference of the bearings or whatever.  In fact, we can always accurately *calculate* the time
+          // required to slow to Crawl speed simply by multiplying the number of speed step-downs by the delay time.
+          // The Train Progress class provides a function for this.
+          sprintf(lcdString, "QRevs  : %5i", tempBearingQuarterRevs); pLCD2004->println(lcdString); Serial.println(lcdString);
+          sprintf(lcdString, "Est  ms: %5lu", estimatedTimeToSlow); pLCD2004->println(lcdString); Serial.println(lcdString); Serial2.println(lcdString);
+          sprintf(lcdString, "Act  ms: %5lu", (endTime - startTime)); pLCD2004->println(lcdString); Serial.println(lcdString); Serial2.println(lcdString);
+          sprintf(lcdString, "Dist mm: %5i", distanceTravelled); pLCD2004->println(lcdString); Serial.println(lcdString); Serial2.println(lcdString);
 
-        sprintf(lcdString, "Repeat? 1=Y 2=N "); pLCD2004->println(lcdString); Serial.println(lcdString);
-        d = getKeypadValue();
-        if (d == 1) {
-          debugOn = true;
-          sprintf(lcdString, "Yes     "); pLCD2004->printRowCol(4, 9, lcdString); Serial.println(lcdString);
-        } else {
-          sprintf(lcdString, "No      "); pLCD2004->printRowCol(4, 9, lcdString); Serial.println(lcdString);
-          while (true) {}
-        }
-      }
-      while (true) {}
+  // How long did it take to populate the Delayed Action table once we "tripped" the Entry sensor?  Just curious...
+  sprintf(lcdString, "Pop  ms: %5lu", (populateTime - startTime)); pLCD2004->println(lcdString); Serial.println(lcdString); Serial2.println(lcdString);
 
-
-
-// ***************************************************************************************************************************************************
-// ***************************************************************************************************************************************************
-// ***************************************************************************************************************************************************
-// ***************************************************************************************************************************************************
-
-
-      // These are just some inital roller-bearing tests done 5/26/22 to get a rough idea:
-      // TEST RESULTS 5/26/22: WP 803-A, Legacy 114 (high) to 11 (crawl)
-      //                      legacyStepDown 3, legacyDelay  500 = 137" (plus less than 2" to stop)
-      //                      legacyStepDown 4, legacyDelay  500 = 102" still seems okay
-      //                      legacyStepDown 5, legacyDelay  500 =  79.5" a bit rough stopping but okay
-      //                      legacyStepdown 4, legacyDelay  400 =  81" and seems a bit smoother
-      // TEST RESULTS 5/26/22: BIG BOY, Legacy 100 (high) to 12 (crawl)
-      //                      legacyStepDown 3, legacyDelay  500 =  48" way too fast!
-      //                      legacyStepDown 3, legacyDelay 1000 =  97" (plus < 2" to stop)
-      //                      legacyStepDown 3, legacyDelay 1500 = 145" (plus < 2" to stop)
-      // TEST RESULTS 5/26/22: SHAY   , Legacy  84 (high) to 15 (crawl)
-      //                      legacyStepDown 3, legacyDelay  750 = 47" Really no need to stop any slower than this.
-      //                      legacyStepDown 3, legacyDelay 1000 = 62" Looks great.
-      // TEST RESULTS 5/26/22: SP 1440, Legacy  75 (high) to 15 (crawl)
-      //                      legacyStepDown 3, legacyDelay  500 = 47" (plus < 2" to stop)
-      //                      legacyStepDown 3, legacyDelay  750 = 70"
-
-      // **************************************************************************************************************************
-      // **************************************************************************************************************************
-      // **************************************************************************************************************************
-      // 6/7/22 IMPORTANT: UNFORTUNATELY, these test results vary by as much as 14% on these two tests.
-      // CONCLUSION: We should establish Crawl speeds that are relatively fast so we don't die of boredom if we hit Crawl 12"
-      // before the sensor.  Since our occupancy sensors are all pretty long (about 8" as I recall), we can lengthen the "slow
-      // down" algorithm to account for faster Crawl speeds. Let's target Crawl speed at approximately the same SMPH (equivalent
-      // mm/sec) for all engines, whether it's the Shay or the Big Boy.  Then our algorithm of "half crawl speed for x ms then
-      // speed 1 for y ms then stop" should be fairly consistent regardless of loco.
-      // **************************************************************************************************************************
-      // **************************************************************************************************************************
-      // **************************************************************************************************************************
-
-      // TEST RESULTS 6/7/22 ON ROLLER BEARINGS for SP 1440 @ 75 to 15 (same as above) USING JUST A FOR() LOOP (not Delayed Action):
-      // IT WILL BE INTERESTING TO RUN THE LOCO ON THE REAL TRACK AND SEE HOW CLOSE THE ACTUAL DISTANCES COMPARE TO THESE CALCULATIONS ****************************
-      //                      stepdown 3, delay 500: 1389mm = 54.7" rounded 55"  (orig test was 47") in 10.168 sec.
-      //                                    "        1266mm = 49.8"         50"
-      //                                    "        1328mm = 52.8"         53"
-      //                                    "        1287mm = 50.7"         51"
-      //                                    "        1430mm = 56.3"         56"
-      //                                    "        1410mm = 55.5"         56"
-      //                                    "        1287mm = 50.7"         51"
-      // FOR COMPARISON       stepdown 5, delay 833: 1246mm = 49.1"         49"                      in 10.096 sec.
-      //                                             1185mm = 46.7"         47"
-      //                                             1246mm = 49.1"         49"
-      //                                             1205mm = 47.4"         47"
-      // 
-      //                      stepdown 3, delay 750: 1859mm = 73.2"         73"  (orig test was 70") in 15.167 sec.
-      //                                    "        1880mm = 74.0"         74"
-      //                                    "        2145mm = 84.4"         84"
-      //                                    "        2115mm = 83.3"         83"
-      //                                    "        1869mm = 73.6"         74"
-      //                                    "        1839mm = 72.4"         72"
-      //                                    "        2125mm = 83.7"         84"
-      // FOR COMPARISON      stepdown 5, delay 1250: 1757mm = 69.2"         69"                       in 15.100 sec
-      //                                             1839mm = 72.4"         72"
-      //                                             1839mm = 72.4"         72"
-      //                                    "        1818mm = 71.6"         72"
-
-
-      // Normally at Crawl we would keep going until we trip the siding exit sensor (unless we'd already tripped it.)
-      // But we'll just stop.  Here we'll use our "Stop from crawl, slowly" function.
-      // Unfortunately there isn't much discernible difference between Crawl (speed 15) and speed 1, at least for SP 1440:
-      //  SP 1440 at Speed 15: 41-48mm/sec (Crawl)
-      //  SP 1440 at Speed  7: 44-49mm/sec (half Crawl)
-      //  SP 1440 at Speed  1: 34-38mm/sec (1)
-      //  If we do 500ms at half crawl plus 500ms at speed 1 before stopping, we'll travel approx 40mm = about 1.5" before stopping.  OK.
-      // However I previously recorded SP 1440 speed 15 at 73mm/sec -- proving that slow speeds are unreliable.  In any event:
-      //  SP 1440 at Speed 15: 73mm/sec (Crawl per my original test)
-      //  SP 1440 at Speed  7: 70mm/sec guessing; err on high side
-      //  SP 1440 at Speed  1: 50mm/sec guessing; err on high side
-      // Implies if we do 500ms at 70mm/sec + 50ms at 50mm/sec = 60mm to stop = 2.4", which is on the high side of acceptable.
-      // In any event, we can modify the *time* we spend at half crawl and at speed 1 in global consts to make this work for any loco.
-
-      // Display/print the time and distance travelled from incoming speed to Crawl, in mm.  This will be:
-      unsigned int distanceToCrawl = tempBearingQuarterRevs * (bearingCircumference / 4.0);
-      // INTERESTING TIMING: We start the timer the moment we give the command to slow to entry speed *minus* Legacy step-down,
-      // which is what we will do the moment we trip the destination entry sensor (actually, probably beyond that, after we
-      // continue at the incoming speed until it's time to start slowing down.)  But we stop the timer one Legacy-delay period
-      // *after* giving the Crawl speed command, because that is the first moment we would want to give a "stop" command.  I.e.
-      // we don't want to time this so that we give the Crawl speed command as we trip the exit sensor, but rather we want to give
-      // the Crawl speed command one Legacy-delay period (i.e. 500ms) *before* we trip the exit sensor, so that we can give a
-      // "stop" command (or slow to a stop from Crawl) just at the moment we trip the exit sensor.
-      // Also, although there is some variation in the *distance* that we travel from the incoming speed until Crawl speed, the
-      // *time* that we're recording is going to be very consistent and very accurate -- because the time won't change regardless
-      // of the circumference of the bearings or whatever.  In fact, you can pretty much *calculate* the time required to slow to
-      // Crawl speed simply by multiplying the number of speed step-downs by the delay time.
-      unsigned long timeToCrawl = endTime - startTime;
-      sprintf(lcdString, "QRevs: %i", tempBearingQuarterRevs); pLCD2004->println(lcdString); Serial.println(lcdString); // Serial2.println(lcdString);
-      sprintf(lcdString, "Dist : %imm", distanceToCrawl); pLCD2004->println(lcdString); Serial.println(lcdString); // Serial2.println(lcdString);
-      sprintf(lcdString, "Time : %lums", timeToCrawl); pLCD2004->println(lcdString); Serial.println(lcdString); // Serial2.println(lcdString);
-      // Serial2.println(); Serial2.println();
-// 1573mm in 12100ms
-// 1604mm in 12100ms
-// 1471mm in 12100ms
-// Speed 75 to speed 15 step 5 @ 1 second
-      // Just be done for now...
-      sprintf(lcdString, "Done."); pLCD2004->println(lcdString); Serial.println(lcdString);
-      while (true);
-      break;
-    }
-    default:
-    {
-      sprintf(lcdString, "testType Error!"); pLCD2004->println(lcdString); Serial.println(lcdString);
-      while (true);
+          sprintf(lcdString, "Restart 1 Repeat [2]"); pLCD2004->println(lcdString);
+          decelRestart = false;  // Set true if we want to re-enter new speed parms for this loco.
+          decelRepeat  = false;  // Set true if we want to repeat using the same speed parms for this loco (default.)
+          d = getKeypadValue();
+          if (d == 1) {  // Restart at the top loop
+            decelRestart = true;
+            sprintf(lcdString, "Restarting..."); pLCD2004->println(lcdString); Serial.println(lcdString);
+          } else {
+            decelRepeat = true;
+            sprintf(lcdString, "Repeating..."); pLCD2004->println(lcdString); Serial.println(lcdString);
+          }
+        } while (decelRepeat == true);  // Innder loop - repeat the test using same speed parms for this loco
+      } while (decelRestart == true);   // Outer loop - re-prompt for new speed parms for this loco
     }
   }
 }
+
+// ***************************************************************************************************************************************************
+// ***************************************************************************************************************************************************
+// ***************************************************************************************************************************************************
+// ***************************************************************************************************************************************************
+
+// ***************** NOTES FROM 6/7/22 WORTH REVIEWING BEFORE DELETING *****************
+// 6/7/22 IMPORTANT: UNFORTUNATELY, these test results vary by as much as 14% on these two tests.
+// CONCLUSION: We should establish Crawl speeds that are relatively fast so we don't die of boredom if we hit Crawl 12"
+// before the sensor.  Since our occupancy sensors are all pretty long (about 8"), our new 3-second "slow to a stop" function
+// will work fine even for somewhat fast incoming speeds.
+// Let's target Crawl speed at approximately the same SMPH (equivalent mm/sec) for all engines, whether it's the Shay or the Big
+// Boy.  Then our "slow to a stop" algorithm should be fairly consistent regardless of loco.
+
+// 6/7/22 TEST RESULTS ON ROLLER BEARINGS for SP 1440 @ 75 to 15 (same as above) USING JUST A FOR() LOOP (not Delayed Action):
+// IT WILL BE INTERESTING TO COMPARE THESE DISTANCE RESULTS WITH OUR NEW (7/24) CODE THAT USES DELAYED ACTION.
+// SP 1440 speed 75..15 stepdown 3, delay 500: 1389mm = 54.7" rounded 55"  (orig test was 47") in 10.168 sec.
+//                                    "        1266mm = 49.8"         50"
+//                                    "        1328mm = 52.8"         53"
+//                                    "        1287mm = 50.7"         51"
+//                                    "        1430mm = 56.3"         56"
+//                                    "        1410mm = 55.5"         56"
+//                                    "        1287mm = 50.7"         51"
+// FOR COMPARISON       stepdown 5, delay 833: 1246mm = 49.1"         49"                      in 10.096 sec.
+//                                             1185mm = 46.7"         47"
+//                                             1246mm = 49.1"         49"
+//                                             1205mm = 47.4"         47"
+// 
+//                      stepdown 3, delay 750: 1859mm = 73.2"         73"  (orig test was 70") in 15.167 sec.
+//                                    "        1880mm = 74.0"         74"
+//                                    "        2145mm = 84.4"         84"
+//                                    "        2115mm = 83.3"         83"
+//                                    "        1869mm = 73.6"         74"
+//                                    "        1839mm = 72.4"         72"
+//                                    "        2125mm = 83.7"         84"
+// FOR COMPARISON      stepdown 5, delay 1250: 1757mm = 69.2"         69"                       in 15.100 sec
+//                                             1839mm = 72.4"         72"
+//                                             1839mm = 72.4"         72"
+//                                    "        1818mm = 71.6"         72"
+
+// Unfortunately there isn't much discernible difference between Crawl (speed 15) and speed 1, at least for SP 1440:
+//  SP 1440 at Speed 15: 41-48mm/sec (Crawl)
+//  SP 1440 at Speed  7: 44-49mm/sec (half Crawl)
+//  SP 1440 at Speed  1: 34-38mm/sec (1)
+//  If we do 500ms at half crawl plus 500ms at speed 1 before stopping, we'll travel approx 40mm = about 1.5" before stopping.  OK.
+// However I previously recorded SP 1440 speed 15 at 73mm/sec -- proving that slow speeds are unreliable.  In any event:
+//  SP 1440 at Speed 15: 73mm/sec (Crawl per my original test)
+//  SP 1440 at Speed  7: 70mm/sec guessing; err on high side
+//  SP 1440 at Speed  1: 50mm/sec guessing; err on high side
+// Implies if we do 500ms at 70mm/sec + 50ms at 50mm/sec = 60mm to stop = 2.4", which is on the high side of acceptable.
+// In any event, we can modify the *time* we spend at half crawl and at speed 1 in global consts to make this work for any loco.
 
 // *****************************************************************************************
 // ************************ F U N C T I O N   D E F I N I T I O N S ************************
 // *****************************************************************************************
 
 float getBearingCircumference(byte t_locoNum) {
+  // In addition to calculated circumference, here is where we can record other data about each loco for reference purposes.
+
+  float locoBearingCircumference = 0;
   switch (t_locoNum) {
-    case  2:  // Shay Eng 2
+
+    case  2:  // Shay = Engine 2
     {
       // SHAY (Eng 2): Final data as of 5/23/22.
+      // 10/27/22 after cleaning roller bearing, speeds were consistent.  Previously very unpredictable.
       // Measured     SHAY on 5m track @ Legacy 80 AVG  38.29 sec = 130.60mm/sec.
       // Measured     SHAY on bearings @ Legacy 80 AVG .31609 sec/rev @ 130.60mm/sec = 41.2814mm/rev
+      // NOTE: The fastest Shay ever recorded went 18mph.  So I should probably bump Fast to 18smph.
+      //   Legacy   smph    speed     mm/sec
+      //       1    1.8       MIN       17  Ranged from 16.31, 17.21, 16.24, 15.68. 17mm/sec.  50mm in 2", 127mm in 5".  Now 44mm/sec=4.7smph.
+      //      20    2.5     CRAWL       23  10/27/22: 23mm/2.5smph.  10/29/22:   45mm, 4.9smph; 51mm, 5.5smph, 48mm, 5.2smph.
+      //      49      7       LOW       66  10/27/22: 66mm/7smph.  Ugh, 10/29/22: 130mm/14smph.  Previously varied from 45.4 to 72.9, really unreliable.
+      //      72     12       MED      112  10/27/22: 112mm/12smph. Ugh, 10/29/22: 198mm/21smph.  Now back to 187/20smph.
+      //      93    17.9     FAST      167  10/27/22: 167mm/18smph.  10/29/22: 196mm/21smph. 190-204
+      //   SHAY REAL WORLD TEST RESULTS on 5 METER TRACK (5/2/22):
+      //   Speed  20: 209.20 sec.
+      //   Speed  40:  99.04 sec.
+      //   Speed  60:  58.07 sec. (reverse: 57.70 sec.)
+      //   Speed  80   38.35 sec. (reverse: 38.31 sec.)
+      //   Speed 100:  27.05 sec. (reverse: 27.11 sec.)
       //   Legacy   smph    speed     mm/sec
       //      15    2.5     CRAWL       23  Varies 21.3, 22.8
       //      37      7       LOW       69  Varies from 45.4 to 72.9 / 45.6, 47.0, 45.3 / 45.5, 48.5
       //      62     11       MED      102  Varies from 92.8 to 109.7 / 56.9, 59.0, 58.9, 58.9, 55.4 / 89.7, 89.5, 89.6
       //      84     15      FAST      141  Very consistent
-      sprintf(lcdString, "Shay");  pLCD2004->println(lcdString); Serial.println(lcdString);
-      bearingCircumference =  41.2814;  // SHAY mm/rev as of 2/23/22
+      // These are just some inital roller-bearing tests done 5/26/22 to get a rough idea:
+      // TEST RESULTS 5/26/22: SHAY   , Legacy  84 (high) to 15 (crawl)
+      //                      legacyStepDown 3, legacyDelay  750 = 47" Really no need to stop any slower than this.
+      //                      legacyStepDown 3, legacyDelay 1000 = 62" Looks great.
+      locoBearingCircumference =  41.2814;  // SHAY mm/rev as of 2/23/22
+      sprintf(lcdString, "Shay"); pLCD2004->println(lcdString); Serial.println(lcdString); Serial2.println(lcdString);
       break;
     }
 
-    case 4:  // ATSF NW2
+    case 4:  // ATSF NW2 = Engine 4
     {
-      // ATSF NW2 correct as of 06/27/24.
+      // ATSF NW2: Correct as of 06/27/24.
       // Measured NW2 on 5m track @ Legacy 101 = 183mm/sec
       // Measured NW2 on 5m track @ Legacy 140 = 312.5mm/sec
       //   Legacy   smph    speed     mm/sec
@@ -897,84 +776,149 @@ float getBearingCircumference(byte t_locoNum) {
       //      65     10       LOW       93
       //     102     20       MED      186
       //     117     25      FAST      233
-      sprintf(lcdString, "ATSF NW-2");  pLCD2004->println(lcdString); Serial.println(lcdString);
-      bearingCircumference =  40.5279;  // Accurate for ATSF NW2 as of 6/27/24
+      locoBearingCircumference =  40.5279;  // Accurate for ATSF NW2 as of 6/27/24
+      sprintf(lcdString, "ATSF NW-2"); pLCD2004->println(lcdString); Serial.println(lcdString);
       break;
     }
 
-    case  5:  // ATSF 1484 4-4-2 E6 Atlantic Eng 5, Trn 7
+    case  5:  // ATSF 1484 4-4-2 E6 Atlantic = Engine 5, Train 7.  Fairly slow and small. (NOTE: WHY IS IT A TRAIN???)
     {
-      // SF 1484 E6 (Eng 5, Trn 7): Final data as of 6/18/22.
+      // NOTE: The E6 steam loco had a top speed of 58mph to 75mph depending on train size.
+      // ATSF 1484 E6: Final data as of 6/18/22.
       // Measured SF 4-4-2 on 5m track @ Legacy 70 AVG  23.03 sec = 217.11mm/sec.
-      // Measured SF 4-4-2 on bearings @ Legacy 70 AVG  .1910 sec/rev @ 217.11mm/sec = 41.4680mm/rev
+      // Measured SF 4-4-2 on bearings @ Legacy 70 AVG  .1910 sec/rev @ 217.11mm/sec = 41.4680mm/rev (use this value)
+      // Measured SF 4-4-2 on 5m track @ Legacy 45 AVG  42.80 sec = 116.82mm/sec.
+      // Measured SF 4-4-2 on bearings @ Legacy 45 AVG  .3510 sec/rev @ 116.82mm/sec = 41.0024mm/rev (unreliable at this speed: 220 - 287 on 6/18/22 - ugh.)
+      //   Legacy   smph    speed     mm/sec
+      //       1    1.5       MIN       14
+      //       7    2.5     CRAWL       23
+      //      25    6.3       LOW       61
+      //      50   14.5       MED      136
+      //      80   28.4      FAST      268
       //   Legacy   smph    speed     mm/sec
       //      12    3.4     CRAWL       33
       //      25    6.3      LOW        61
       //      50   14.5      MED       136
       //      80   28.4     FAST       268
-      sprintf(lcdString, "Atlantic");  pLCD2004->println(lcdString); Serial.println(lcdString);  // Random values here...
-      bearingCircumference = 41.4680;
+      locoBearingCircumference = 41.4680;
+      sprintf(lcdString, "Atlantic"); pLCD2004->println(lcdString); Serial.println(lcdString);  // Random values here...
       break;
     }
 
-    case 8:  // WP 803-A = TRAIN 8 (not Engine 8)
+    case 8:  // WP 803-A = Engine 83, Train 8.  Lash-up includes other Engines with (hopefully) identical characteristics.
     {
-      // WP 803-A (Eng 83, Trn 8): Final data as of 5/23/22.
+      // NOTE: F3/F7 had a top speed of between 65mph and 102mph depending on gearing.
+      // WP 803-A: Final data as of 5/23/22.
       // Measured WP 803-A on 5m track @ Legacy 50 AVG  36.63 sec = 136.50mm/sec.
       // Measured WP 803-A on bearings @ Legacy 50 AVG .30562 sec/rev @ 136.50mm/sec = 41.7171mm/rev
+      // Oct 24 2022                               .31300 sec/ref @ 133.30mm/sec
+      // Measured WP 803-A on bearings TRACTION TIRE  .29475 sec/rev @ 141.00mm/sec
+      //   Legacy   smph    speed     mm/sec
+      //       1    1.6       MIN       15  14.94/1.6, 15.01/1.6
+      //       7    2.5     CRAWL       23
+      //      37     10       LOW       95  But as low as 90.  90.1, 90.5, 90.5, 90.0 / 91.0
+      //      93     35       MED      330  Consistent
+      //     114     50      FAST      463  Consistent 
+      //   WP 803-A REAL WORLD TEST RESULTS: WP 803-A on 5 METER TRACK (5/2/22):
+      //   Speed  20: 102.70 sec.
+      //   Speed  40:  48.96 sec.
+      //   Speed  50:  36.76 sec.  Also 36.70, 36.52, 36.48, 36.63, 36.66, 37.02, 36.90 (reverse)
+      //   Speed  60:  28.92 sec.
+      //   Speed  80:  18.96 sec.
+      //   Speed 100:  13.31 sec.
       //   Legacy   smph    speed     mm/sec
       //      11      6     CRAWL       53  But as low as 29mm/sec.  29.2, 28.9, 29.1, 29.4
       //      37     10       LOW       95  But as low as 90.  90.1, 90.5, 90.5, 90.0 / 91.0
       //      93     35       MED      330  Consistent
       //     114     50      FAST      463  Consistent 
-      sprintf(lcdString, "WP 803-A");  pLCD2004->println(lcdString); Serial.println(lcdString);
-      bearingCircumference =  41.7171;  // WP 803-A mm/rev as of 2/23/22
+      // These are just some inital roller-bearing tests done 5/26/22 to get a rough idea:
+      // TEST RESULTS 5/26/22: WP 803-A, Legacy 114 (high) to 11 (crawl)
+      //                      legacyStepDown 3, legacyDelay  500 = 137" (plus less than 2" to stop)
+      //                      legacyStepDown 4, legacyDelay  500 = 102" still seems okay
+      //                      legacyStepDown 5, legacyDelay  500 =  79.5" a bit rough stopping but okay
+      //                      legacyStepdown 4, legacyDelay  400 =  81" and seems a bit smoother
+      locoBearingCircumference =  41.7171;  // WP 803-A mm/rev as of 2/23/22
+      sprintf(lcdString, "WP 803-A"); pLCD2004->println(lcdString); Serial.println(lcdString);
       break;
     }
 
-    case 14:  // Big Boy Eng 14
+    case 14:  // Big Boy = Engine 14
     {
-      // BIG BOY (Eng 14): Final data as of 5/23/22.
+      // BIG BOY: Final data as of 5/23/22.
+      // NOTE: The fastest a Big Boy could ever go is 70mph.
       // Huge variation in mm/sec at low speeds; less as speeds increased past Legacy 40.
       // Measured  BIG BOY on 5m track @ Legacy 50 AVG  36.87 sec = 135.61mm/sec.
       // Measured  BIG BOY on bearings @ Legacy 50 AVG .30698 sec/rev @ 135.61mm/sec = 41.6296mm/rev
+      //   Legacy   smph    speed     mm/sec
+      //       1    1.5       MIN       14
+      //       8    2.5     CRAWL       23
+      //      26     10       LOW       95  // Recently 95mm/sec, previously 61-62 10/29/22, 65 = 7, 61=6.5, 
+      //      74     26       MED      239
+      //     100     41      FAST      384
+      //   BIG BOY REAL WORLD TEST RESULTS on 5 METER TRACK (5/2/22):
+      //   Speed  20: 105.64 sec.
+      //   Speed  40:  48.85 sec.  Also: 49.08, 49.09, 49.03, 49.00 (fwd), 48.46, 48.65 (rev)
+      //   Speed  60:  28.84 sec.
+      //   Speed  80:  18.96 sec.
       //   Legacy   smph    speed     mm/sec
       //      12      6     CRAWL       53
       //      26     10       LOW       95
       //      74     26       MED      239
       //     100     41      FAST      384
-      sprintf(lcdString, "Big Boy");  pLCD2004->println(lcdString); Serial.println(lcdString);
-      bearingCircumference =  41.6296;  // Big Boy mm/rev as of 2/23/22
+      // These are just some inital roller-bearing tests done 5/26/22 to get a rough idea:
+      // TEST RESULTS 5/26/22: BIG BOY, Legacy 100 (high) to 12 (crawl)
+      //                      legacyStepDown 3, legacyDelay  500 =  48" way too fast!
+      //                      legacyStepDown 3, legacyDelay 1000 =  97" (plus < 2" to stop)
+      //                      legacyStepDown 3, legacyDelay 1500 = 145" (plus < 2" to stop)
+      locoBearingCircumference =  41.6296;  // Big Boy mm/rev as of 2/23/22
+      sprintf(lcdString, "Big Boy"); pLCD2004->println(lcdString); Serial.println(lcdString);
     }
 
-    case 40:  // SP 1440
+    case 40:  // SP 1440 = Engine 40
     {
-      // SP 1440 (Eng 40): Final data as of 5/23/22.
+      // SP 1440: Final data as of 5/23/22.
+      // NOTE: This is a switcher, so speeds were kept low.  The Alco S-2 switcher had a top speed of 60mph.
       // Measured  SP 1440 on 5m track @ Legacy 50 AVG  37.80 sec = 132.28mm/sec.
       // Measured  SP 1440 on bearings @ Legacy 50 AVG .30897 sec/rev @ 132.28mm/sec = 40.8706mm/rev
+      //   SP 1440 REAL WORLD TEST RESULTS: SP 1440 on 5 METER TRACK (5/2/22):
+      //   Speed  20: 111.33 sec.
+      //   Speed  30:  70.74 sec.
+      //   Speed  40:  50.28 sec.
+      //   Speed  60:  29.26 sec.
+      //   Speed  80:  19.05 sec.
+      //   Speed  84:  17.70 sec.
+      //   Speed 100:  13.48 sec.
       //   Legacy   smph    speed     mm/sec
       //      15      8     CRAWL       73  But as low as 55mm/sec
       //      44     12       LOW      112  Not very accurate, sometimes slower
       //      55     16       MED      151
       //      75     25      FAST      236
-      sprintf(lcdString, "SP 1440");  pLCD2004->println(lcdString); Serial.println(lcdString);
-      bearingCircumference =  40.8706;  // SP 1440 mm/rev as of 2/23/22
+      // These are just some inital roller-bearing tests done 5/26/22 to get a rough idea:
+      // TEST RESULTS 5/26/22: SP 1440, Legacy  75 (high) to 15 (crawl)
+      //                      legacyStepDown 3, legacyDelay  500 = 47" (plus < 2" to stop)
+      //                      legacyStepDown 3, legacyDelay  750 = 70"
+      locoBearingCircumference =  40.8706;  // SP 1440 mm/rev as of 2/23/22
+      sprintf(lcdString, "SP 1440"); pLCD2004->println(lcdString); Serial.println(lcdString);
       break;
     }
 
     default:
     {
+      locoBearingCircumference =  41.1;  // This is a good average value to use in the absence of actual data
       sprintf(lcdString, "DEFAULT LOCO"); pLCD2004->println(lcdString); Serial.println(lcdString);
-      bearingCircumference =  41.1;  // This is a good average value to use in the absence of actual data
       break;
     }
+    dtostrf(locoBearingCircumference, 7, 4, lcdString);  // i.e. "41.1234"
+    lcdString[8] = 'm'; lcdString[9] = 'm'; lcdString[10] = 0;
+    pLCD2004->println(lcdString); Serial.println(lcdString); Serial2.println(lcdString);
 
   }
-  return bearingCircumference;
+  return locoBearingCircumference;
 }
 
-void ISR_Read_IR_Sensor() {  
-  // Rev: 06-07-22.
+void ISR_Read_IR_Sensor() {
+  // Rev: 07-07-24.
+  // 07-07-24: Made DEBOUNCE_DELAY a byte const at top of code, even when used with delay()
   // Count up the total number of bearing quarter revs.  Must be called every 1ms by TimerOne interrupt.
   // This could have an error of up to 20mm, since each 1/4 rev stripe is about 10mm long.  We could start scanning at the very end
   // of a stripe, and consider that 10mm when it was potentially only 1mm, and we could end at the very beginning of a stripe,
@@ -990,7 +934,6 @@ void ISR_Read_IR_Sensor() {
   // fastest loco (Big Boy) triggers a state change every 13ms, and it would *never* travel that fast on the layout.
   // At most speeds, bounce is much less than 1ms, but at speed 1 there is sometimes a weird bounce of 3.5ms (very rare.)
 
-  const byte DEBOUNCE_DELAY = 4;  // Debounce time in 1ms increments (1ms interrupt countdown.)
   static byte bounceCountdown = 0;  // This will get reset to DEBOUNCE_DELAY after each new sensor change
   static int oldSensorReading = LOW;
   static int newSensorReading = LOW;
@@ -1014,22 +957,22 @@ void ISR_Read_IR_Sensor() {
 }
 
 float timePerRev() {
-  // Rev: 06-28-24.
+  // Rev: 07-07-24.
+  // 07-07-24: Made DEBOUNCE_DELAY a byte const at top of code, even when used with delay()
   // 06-28-24: Added logic to vary the number of quarter revs we wait for (and count) depending on speed of the loco.  This
   //           tries to display the loco speed no faster than each .5 seconds, and no slower than each 1 second.
   //           Ranges from 2 full revs at slow speed, to 16 full revs at high speed.
   // This function just sits and watches the roller bearing run (at a steady speed, presumably) for a specified number of
-  // revolutions, and then returns the average time per rev.
+  // revolutions, and then returns the average time per rev. (as a float value so we can more accurately divide etc.)
   // Watch the roller bearing IR sensor and return the time for one rev, in ms (averaged based on 4 revs.)
 
   // Before we begin, wait for two stable reads (separated by DEBOUNCE_DELAY ms) and *then* wait for a state change
-  unsigned long const DEBOUNCE_DELAY = 4;  // Debounce time in ms when used to compare with millis()
   static byte bracket = 1;            // Brackets are speed ranges for how long to count revs, using next two variables
   static int quarterTurnsToWait = 9;  // Increase 9..17..33..65 as we speed up based on subTime
   static float timeDivisor =  2.0;    // Increase 2.0..4.0..8.0..16.0 as we speed up based on subTime
   int oldSensorReading = LOW;
   int newSensorReading = LOW;
-  unsigned long startTime;
+  unsigned long localStartTime;
 
   // First wait for a transition so we'll know we're right at the edge, maybe bouncing or maybe not.
   // We could start timing at the first change of state, but if we happen to be at the end of a bounce, we could potentially see
@@ -1052,11 +995,11 @@ float timePerRev() {
   } while (newSensorReading == oldSensorReading);  // Kill time until we see the sensor status change
   // Okay, NOW we know we are at the FRONT edge of a transition, beginning a newSensorReading zone.
   // Start the timer and see how long it takes to go through the next four quarters (one full revolution of the bearing.)
-  startTime = millis();  // Start the one-revolution timer!
+  localStartTime = millis();  // Start the one-revolution timer!
   // Speed up the refresh rate (but potentially reduce the consistency) by adjusting the number of times we read a quarter turn,
   // and also don't forget to adjust the subTime calculation below.
-  // For fast refresh (best at lower loco speeds), use "quarterTurn < 9"  and "startTime)) / 2.0"
-  // For slower refresh (better at highest speed), use "quarterTurn < 65" and "startTime)) / 16.0"
+  // For fast refresh (best at lower loco speeds), use "quarterTurn < 9"  and "localStartTime)) / 2.0"
+  // For slower refresh (better at highest speed), use "quarterTurn < 65" and "localStartTime)) / 16.0"
   // I could automate this by automatically choosing the two values based on how long it takes TimePerRev() to return a value.
   // How many quarter-turns of the roller bearing to we want to count/wait, while recording the time it takes?
   for (int quarterTurn = 1; quarterTurn < quarterTurnsToWait; quarterTurn++) {
@@ -1068,11 +1011,11 @@ float timePerRev() {
     newSensorReading = !newSensorReading;
   }
   // Completed our revs!  Stop the timer!
-  float subTime = float(float((millis() - startTime)) / timeDivisor);
+  float subTime = float(float((millis() - localStartTime)) / timeDivisor);
 
   // Now make any necessary adjustments to how many quarter revs we count, depending on how slow or fast our loco is moving...
   // This helps refresh the display more quickly when we're moving slowly, and refresh more slowly when we're moving very fast.
-  float delayTime = float(millis() - startTime);  // Used only to calculate how many revs we wait for each speed reading
+  float delayTime = float(millis() - localStartTime);  // Used only to calculate how many revs we wait for each speed reading
   if ((bracket == 1) && (delayTime < 500)) {  // Refreshing too fast; wait for more quarter turns
     bracket = 2;
     quarterTurnsToWait = 17; timeDivisor = 4.0;

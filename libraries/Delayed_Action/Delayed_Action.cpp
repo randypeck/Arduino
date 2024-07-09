@@ -232,7 +232,7 @@ void Delayed_Action::populateLocoSlowToStop(const byte t_devNum) {
     sprintf(lcdString, "DA 2 SPEED ERROR!"); pLCD2004->println(lcdString); endWithFlashingLED(5);
   }
   if (wipeLocoSpeedCommands(t_devNum)) {  // Erase any remaining speed-related commands from Delayed Action for this loco.
-    // Returns true if there were commands that were wiped, so display a bit of info.
+    // Returns true if there were commands that were wiped, so display a bit of info.  Not fatal but useful to know.
     sprintf(lcdString, "PLSS Loco Spd %3i", t_startSpeed); pLCD2004->println(lcdString); Serial.println(lcdString);
     sprintf(lcdString, "PLSS Trgt Spd -0-"); pLCD2004->println(lcdString); Serial.println(lcdString);
   }
