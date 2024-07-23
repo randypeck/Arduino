@@ -1,4 +1,4 @@
-// Roller_Speed Populator, Speedometer, and Deceleration Distance calculator.  Rev: 07/09/24 READY FOR TESTING
+// Roller_Speed Populator, Speedometer, and Deceleration Distance calculator.  Rev: 07/20/24 READY FOR TESTING
 // 
 // IMPORTANT: Calibration of roller-bearing circumference is required FOR EACH LOCO using on-layout 5-meter timing before reliable
 // results can be determined for that loco on the roller bearings with this utility.
@@ -145,7 +145,7 @@
 #include <Train_Consts_Global.h>
 #include <Train_Functions.h>
 const byte THIS_MODULE = ARDUINO_NUL;  // Global just needs to be defined for use by Train_Functions.cpp and Message.cpp.
-char lcdString[LCD_WIDTH + 1] = "RSP 07/09/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "RSP 07/20/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 
 // *** SERIAL LCD DISPLAY CLASS ***
 // #include <Display_2004.h> is already in <Train_Functions.h> so not needed here.
@@ -235,8 +235,9 @@ float bearingCircumference =  41.1;  // Will be around 41.1mm but varies slightl
 // Pins 2..12 are good for general purpose digital I/O
 const byte PIN_RPM_SENSOR        = 2;  // Arduino MEGA pin number that the IR sensor is plugged into (not a serial pin.)
 const byte PIN_FAST_SLOW_STOP    = 3;  // Toggle switch for Decel to determine if Crawl should include 3-second slow-to-stop
-const byte PIN_EXTERNAL_TRIP     = 4;  // Connects to int. trip pushbutton and in parallel to output port occupancy sensor relay.
-const byte PIN_EXTERNAL_TRIP_LED = 5;  // Illuminates built-in pushbutton LED
+const byte PIN_EXTERNAL_TRIP_1   = 4;  // Connects to int. trip pushbutton.
+const byte PIN_EXTERNAL_TRIP_2   = 5;  // Connects to ext. pushbutton or port occupancy sensor relay.
+const byte PIN_EXTERNAL_TRIP_LED = 6;  // Illuminates built-in pushbutton LED
 // Pins 54..60 (A0..A6) are used for the membrane 3x4 keypad
 
 const float SMPHmmSec = 9.3133;  // mm/sec per 1 SMPH.  UNIVERSAL CONSTANT for O scale, regardless of bearing size or anything else.
@@ -256,10 +257,12 @@ bool extTrip  = false;  // In deceleration mode, do we begin slowing when pin is
 void setup() {
 
   // *** INITIALIZE ARDUINO I/O PINS ***
-  initializePinIO();
+  digitalWrite(PIN_OUT_LED, LOW);       // Built-in LED LOW=off
+  pinMode(PIN_OUT_LED, OUTPUT);
   pinMode(PIN_RPM_SENSOR, INPUT);
   pinMode(PIN_FAST_SLOW_STOP, INPUT_PULLUP);
-  pinMode(PIN_EXTERNAL_TRIP, INPUT_PULLUP);
+  pinMode(PIN_EXTERNAL_TRIP_1, INPUT_PULLUP);
+  pinMode(PIN_EXTERNAL_TRIP_2, INPUT_PULLUP);
   pinMode(PIN_EXTERNAL_TRIP_LED, OUTPUT);
   digitalWrite(PIN_EXTERNAL_TRIP_LED, HIGH);  // Pushbutton internal LED off
 
@@ -269,7 +272,7 @@ void setup() {
   // *** INITIALIZE SERIAL PORTS ***
   Serial.begin(115200);    // SERIAL0_SPEED.
   // Serial1 instantiated via Display_2004/LCD2004.
-  Serial2.begin(19200);  // Serial 2 for Thermal Printer, either 9600 or 19200 baud.
+  Serial2.begin(9600);  // Serial 2 for Thermal Printer, either 9600 or 19200 baud.
   Serial3.begin(9600);   // Serial 3 will be connected to Legacy via MAX-232
 
   // *** INITIALIZE LCD CLASS AND OBJECT *** (Heap uses 98 bytes)
@@ -379,9 +382,6 @@ void loop() {
     // ************************  S P E E D O M E T E R   U T I L I T Y  ************************
     // *****************************************************************************************
     case 'S':  // Speedometer on roller bearings.
-
-// ******************** WAIT, HOW COME WE DON'T JUST DISPLAY THE SPEED ONCE, THEN LOOP AROUND, AND ASK THE USER FOR THE LOCONUM AGAIN??? *********************************
-// ******************** Seems like we should have a do..while (true) forever loop to keep updating the speed. ************************************************************
     {
       // This function helps us determine Legacy speed settings 1..199 (and SMPH) for our four standard speeds C/L/M/H.
       // I.e. if we want to know the Legacy speed setting for 10 SMPH, play with the throttle until the display shows 10 SMPH.
@@ -403,27 +403,29 @@ void loop() {
       }
       bearingCircumference = getBearingCircumference(locoNum);
 
-      float revTime = timePerRev();  // milliseconds/bearingCircumference.  Can take several seconds at very low speeds.
-      // First, display the current processor time so we can easily see when display changes...
-      sprintf(lcdString, "Refreshed: %8ld", millis()); pLCD2004->println(lcdString); Serial.println(lcdString);
-      // Second, display how many milliseconds to make one revolution (about 41.1mm but different for every loco.)
-      dtostrf(revTime, 7, 2, lcdString);
-      lcdString[7] = ' '; lcdString[8] = 'm'; lcdString[9] = 's'; lcdString[10] = 0;
-      pLCD2004->println(lcdString);  // ms per revolution of the roller bearing
-      // Now convert that to mm/Sec => bearingCircumference / revTime (ms)
-      // i.e. 40.7332 / (3129/1000) (slowest speed) =  13.02 mm/Sec
-      // i.e. 40.7332 / (1000/1000) (1 Rev/Sec)     =  40.73 mm/Sec
-      // i.e. 40.7332 / (  97/1000) (maximum speed) = 419.93 mm/Sec
-      float mmPerSec = bearingCircumference * 1000.0 / revTime;  // Confirmed correct rounding
-      dtostrf(mmPerSec, 7, 2, lcdString);
-      lcdString[7] = ' '; lcdString[8] = 'm'; lcdString[9] = 'm'; lcdString[10] = '/'; lcdString[11] = 'S'; lcdString[12] = 'e'; lcdString[13] = 'c'; lcdString[14] = 0;
-      pLCD2004->println(lcdString);  // mm/sec at current speed using bearingCircumference
-      // Now convert mm/sec to SMPH
-      // SMPHmmSec = 9.3133mm/sec per 1 SMPH.  UNIVERSAL CONSTANT for O scale, regardless of bearing size or anything else.
-      float sMPH = mmPerSec / SMPHmmSec;
-      dtostrf(sMPH, 7, 2, lcdString);
-      lcdString[7] = ' '; lcdString[8] = 'S'; lcdString[9] = 'M'; lcdString[10] = 'P'; lcdString[11] = 'H'; lcdString[12] = 0;
-      pLCD2004->println(lcdString);  // SMPH
+      do {
+        float revTime = timePerRev();  // milliseconds/bearingCircumference.  Can take several seconds at very low speeds.
+        // First, display the current processor time so we can easily see when display changes...
+        sprintf(lcdString, "Refreshed: %8ld", millis()); pLCD2004->println(lcdString); Serial.println(lcdString);
+        // Second, display how many milliseconds to make one revolution (about 41.1mm but different for every loco.)
+        dtostrf(revTime, 7, 2, lcdString);
+        lcdString[7] = ' '; lcdString[8] = 'm'; lcdString[9] = 's'; lcdString[10] = 0;
+        pLCD2004->println(lcdString);  // ms per revolution of the roller bearing
+        // Now convert that to mm/Sec => bearingCircumference / revTime (ms)
+        // i.e. 40.7332 / (3129/1000) (slowest speed) =  13.02 mm/Sec
+        // i.e. 40.7332 / (1000/1000) (1 Rev/Sec)     =  40.73 mm/Sec
+        // i.e. 40.7332 / (  97/1000) (maximum speed) = 419.93 mm/Sec
+        float mmPerSec = bearingCircumference * 1000.0 / revTime;  // Confirmed correct rounding
+        dtostrf(mmPerSec, 7, 2, lcdString);
+        lcdString[7] = ' '; lcdString[8] = 'm'; lcdString[9] = 'm'; lcdString[10] = '/'; lcdString[11] = 'S'; lcdString[12] = 'e'; lcdString[13] = 'c'; lcdString[14] = 0;
+        pLCD2004->println(lcdString);  // mm/sec at current speed using bearingCircumference
+        // Now convert mm/sec to SMPH
+        // SMPHmmSec = 9.3133mm/sec per 1 SMPH.  UNIVERSAL CONSTANT for O scale, regardless of bearing size or anything else.
+        float sMPH = mmPerSec / SMPHmmSec;
+        dtostrf(sMPH, 7, 2, lcdString);
+        lcdString[7] = ' '; lcdString[8] = 'S'; lcdString[9] = 'M'; lcdString[10] = 'P'; lcdString[11] = 'H'; lcdString[12] = 0;
+        pLCD2004->println(lcdString);  // SMPH
+      } while (true);
       break;
     }
 
@@ -582,7 +584,7 @@ void loop() {
           // To begin slowing, are we acting on our own or are we waiting for a button press or sensor relay?
           if (extTrip) {  // Wait for our pin to be grounded, either by a pushbutton or by a layout sensor relay closure
             digitalWrite(PIN_EXTERNAL_TRIP_LED, LOW);  // Turn on push button built-in LED so user knows it's okay to press button
-            while (digitalRead(PIN_EXTERNAL_TRIP) != LOW) { }  // Wait for pushbutton or relay contacts to ground this pin.
+            while ((digitalRead(PIN_EXTERNAL_TRIP_1) != LOW) && (digitalRead(PIN_EXTERNAL_TRIP_2) != LOW)) { }  // Wait for pushbutton or relay contacts to ground this pin.
             digitalWrite(PIN_EXTERNAL_TRIP_LED, HIGH);  // Pushbutton internal LED off once it's been pressed
           }
 
@@ -620,8 +622,10 @@ void loop() {
           // visualize what a 3-second stop-from-Crawl will look like (delayed stop.)
           // It's a moot point for Auto mode (not ext. trip) as it won't affect any numbers.
           if (digitalRead(PIN_FAST_SLOW_STOP) == LOW) {
+Serial.println("Immediate stop");
             pDelayedAction->populateLocoCommand(millis(), locoNum, LEGACY_ACTION_STOP_IMMED, 0, 0);
           } else {
+Serial.println("Slow stop");
             pDelayedAction->populateLocoSlowToStop(locoNum);
           }
 
@@ -769,13 +773,11 @@ float getBearingCircumference(byte t_locoNum) {
     case 4:  // ATSF NW2 = Engine 4
     {
       // ATSF NW2: Correct as of 06/27/24.
-      // Measured NW2 on 5m track @ Legacy 101 = 183mm/sec
-      // Measured NW2 on 5m track @ Legacy 140 = 312.5mm/sec
       //   Legacy   smph    speed     mm/sec
-      //      21    2.5     CRAWL       23
-      //      65     10       LOW       93
-      //     102     20       MED      186
-      //     117     25      FAST      233
+      //      21    2.5     CRAWL       23  (Confirmed 24 mm/sec on layout 7/22/24)
+      //      65     10       LOW       93  (Confirmed 93 mm/sec on layout 7/22/24)
+      //     102     20       MED      186  (Confirmed 186 mm/sec on layout 7/22/24)
+      //     117     25      FAST      233  (Confirmed 234 mm/sec on layout 7/22/24)
       locoBearingCircumference =  40.5279;  // Accurate for ATSF NW2 as of 6/27/24
       sprintf(lcdString, "ATSF NW-2"); pLCD2004->println(lcdString); Serial.println(lcdString);
       break;
@@ -935,8 +937,8 @@ void ISR_Read_IR_Sensor() {
   // At most speeds, bounce is much less than 1ms, but at speed 1 there is sometimes a weird bounce of 3.5ms (very rare.)
 
   static byte bounceCountdown = 0;  // This will get reset to DEBOUNCE_DELAY after each new sensor change
-  static int oldSensorReading = LOW;
-  static int newSensorReading = LOW;
+  static byte oldSensorReading = LOW;
+  static byte newSensorReading = LOW;
 
   // Wait until our bounce delay has transpired after reading a state change, before looking for the next one.  I.e., since this
   // function will be called every 1ms, we are reading the sensor status every 4th call, i.e. reading every 4ms.
@@ -957,6 +959,93 @@ void ISR_Read_IR_Sensor() {
 }
 
 float timePerRev() {
+  // Rev: 07-22-24.
+  // 07-22-24: Changing to just count revs for 4 seconds regardless of RPM.  Should work fine for lowest practical speeds + high speed.
+  // 07-07-24: Made DEBOUNCE_DELAY a byte const at top of code, even when used with delay()
+  // 06-28-24: Added logic to vary the number of quarter revs we wait for (and count) depending on speed of the loco.  This
+  //           tries to display the loco speed no faster than each .5 seconds, and no slower than each 1 second.
+  //           Ranges from 2 full revs at slow speed, to 16 full revs at high speed.
+  // This function just sits and watches the roller bearing run (at a steady speed, presumably) for a specified number of
+  // revolutions, and then returns the average time per rev. (as a float value so we can more accurately divide etc.)
+  // Watch the roller bearing IR sensor and return the time for one rev, in ms (averaged based on 4 revs.)
+
+  // Before we begin, wait for two stable reads (separated by DEBOUNCE_DELAY ms) and *then* wait for a state change
+//  static byte bracket = 1;            // Brackets are speed ranges for how long to count revs, using next two variables
+//  static int quarterTurnsToWait = 9;  // Increase 9..17..33..65 as we speed up based on subTime
+//  static float timeDivisor =  2.0;    // Increase 2.0..4.0..8.0..16.0 as we speed up based on subTime
+  byte oldSensorReading = LOW;
+  byte newSensorReading = LOW;
+  unsigned int localQuarterRevCount = 0;  // How many quarter revs per LOCAL_DELAY_TIMER ms
+  unsigned long localStartTime;
+  unsigned long localEndTime;
+  const unsigned long LOCAL_DELAY_TIMER = 4000;  // How many ms to count revs for.
+
+  // First wait for a transition so we'll know we're right at the edge, maybe bouncing or maybe not.
+  // We could start timing at the first change of state, but if we happen to be at the end of a bounce, we could potentially see
+  // the timer up to 3.5ms less than it actually is.  Of course this would ONLY happen at the lowest speeds when we see the
+  // occasional 3.5ms fluke bounce time (usually it's about .5ms.)  But what the heck, this is for accuracy and only in our test-
+  // bench code.
+  // So here we "waste" up to 1/4 revolution waiting to be sure we'll be at the FRONT edge of a transition when we start the timer.
+  oldSensorReading = digitalRead(PIN_RPM_SENSOR);  // Will be LOW or HIGH
+  do {
+    newSensorReading = digitalRead(PIN_RPM_SENSOR);
+  } while (newSensorReading == oldSensorReading);  // Keep reading until there is a change
+  // We just saw a transition so we are for sure near the edge of a transition from black/white or white/black.  Maybe at the
+  // beginning, but POSSIBLY at the end of a 3.5ms bounce.  So now wait for debounce and then wait for next state change.
+  delay(DEBOUNCE_DELAY);
+  // Now we know we must be partway into a quarter rev (however long it takes to travel for DEBOUNCE_DELAY ms.)
+  // Always less than a quarter rev, which never takes less than 18ms if we are travelling at 60smph.
+  oldSensorReading = digitalRead(PIN_RPM_SENSOR);  // Will be LOW or HIGH, but will be a stable read at this point
+  do {
+    newSensorReading = digitalRead(PIN_RPM_SENSOR);
+  } while (newSensorReading == oldSensorReading);  // Kill time until we see the sensor status change
+  // Okay, NOW we know we are at the FRONT edge of a transition, beginning a newSensorReading zone.
+  // Start the timer and count revs for LOCAL_DELAY_TIMER ms...
+  localStartTime = millis();  // Start the timer!
+  localEndTime = localStartTime + LOCAL_DELAY_TIMER;
+  // How many quarter-turns of the roller bearing per LOCAL_DELAY_TIMER ms?
+  while (millis() < localEndTime) {
+    localQuarterRevCount++;  // First time in will set this to 1.
+    // Wait for the sensor to change again
+    while (digitalRead(PIN_RPM_SENSOR) == newSensorReading) {}
+    // Okay we just saw a transition
+    newSensorReading = !(newSensorReading);
+    // Wait for bounce from last read to stabilize
+    delay(DEBOUNCE_DELAY);
+  }
+  // If we happen to be moving really slowly, less than around 40mm/sec = 1 rev/sec, then REPEAT
+  // Using our LOCAL_DELAY_TIME of 4000ms, then we'd do only 4 full revs = 16 quarter-revs in 4 seconds.
+  if (localQuarterRevCount < 16) {
+    localEndTime = localEndTime + LOCAL_DELAY_TIMER;
+    // Wait for the sensor to change again
+    while (digitalRead(PIN_RPM_SENSOR) == newSensorReading) {}
+    // Okay we just saw a transition
+    newSensorReading = !(newSensorReading);
+    // Wait for bounce from last read to stabilize
+    delay(DEBOUNCE_DELAY);
+    while (millis() < localEndTime) {
+      localQuarterRevCount++;  // We do still need to add this here.
+      // Wait for the sensor to change again
+      while (digitalRead(PIN_RPM_SENSOR) == newSensorReading) {}
+      // Okay we just saw a transition
+      newSensorReading = !(newSensorReading);
+      // Wait for bounce from last read to stabilize
+      delay(DEBOUNCE_DELAY);
+    }
+    localQuarterRevCount = localQuarterRevCount / 2;
+  }
+
+  // Completed our rev count for LOCAL_DELAY_TIMER ms!
+  // Number of quarter revs will be localQuarterRevCount.
+  // Convert the number of quarter revs / LOCAL_DELAY_TIMER ms into ms / full rev.
+  float fullRevs = localQuarterRevCount / 4.0;  // This many full revs in LOCAL_DELAY_TIMER ms.
+  float fullRevsPerMS = fullRevs / LOCAL_DELAY_TIMER;
+  float MSPerFullRev = 1.0 / fullRevsPerMS;
+
+  return MSPerFullRev;  // Time in ms per full revolution
+}
+
+float timePerRevORIGINAL() {
   // Rev: 07-07-24.
   // 07-07-24: Made DEBOUNCE_DELAY a byte const at top of code, even when used with delay()
   // 06-28-24: Added logic to vary the number of quarter revs we wait for (and count) depending on speed of the loco.  This
@@ -970,8 +1059,8 @@ float timePerRev() {
   static byte bracket = 1;            // Brackets are speed ranges for how long to count revs, using next two variables
   static int quarterTurnsToWait = 9;  // Increase 9..17..33..65 as we speed up based on subTime
   static float timeDivisor =  2.0;    // Increase 2.0..4.0..8.0..16.0 as we speed up based on subTime
-  int oldSensorReading = LOW;
-  int newSensorReading = LOW;
+  byte oldSensorReading = LOW;
+  byte newSensorReading = LOW;
   unsigned long localStartTime;
 
   // First wait for a transition so we'll know we're right at the edge, maybe bouncing or maybe not.
@@ -1008,7 +1097,7 @@ float timePerRev() {
     // Wait for the sensor to change again
     while (digitalRead(PIN_RPM_SENSOR) == newSensorReading) {}
     // Okay we just saw a transition
-    newSensorReading = !newSensorReading;
+    newSensorReading = !(newSensorReading);
   }
   // Completed our revs!  Stop the timer!
   float subTime = float(float((millis() - localStartTime)) / timeDivisor);
@@ -1035,9 +1124,9 @@ float timePerRev() {
     bracket = 3;
     quarterTurnsToWait = 33; timeDivisor = 8.0;
   }
-  Serial.print("Bracket   = "); Serial.println(bracket);
-  Serial.print("subTime   = "); Serial.println(subTime);
-  Serial.print("delayTime = "); Serial.println(delayTime);
+  //Serial.print("Bracket   = "); Serial.println(bracket);
+  //Serial.print("subTime   = "); Serial.println(subTime);
+  //Serial.print("delayTime = "); Serial.println(delayTime);
   return subTime;
 }
 
