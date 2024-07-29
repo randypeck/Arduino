@@ -1,4 +1,4 @@
-// Roller_Speed Populator, Speedometer, and Deceleration Distance calculator.  Rev: 07/25/24.
+// Roller_Speed Populator, Speedometer, and Deceleration Distance calculator.  Rev: 07/29/24.
 // 
 // IMPORTANT: Calibration of roller-bearing circumference is required FOR EACH LOCO using on-layout 5-meter timing before reliable
 // results can be determined for that loco on the roller bearings with this utility.
@@ -41,27 +41,6 @@
 // slow-to-stop-in-3-seconds function that will normally be used,) we can also physically measure the distance to confirm that it
 // matches the stopping distance calculated on roller bearings (immediate stop only adds about 1/4" to distance when Crawling.)
 
-// For a high-speed passenger train (such as WP 803A), we will target:
-//   Crawl is around  28 mm/sec =  3 SMPH
-//   Low   is around  93 mm/sec = 10 SMPH
-//   Med   is around 326 mm/sec = 35 SMPH
-//   High  is around 465 mm/sec = 50 SMPH
-// For a medium-speed freight train (such as ATSF 4-4-2), we will target:
-//   Crawl is around  28 mm/sec =  3 SMPH
-//   Low   is around  93 mm/sec = 10 SMPH
-//   Med   is around 186 mm/sec = 20 SMPH
-//   High  is around 326 mm/sec = 35 SMPH
-// For a slow-speed switcher engine (such as an NW-2), we will target:
-//   Crawl is around  23 mm/sec = 2.5 SMPH (Though perhaps we want to target 3 SMPH for consistency with other locos, and because we don't have to slow down so much before stopping with a small train, and due to boredom waiting if we hit Crawl much ahead of the stop sensor.)
-//   Low   is around  93 mm/sec = 10 SMPH
-//   Med   is around 186 mm/sec = 20 SMPH
-//   High  is around 233 mm/sec = 25 SMPH
-// For ultra-low-speed locos (such as Shay), we will target:
-//   Crawl is around  23 mm/sec = 2.5 SMPH (Same comments as with slow-speed switcher - maybe Crawl should be 3 SMPH...)
-//   Low   is around  65 mm/sec =  7 SMPH
-//   Med   is around 112 mm/sec = 12 SMPH
-//   High  is around 168 mm/sec = 18 SMPH
-
 // DETAILS ON ESTABLISHING ROLLER BEARING CIRCUMFERENCE FOR A GIVEN LOCO:
 // Each loco travels a slightly different distance for each rotation of the roller bearing.  Perhaps this is because of the
 // geometry of large wheels versus small wheels...I don't know.  But even though the circumference of the roller bearing is a
@@ -93,7 +72,7 @@
 //                = 9.3133333 mm/sec
 //   i.e. 558.798mm/sec = 60 SMPH
 
-// IMPORTANT: Regarding how many trains we can send Legacy commands to at about the same time (i.e. slow multiple trains at once.)
+// Regarding how many trains we can send Legacy commands to at about the same time (i.e. slow multiple trains at once.)
 // Since we can only send serial commands to Legacy every 30ms (any faster and Legacy may ignore them,) we'll need to consider how
 // many trains we might want to be accellerating/decelerating (and blowing the horn, etc.) simultaneously.
 // i.e. If we allow for possibly decelerating 10 trains at the same time, we'll only be able to send a command to each train every
@@ -145,7 +124,7 @@
 #include <Train_Consts_Global.h>
 #include <Train_Functions.h>
 const byte THIS_MODULE = ARDUINO_NUL;  // Global just needs to be defined for use by Train_Functions.cpp and Message.cpp.
-char lcdString[LCD_WIDTH + 1] = "RSP 07/25/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "RSP 07/29/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 
 // *** SERIAL LCD DISPLAY CLASS ***
 // #include <Display_2004.h> is already in <Train_Functions.h> so not needed here.
@@ -646,13 +625,53 @@ void loop() {
 // *****************************************************************************************
 
 float getBearingCircumference(byte t_locoNum) {
-  // Rev: 07-25-24
+  // Rev: 07-28-24
   // Returns the precise value of the circumference of the roller bearing as it applies to use with a specific loco.
   // The value is pre-determined via empirical tests comparing time-distance of the loco at a fixed speed on the layout versus on
   // the roller bearings.
   // We will display/print the Loco Reference's description as well as the roller-bearing circumference that will be used.
-  // This is also where we will initially record our desired values for Legacy C/L/M/H and deceleration parameters.
+  // THIS IS ALSO WHERE WE WILL INITIALLY RECORD OUR DESIRED VALUES FOR LEGACY C/L/M/H AND DECELERATION PARAMETERS.
+
   // SIDING LENGTH: The SHORTEST siding is 104" = 8' 8" = 2641mm.  Thus, longest HIGH to CRAWL must be LESS THAN 2641mm.
+
+  // For a high-speed passenger train (such as WP 803A) we will target:
+  //   Crawl is around  28 mm/sec =  3 SMPH
+  //   Low   is around  93 mm/sec = 10 SMPH
+  //   Med   is around 326 mm/sec = 35 SMPH
+  //   High  is around 465 mm/sec = 50 SMPH
+  // For a medium-speed freight train (such as ATSF 1484 4-4-2) we will target:
+  //   Crawl is around   3 SMPH
+  //   Low   is around 7.5 SMPH
+  //   Med   is around  14 SMPH
+  //   High  is around  28 SMPH
+  // For a slow-speed switcher engine (such as an NW-2) we will target:
+  //   Crawl is around  23 mm/sec = 2.5 SMPH (Though perhaps 3 SMPH for consistency with other locos, and because we don't have to slow down so much before stopping with a small train.)
+  //   Low   is around  93 mm/sec = 10 SMPH
+  //   Med   is around 186 mm/sec = 20 SMPH
+  //   High  is around 233 mm/sec = 25 SMPH
+  // For ultra-low-speed locos (such as Shay) we will target:
+  //   Crawl is around  23 mm/sec = 2.5 SMPH (Though perhaps 3 SMPH for consistency with other locos, and because we don't have to slow down so much before stopping with a small train.)
+  //   Low   is around  46 mm/sec =  5 SMPH
+  //   Med   is around  93 mm/sec = 10 SMPH
+  //   High  is around 140 mm/sec = 15 SMPH
+
+  // REGARDING DELAY BETWEEN SPEED STEPS: Target at least 320ms between speed steps when possible to allow 10 simultaneos trains.
+  // Legacy Momentum 4 is pretty fast deceleration, but realitic for short/lightweight trains = 1 step / 80ms.
+  // ==> LOW MOMENTUM    = 2 steps/160ms = 3 steps/240ms = 4 steps/320ms.
+  // Legacy Momentum 5 is a good rate of deceleration for most locos such as F3.
+  // ==> MEDIUM MOMENTUM = 1 step/160ms = 2 steps/320ms.
+  // Legacy Momentum 6 is too-slow deceleration for most locos, but looks good for slow locos such as Shay.
+  // ==> HIGH MOMENTUM   = 1 step/320ms.
+
+  // DECELERATION METHODOLOGY 7/28/24:
+  // The fastest loco from its fastest speed should take the full maximum 100" (of 104" length of the shortest siding) to stop, in
+  // order to show off the most impressive slow deceleration to stop - because why not?
+  // All locos should establish a rate of deceleration commensurate with their top speed and the estimated "weight" of the train.
+  // Lightweight passenger trains should take longer to stop than lightweight freight trains, for passenger comfort.
+  // Once the rate and distance is established for a given train's High speed, the Medium and Low speed distances should be
+  // determined based on the same rate of deceleration.
+  // Note: Stopping distance from various speeds to zero is a quadratic curve, not a straight line.  For example, a train slowing
+  // from 50mph to 0 only needs 25% of the distance of the same train slowing from 100mph at the same rate.
 
   char alphaDesc[] = {0, 0, 0, 0, 0, 0, 0, 0, 0};  // Init to 8 chars + null
   pLoco->alphaDesc(t_locoNum, alphaDesc, 8);       // Returns description of loco from Loco Ref in alphaDesc
@@ -660,7 +679,7 @@ float getBearingCircumference(byte t_locoNum) {
   float locoBearingCircumference = 0;
   switch (t_locoNum) {
 
-    case  2:  // Shay = Engine 2.  ALL CALCS COMPLETE.  SPEED & DECEL DATA ENTERED INTO LOCO_REF as of 7/24/24.
+    case  2:  // Shay = Engine 2.  FINAL DATA 7/28/24.
     {
       // SHAY (Eng 2): Final data as of 7/24/24.  Confirmed C/L/M/H speeds on layout seem good.
       // NOTE: The fastest Shay ever recorded went 18mph.  So I could bump Fast to 18smph.
@@ -679,91 +698,104 @@ float getBearingCircumference(byte t_locoNum) {
       //      63     10      MED        93  (Reading avg  93 on rollers 7/24/24)
       //      72     12                112  (Reading avg 112 on rollers 7/24/24)
       //      84     15      HIGH      140  (Reading avg 140 on rollers 7/24/24)
-      // Step-down results:
-      // LOW to CRAWL : 37 to 19.  Step 2 per 1000ms =  286mm (11.25".)  LOOKS GOOD - USE THIS.
-      //                                2 per  750ms =  216mm ( 8.50".)  Stops in too little distance.
-      // MED to CRAWL : 63 to 19.  Step 2 per  750ms =  864mm (34.00".)  LOOKS GOOD - USE THIS.
-      //                                2 per 1000ms = 1143mm (45.00".)  Takes too long to stop.
-      // HIGH to CRAWL: 84 to 19.  Step 2 per  750ms = 1797mm (70.75".)  LOOKS GOOD - USE THIS.  Max reasonable rate of slowing.
-      //                                3 per  750ms = 1181mm (46.50".)  A bit jerky, slowing down too quickly.
-      //                                1 per 1000ms = Way overshot the siding
-      //                                2 per 1000ms = 2388mm (94.00")  Slowing down too slowly.
+      // Step-down results recorded on layout 7/25/24:
+      // LOW to CRAWL : 37 to 19.  Step 1 per  500ms =  295mm (11-5/8") *** LOOKS GOOD - USE THIS 7/28/24 ***
+      // MED to CRAWL : 63 to 19.  Step 1 per  320ms =  762mm (30")     *** LOOKS GOOD - USE THIS 7/28/24 ***
+      // HIGH to CRAWL: 84 to 19.  Step 1 per  320ms = 1549mm (61")     *** LOOKS GOOD - USE THIS 7/28/24 ***
+
       locoBearingCircumference =  41.2814;  // SHAY mm/rev re-confirmed perfect on 7/24/24
       break;
     }
 
-    case 4:  // ATSF NW2 = Engine 4
+    case 4:  // ATSF EMD NW2 = Engine 4  FINAL DATA 7/28/24.
     {
+      // EMD NW2: 1,000 hp built from 1939 to 1949.  Compare to Alco S-2: 1,000 hp built from 1940 to 1950.
       // Speed limits for switchers on yard tracks can range from 5mph to 20mph, with 10mph being typical.
+      // Measured     NW-2 on 5m track @ Legacy 108 AVG  24.48 sec = 204.24mm/sec. on 7/24/24.
+      // Measured     NW-2 on bearings @ Legacy 108 AVG              203.5 - 205.5 on 7/26/24 using 40.5146
+      // Measured     NW-2 on 5m track @ Legacy 102 AVG  26.91 sec = 185.80mm/sec. on 7/24/24.
+      // Measured     NW-2 on bearings @ Legacy 102 AVG              185.5         on 7/26/24 using 40.5146
       // ATSF NW2: Correct for layout and rollers as of 7/24/24:
       //   Legacy   smph    speed     mm/sec
-      //      21    2.5                 24  (Reading avg  22   on rollers 7/24/24; confirmed  24 mm/sec on layout 7/22/24)
-      //      25      3     CRAWL       28  (Reading avg  27.5 on rollers 7/24/24; confirmed  28 mm/sec on layout 7/22/24)
-      //      39      5                 46  (Reading avg  46.8 on rollers 7/24/24; confirmed  46 mm/sec on layout 7/22/24)
-      // around 49 is a good low, 65 is too fast
-      //      65     10       LOW       93  (Reading avg  94   on rollers 7/24/24; confirmed  93 mm/sec on layout 7/22/24)
-      //     102     20       MED      186  (Reading avg 190.5 on rollers 7/24/24; confirmed 186 mm/sec on layout 7/22/24)
-      //     117     25      HIGH      234  (Reading avg 239   on rollers 7/24/24; confirmed 234 mm/sec on layout 7/22/24)
-      locoBearingCircumference =  41.6517;  // Accurate for ATSF NW2 as of 7/24/24 (was 42.5)
+      //      21    2.5                 23  (Reading avg  23   on rollers 7/26/24; confirmed  24 mm/sec on layout 7/22/24)
+      //      25      3     CRAWL       28  (Reading avg  28   on rollers 7/26/24; confirmed  28 mm/sec on layout 7/22/24)
+      //      39      5                 46  (Reading avg  46   on rollers 7/26/24; confirmed  46 mm/sec on layout 7/22/24)
+      //      53    7.5       LOW       70  (Reading avg  70   on rollers 7/26/24)
+      //      65     10                 93  (Reading avg  93   on rollers 7/26/24; confirmed  93 mm/sec on layout 7/22/24)
+      //      76     12.5              117  (Reading avg 116-117 on rollers 7/26/24)
+      //      85     15       MED      139  (Reading avg 139   on rollers 7/26/24)
+      //      94     17.5              163  (Reading avg 163   on rollers 7/26/24)
+      //      96     18                169  (Reading avg 169   on rollers 7/26/24)
+      //     102     20                186  (Reading avg 186   on rollers 7/26/24; confirmed 186 mm/sec on layout 7/22/24)
+      //     108     22                205  (Reading avg 205   on rollers 7/26/24)
+      //     111     23                214  (Reading avg 214   on rollers 7/26/24)
+      //     117     25      HIGH      233  (Reading avg 233   on rollers 7/26/24; confirmed 234 mm/sec on layout 7/22/24)
+      // Step-down results recorded on layout 7/28/24:
+      // LOW to CRAWL :  53 to 25.  Step 1 per 160ms =  277mm (11")    *** LOOKS GOOD - USE THIS 7/28/24 ***
+      // MED to CRAWL :  85 to 25.  Step 2 per 320ms =  800mm (31.5")  *** LOOKS GOOD - USE THIS 7/28/24 ***
+      // HIGH to CRAWL: 117 to 25.  Step 2 per 320ms = 1772mm (69.75") *** LOOKS GOOD - USE THIS 7/28/24 ***
+
+      locoBearingCircumference =  40.5146; // Accurate for ATSF NW2 as of 7/26/24
       break;
     }
 
-    case  5:  // ATSF 1484 4-4-2 E6 Atlantic = Engine 5, Train 7.  Fairly slow and small. (NOTE: WHY IS IT A TRAIN???)
+    case  5:  // ATSF 1484 4-4-2 E6 Atlantic = Engine 5.  Fairly slow and small.  FINAL DATA 7/28/24.
     {
       // NOTE: The E6 steam loco had a top speed of 58mph to 75mph depending on train size.
-      // ATSF 1484 E6: Final data as of 6/18/22.
-      // Measured SF 4-4-2 on 5m track @ Legacy 70 AVG  23.03 sec = 217.11mm/sec.
-      // Measured SF 4-4-2 on bearings @ Legacy 70 AVG  .1910 sec/rev @ 217.11mm/sec = 41.4680mm/rev (use this value)
+      // ATSF 1484 E6: Final data as of 7/26/24.
       // Measured SF 4-4-2 on 5m track @ Legacy 45 AVG  42.80 sec = 116.82mm/sec.
-      // Measured SF 4-4-2 on bearings @ Legacy 45 AVG  .3510 sec/rev @ 116.82mm/sec = 41.0024mm/rev (unreliable at this speed: 220 - 287 on 6/18/22 - ugh.)
-      //   Legacy   smph    speed     mm/sec
-      //       1    1.5                 14
-      //       9    2.5     CRAWL       23  (Fairly variable from 21 to 23 on rollers)
-      //      25    6.3                 61
-      //      31    7.5       LOW       70  (Varies from 6.8 to 7.6 on rollers)
-      //      51     14       MED      131  (Pretty consistent on rollers)
-      //      80     28      FAST      261
-      locoBearingCircumference = 41.4680;
+      // Measured SF 4-4-2 on bearings @ Legacy 45 AVG  120mm/sec @ 41.4680mm/rev
+      // Measured SF 4-4-2 on 5m track @ Legacy 70 AVG  23.03 sec = 217.11mm/sec.
+      // Measured SF 4-4-2 on bearings @ Legacy 70 AVG  216-217mm/sec @ 41.4680mm/rev
+      //   Legacy   smph    speed     mm/sec  All confirmed 7/26/24.
+      //       9    3.0     CRAWL       28
+      //      28    7.5       LOW       70
+      //      36     10                 93
+      //      49     14       MED      132
+      //      63     20                186
+      //      79     28      FAST      260
+      // Step-down results recorded on layout 7/26/24 (shortest siding is 2641mm):
+      // LOW  to CRAWL:  28 to  9.  Step 1 per  290ms =  254 mm (10")    *** LOOKS GOOD - USE THIS 7/28/24 ***
+      // MED  to CRAWL:  49 to  9.  Step 2 per  580ms =  819 mm (32.25") *** LOOKS GOOD - USE THIS 7/28/24 ***
+      // HIGH to CRAWL:  79 to  9.  Step 2 per  580ms = 2515 mm (99")    *** LOOKS GOOD - USE THIS 7/28/24 ***
+
+      locoBearingCircumference = 41.4680; // Accurate for ATSF 1484 as of 7/26/24.
       break;
     }
 
-    case 8:  // WP 803-A = Engine 83, Train 8.  Lash-up includes other Engines with (hopefully) identical characteristics.
+    case 8:  // WP 803-A/C = Train 8.  FINAL DATA 7/28/24.
     {
+
       // NOTE: F3/F7 had a top speed of between 65mph and 102mph depending on gearing.
       // 803A has a very fast High speed of Legacy 114 = 463mm/sec.  Using 3 speed steps each 350ms allows the loco to reach its
       // Crawl speed in about 100", which is shorter than my shortest siding, so perfect for high speed, high momentum stop.
       // WP 803-A: Final data as of 5/23/22.
-      // Measured WP 803-A on 5m track @ Legacy 50 AVG  36.63 sec = 136.50mm/sec.
-      // Measured WP 803-A on bearings @ Legacy 50 AVG            = 136.50mm/sec using 41.7171.  Perfect.
+      // Measured WP 803-A on 5m track @ Legacy 50 AVG  36.63 sec = 136.50 mm/sec.
+      // Measured WP 803-A on bearings @ Legacy 50 AVG            = 136.50 mm/sec using 41.7171.  Perfect.
+      //   WP 803-A REAL WORLD TEST RESULTS: WP 803-A on 5 METER TRACK (5/2/22) (1 smph = 9.3133333 mm/sec):
+      //   Confimed these are the same with 803-A + 803-C lash-up train, on 7/28/24:
+      //   Speed  20: 102.70 sec. =  49 mm/sec =  5.26 smph
+      //   Speed  40:  48.96 sec. = 102 mm/sec = 10.95 smph
+      //   Speed  50:  36.76 sec. = 136 mm/sec = 14.60 smph
+      //   Speed  60:  28.92 sec. = 173 mm/sec = 18.58 smph
+      //   Speed  80:  18.96 sec. = 264 mm/sec = 28.35 smph
+      //   Speed 100:  13.31 sec. = 376 mm/sec = 40.37 smph
+
       //   Legacy   smph    speed     mm/sec
-      //       1    1.6       MIN       15  14.94/1.6, 15.01/1.6
-      //       7    2.5     CRAWL       23
-      //      37     10       LOW       95  But as low as 90.  90.1, 90.5, 90.5, 90.0 / 91.0
-      //      93     35       MED      330  Consistent
-      //     114     50      FAST      463  Consistent 
-      //   WP 803-A REAL WORLD TEST RESULTS: WP 803-A on 5 METER TRACK (5/2/22):
-      //   Speed  20: 102.70 sec.
-      //   Speed  40:  48.96 sec.
-      //   Speed  50:  36.76 sec.  Also 36.70, 36.52, 36.48, 36.63, 36.66, 37.02, 36.90 (reverse)
-      //   Speed  60:  28.92 sec.
-      //   Speed  80:  18.96 sec.
-      //   Speed 100:  13.31 sec.
-      //   Legacy   smph    speed     mm/sec
-      //      11      6     CRAWL       53  But as low as 29mm/sec.  29.2, 28.9, 29.1, 29.4
-      //      37     10       LOW       95  But as low as 90.  90.1, 90.5, 90.5, 90.0 / 91.0
-      //      93     35       MED      330  Consistent
-      //     114     50      FAST      463  Consistent 
-      // These are just some inital roller-bearing tests done 5/26/22 to get a rough idea:
-      // TEST RESULTS 5/26/22: WP 803-A, Legacy 114 (high) to 11 (crawl)
-      //                      legacyStepDown 3, legacyDelay  500 = 137" (plus less than 2" to stop)
-      //                      legacyStepDown 4, legacyDelay  500 = 102" still seems okay
-      //                      legacyStepDown 5, legacyDelay  500 =  79.5" a bit rough stopping but okay
-      //                      legacyStepdown 4, legacyDelay  400 =  81" and seems a bit smoother
-      locoBearingCircumference =  41.7171;  // WP 803-A mm/rev as of 2/23/22
+      //       7    2.5     CRAWL       23  Oops this really should be 3 smph but oh well no big deal.
+      //      37     10       LOW       94
+      //      93     35       MED      330
+      //     114     50      FAST      463
+
+      // LOW  to CRAWL:  37 to  7.  Step 3 per  350ms =  191 mm (7.5")    *** LOOKS GOOD - USE THIS 7/28/24 ***
+      // MED  to CRAWL:  93 to  7.  Step 3 per  350ms = 1514 mm (59.625") *** LOOKS GOOD - USE THIS 7/28/24 ***
+      // HIGH to CRAWL: 114 to  7.  Step 3 per  350ms = 2527 mm (99.5")   *** LOOKS GOOD - USE THIS 7/28/24 ***
+
+      locoBearingCircumference =  41.7171;  // WP 803-A mm/rev as of 2/23/22 confirmed 7/26/24.
       break;
     }
 
-    case 14:  // Big Boy = Engine 14
+    case 14:  // Big Boy = Engine 14   THIS DATA NEEDS TO BE RE-TESTED ON ROLLERS AND ON THE LAYOUT
     {
       // BIG BOY: Final data as of 5/23/22.
       // NOTE: The fastest a Big Boy could ever go is 70mph.
@@ -781,11 +813,6 @@ float getBearingCircumference(byte t_locoNum) {
       //   Speed  40:  48.85 sec.  Also: 49.08, 49.09, 49.03, 49.00 (fwd), 48.46, 48.65 (rev)
       //   Speed  60:  28.84 sec.
       //   Speed  80:  18.96 sec.
-      //   Legacy   smph    speed     mm/sec
-      //      12      6     CRAWL       53
-      //      26     10       LOW       95
-      //      74     26       MED      239
-      //     100     41      FAST      384
       // These are just some inital roller-bearing tests done 5/26/22 to get a rough idea:
       // TEST RESULTS 5/26/22: BIG BOY, Legacy 100 (high) to 12 (crawl)
       //                      legacyStepDown 3, legacyDelay  500 =  48" way too fast!
@@ -795,29 +822,31 @@ float getBearingCircumference(byte t_locoNum) {
       break;
     }
 
-    case 40:  // SP 1440 = Engine 40
+    case 40:  // ALCO S-2 SP 1440 = Engine 40
     {
-      // SP 1440: Final data as of 5/23/22.
+      // Alco S-2: 1,000 hp built from 1940 to 1950.  Compare to EMD NW2: 1,000 hp built from 1939 to 1949.
+      // 7/28/24: These speeds, 25smph for fast, 15 for med, 7.5 for slow -- feel too slow, especially "fast" for this loco, which
+      // is BIGGER than the ATSF NW-2.  Don't need to use both the Alco S-2 and the EMD NW2 on the layout; pick one.
       // NOTE: This is a switcher, so speeds were kept low.  The Alco S-2 switcher had a top speed of 60mph.
       // Measured  SP 1440 on 5m track @ Legacy 50 AVG  37.80 sec = 132.28mm/sec.
-      // Measured  SP 1440 on bearings @ Legacy 50 AVG .30897 sec/rev @ 132.28mm/sec = 40.8706mm/rev
+      // Measured  SP 1440 on bearings @ Legacy 50 AVG              132   mm/sec @ 40.8706mm/rev 7/28/24
       //   SP 1440 REAL WORLD TEST RESULTS: SP 1440 on 5 METER TRACK (5/2/22):
-      //   Speed  20: 111.33 sec.
-      //   Speed  30:  70.74 sec.
-      //   Speed  40:  50.28 sec.
-      //   Speed  60:  29.26 sec.
-      //   Speed  80:  19.05 sec.
-      //   Speed  84:  17.70 sec.
-      //   Speed 100:  13.48 sec.
+      //   Speed  20: 111.33 sec. =  44.91 mm/sec (roller bearing  44.7 on 7/28/24)
+      //   Speed  30:  70.74 sec. =  70.68 mm/sec (roller bearing  71.8 on 7/28/24)
+      //   Speed  40:  50.28 sec. = 100.85 mm/sec (roller bearing  99.5 on 7/28/24)
+      //   Speed  60:  29.26 sec. = 170.88 mm/sec (roller bearing 170.2 on 7/28/24)
+      //   Speed  80:  19.05 sec. = 262.47 mm/sec (roller bearing 260.2 on 7/28/24)
+      //   Speed  84:  17.70 sec. = 282.49 mm/sec (roller bearing 278.5 on 7/28/24)
+      //   Speed 100:  13.48 sec. = 370.92 mm/sec (roller bearing 369.0 on 7/28/24)
       //   Legacy   smph    speed     mm/sec
-      //      15      8     CRAWL       73  But as low as 55mm/sec
-      //      44     12       LOW      112  Not very accurate, sometimes slower
-      //      55     16       MED      151
-      //      75     25      FAST      236
-      // These are just some inital roller-bearing tests done 5/26/22 to get a rough idea:
-      // TEST RESULTS 5/26/22: SP 1440, Legacy  75 (high) to 15 (crawl)
-      //                      legacyStepDown 3, legacyDelay  500 = 47" (plus < 2" to stop)
-      //                      legacyStepDown 3, legacyDelay  750 = 70"
+      //       9    2.5      CRAWL      24    On rollers as of 7/28/24
+      //      30    7.5       LOW       70    On rollers as of 7/28/24
+      //      52     15       MED      140    On rollers as of 7/28/24
+      //      74     25      FAST      233    On rollers as of 7/28/24
+      // Step-down results recorded on layout 7/28/24:
+      // LOW to CRAWL :  30 to  9.  Step 1 per 280ms =  286 mm (11.25")  *** LOOKS GOOD - USE THIS 7/29/24 ***
+      // MED to CRAWL :  52 to  9.  Step 2 per 510ms =  822 mm (32.375") *** LOOKS GOOD - USE THIS 7/29/24 ***
+      // HIGH to CRAWL:  74 to  9.  Step 2 per 480ms = 1753 mm (69")     *** LOOKS GOOD - USE THIS 7/29/24 ***
       locoBearingCircumference =  40.8706;  // SP 1440 mm/rev as of 2/23/22
       break;
     }
@@ -828,12 +857,11 @@ float getBearingCircumference(byte t_locoNum) {
       sprintf(lcdString, "DEFAULT LOCO"); pLCD2004->println(lcdString); Serial.println(lcdString);
       break;
     }
-
-    dtostrf(locoBearingCircumference, 7, 4, lcdString);  // i.e. "41.1234"
-    lcdString[8] = 'm'; lcdString[9] = 'm'; lcdString[10] = 0;
-    pLCD2004->println(lcdString); Serial.println(lcdString); Serial2.println(lcdString);
-
   }
+
+  dtostrf(locoBearingCircumference, 7, 4, lcdString);  // i.e. "41.1234"
+  lcdString[7] = 'm'; lcdString[8] = 'm'; lcdString[9] = 0;
+  pLCD2004->println(lcdString); Serial.println(lcdString); Serial2.println(lcdString);
   return locoBearingCircumference;
 }
 

@@ -21,6 +21,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "O_FRAM_Populator", "..\O_FR
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "O_Roller_Speed", "..\O_Roller_Speed\O_Roller_Speed.vcxproj", "{4B0666FF-29DD-4EAC-A032-B25F19ACB10E}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "O_FRAM_Duplicator", "..\O_FRAM_Duplicator\O_FRAM_Duplicator.vcxproj", "{EF256251-AA6B-4AE3-8299-65B98A1C0400}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|ARM = Debug|ARM
@@ -137,6 +139,18 @@ Global
 		{4B0666FF-29DD-4EAC-A032-B25F19ACB10E}.Release|ARM64.ActiveCfg = Release|ARM64
 		{4B0666FF-29DD-4EAC-A032-B25F19ACB10E}.Release|ARM64.Build.0 = Release|ARM64
 		{4B0666FF-29DD-4EAC-A032-B25F19ACB10E}.Release|ARM64.Deploy.0 = Release|ARM64
+		{EF256251-AA6B-4AE3-8299-65B98A1C0400}.Debug|ARM.ActiveCfg = Debug|ARM
+		{EF256251-AA6B-4AE3-8299-65B98A1C0400}.Debug|ARM.Build.0 = Debug|ARM
+		{EF256251-AA6B-4AE3-8299-65B98A1C0400}.Debug|ARM.Deploy.0 = Debug|ARM
+		{EF256251-AA6B-4AE3-8299-65B98A1C0400}.Debug|ARM64.ActiveCfg = Debug|ARM64
+		{EF256251-AA6B-4AE3-8299-65B98A1C0400}.Debug|ARM64.Build.0 = Debug|ARM64
+		{EF256251-AA6B-4AE3-8299-65B98A1C0400}.Debug|ARM64.Deploy.0 = Debug|ARM64
+		{EF256251-AA6B-4AE3-8299-65B98A1C0400}.Release|ARM.ActiveCfg = Release|ARM
+		{EF256251-AA6B-4AE3-8299-65B98A1C0400}.Release|ARM.Build.0 = Release|ARM
+		{EF256251-AA6B-4AE3-8299-65B98A1C0400}.Release|ARM.Deploy.0 = Release|ARM
+		{EF256251-AA6B-4AE3-8299-65B98A1C0400}.Release|ARM64.ActiveCfg = Release|ARM64
+		{EF256251-AA6B-4AE3-8299-65B98A1C0400}.Release|ARM64.Build.0 = Release|ARM64
+		{EF256251-AA6B-4AE3-8299-65B98A1C0400}.Release|ARM64.Deploy.0 = Release|ARM64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

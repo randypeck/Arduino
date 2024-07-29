@@ -1,4 +1,5 @@
-// FRAM_DUPLICATOR.INO Rev: 02/27/24.  FINISHED AND TESTED.
+// FRAM_DUPLICATOR.INO Rev: 07/29/24.  FINISHED AND TESTED.
+// 07/29/24: Commented out FRAM rev date check.
 // Copies from one FRAM to another, in either direction depending on if digital pin is grounded or floating.
 // Always performs a test to confirm both FRAMs are identical after copying.
 // There's currently no way to just compare two FRAMs without first doing a copy one way or the other.
@@ -148,7 +149,7 @@ void duplicateFRAM() {
 
   if (copyMode == FRAM_MODE_READ) {  // Oh, we want to transfer from our "copy" into the master FRAM
 
-    pStorageCopy->checkFRAMRevDate();  // Terminate with error if FRAM rev date does not match date in Train_Consts_Global.h
+    //pStorageCopy->checkFRAMRevDate();  // Terminate with error if FRAM rev date does not match date in Train_Consts_Global.h
     #ifdef PERFORM_FRAM_TEST_BEFORE_COPY
       // Test the Master FRAM (that's about to be overwritten) just for fun.  Don't test the COPY FRAM or you'll wipe the data!
       sprintf(lcdString, "Test MASTER FRAM..."); pLCD2004->println(lcdString); Serial.println(lcdString);
