@@ -1,4 +1,4 @@
-// OCCUPANCY_LEDs.CPP Rev: 06/18/24.  FINISHED BUT NOT TESTED.
+// OCCUPANCY_LEDs.CPP Rev: 07/30/24.  FINISHED BUT NOT TESTED.
 // Part of O_OCC.
 // This class is responsible for illumination of Control Panel WHITE OCCUPANCY SENSOR LEDs and BLUE/RED BLOCK OCCUPANCY LEDs.
 // Illumination depends on Mode and State.
@@ -55,25 +55,10 @@ void Occupancy_LEDs::setBlockStatic(const byte t_blockNum) {
   return;
 }
 
-void Occupancy_LEDs::paintOneOccupancySensorLED(const byte t_sensorNum) {
-  // Rev: 03/19/23.  FINISHED BUT NOT YET TESTED.
-  // REGISTRATION mode only, unless wanting to turn them all off with t_sensorNum == 0.
-  // As of 3/23/23, we'll illuminate all occupied Occupancy Sensors during Registration; not just one.
-  // Turn ONE WHITE OCCUPANCY SENSOR LED ON and turn all the others OFF.
-  // Passing t_sensorNum == 0 will turn off ALL Occupancy Sensor LEDs (such as when initially powering up the system.)
-  // THIS WILL NOT DESTROY THE m_sensorStatus[] OCCUPANCY SENSOR STATUS ARRAY.
-  // t_sensorNum = 1..TOTAL_SENSORS (i.e. starts at 1 not 0.)
-  // Array element corresponds to (sensor number - 1) = 0..51 for sensors 1..52.
-  // White occupancy sensor  1 = Centipede pin  64
-  // White occupancy sensor 64 = Centipede pin 127
-  // Write a ZERO to a bit to turn ON the LED, write a ONE to a bit to turn OFF the LED.
-  for (byte i = 1; i <= TOTAL_SENSORS; i++) {    // For every sensor 1..TOTAL_SENSORS
-    // The following test will always fail if t_sensorNum == 0, which is what we want for turning ALL LEDs off.
-    if (i == t_sensorNum) {  // LED should be ON
-      pShiftRegister->digitalWrite(64 + i, LOW);         // turn ON the LED
-    } else {                 // LED should be off
-      pShiftRegister->digitalWrite(64 + i, HIGH);        // turn OFF the LED
-    }
+void Occupancy_LEDs::darkenAllOccupancySensorLEDs() {
+  // Rev: 07/30/24: New function since "paintOne" with a parm of zero didn't work due to confusion over sensorNum 0 vs 1
+  for (byte i = 0; i < TOTAL_SENSORS; i++) {
+    pShiftRegister->digitalWrite(64 + i, HIGH);  // Turn off the LED
   }
   return;
 }
@@ -113,9 +98,10 @@ void Occupancy_LEDs::paintAllOccupancySensorLEDs(const byte t_mode, const byte t
 void Occupancy_LEDs::paintOneBlockOccupancyLED(const byte t_blockNum) {
   // Rev: 03/19/23.  FINISHED BUT NOT YET TESTED.
   // REGISTRATION mode only.  Thus we only care to illuminate a RED LED (not BLUE.)
-  // Turn ONE RED BLOCK OCCUPANCY LED ON and all others OFF.
+  // Turn ONE RED BLOCK OCCUPANCY LED ON and all others OFF (t_blockNum > 0), or turn ALL RED AND BLUE LEDs OFF (t_blockNum = 0)
+  // This function does not support turning a single BLUE LED on.
   // Passing t_blockNum == 0 will turn off ALL Block Occupancy LEDs (such as when initially powering up the system.)
-  // t_blockNum = 1..TOTAL_BLOCKS (i.e. starts at 1 not 0.)
+  // Else t_blockNum = 1..TOTAL_BLOCKS (i.e. starts at 1 not 0.)
   // LEDBlueBlockPin[] and LEDRedBlockPin[] record corresponds to (block number - 1) = 0..25 for blocks 1..26.
   for (byte i = 1; i <= TOTAL_BLOCKS; i++) {  // For every block = 1..TOTAL_BLOCKS
     // The following test will always fail if t_blockNum == 0, which is what we want for turning ALL LEDs off.
@@ -131,9 +117,9 @@ void Occupancy_LEDs::paintOneBlockOccupancyLED(const byte t_blockNum) {
 }
 
 void Occupancy_LEDs::paintAllBlockOccupancyLEDs() {
-  // Rev: 03/20/23.  FINISHED BUT NOT YET TESTED.  THIS WILL BE DIFFICULT TO TEST UNTIL I AM ABLE TO POPULATE THE TRAIN PROGRESS TABLE WITH SOME GOOD DATA **********
+  // Rev: 07/30/24.  FINISHED BUT NOT YET TESTED.  THIS WILL BE DIFFICULT TO TEST UNTIL I AM ABLE TO POPULATE THE TRAIN PROGRESS TABLE WITH SOME GOOD DATA **********
   // Works for AUTO/PARK RUNNING (and STOPPING) modes only, as it relies on an accurate Train Progress table.
-  // Scan Train Progress and illuminate all RED "occupied" and BLUE "reserved" LEDs.  We will ONLY call this function when we
+  // Scan Train Progress and illuminate all RED "reserved" and BLUE "occupied" LEDs.  We will ONLY call this function when we
   // first start Auto or Park mode (Park, because we can't guarantee that we will run Auto mode before starting Park mode) AND
   // whenever an Extension or Continuation route is added AND whenever a Sensor state-change message is received when Auto/Park is
   // Running/Stopping.  This is the only time that we'll want to paint the entire control panel blue/red LEDs.  So we won't even
@@ -193,9 +179,9 @@ void Occupancy_LEDs::paintAllBlockOccupancyLEDs() {
     // If this is an Active Train Progress table
     if (m_pTrainProgress->isActive(locoNum)) {
 
-      // 1. All blocks between TAIL and NEXT-TO-TRIP should be illuminated in RED = Occupied.
+      // 1. All blocks between TAIL and NEXT-TO-TRIP should be illuminated in BLUE = Occupied.
       //    This will work even in cases where a loco is between occupancy sensors within a block.
-      // 2. All blocks between NEXT-TO-TRIP and HEAD should be illuminated in BLUE = Reserved (but not Occupied.)
+      // 2. All blocks between NEXT-TO-TRIP and HEAD should be illuminated in RED = Reserved (but not Occupied.)
       // FYI, TAIL, NEXT-TO-TRIP, and HEAD pointers are guaranteed never to point to Block elements.
 
       // IMPORTANT: To maintain encapsulation, we should have function in Train Progress that return a list of both Reserved and
@@ -254,14 +240,14 @@ void Occupancy_LEDs::paintAllBlockOccupancyLEDs() {
     byte elementNum = blockNum - 1;
     if (m_oldBlockStatus[elementNum] != m_newBlockStatus[elementNum]) {   // If the LED status changed, write to Control Panel.
       if (m_newBlockStatus[elementNum] == LED_OFF) {
-        pShiftRegister->digitalWrite(LEDBlueBlockPin[elementNum], HIGH);  // Blue LED off
         pShiftRegister->digitalWrite(LEDRedBlockPin[elementNum], HIGH);   // Red LED off
-      } else if (m_newBlockStatus[elementNum] == LED_BLOCK_OCCUPIED) {
         pShiftRegister->digitalWrite(LEDBlueBlockPin[elementNum], HIGH);  // Blue LED off
+      } else if (m_newBlockStatus[elementNum] == LED_BLOCK_RESERVED) {    // RED LED = RESERVED (not occupied)
         pShiftRegister->digitalWrite(LEDRedBlockPin[elementNum], LOW);    // Red LED on
-      } else if (m_newBlockStatus[elementNum] == LED_BLOCK_RESERVED) {
-        pShiftRegister->digitalWrite(LEDBlueBlockPin[elementNum], LOW);   // Blue LED on
+        pShiftRegister->digitalWrite(LEDBlueBlockPin[elementNum], HIGH);  // Blue LED off
+      } else if (m_newBlockStatus[elementNum] == LED_BLOCK_OCCUPIED) {    // BLUE LED = OCCUPIED
         pShiftRegister->digitalWrite(LEDRedBlockPin[elementNum], HIGH);   // Red LED off
+        pShiftRegister->digitalWrite(LEDBlueBlockPin[elementNum], LOW);   // Blue LED on
       }
     }
     // Either way, go ahead and set the "old" status to the new status.

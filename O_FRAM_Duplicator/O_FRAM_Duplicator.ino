@@ -1,5 +1,5 @@
-// FRAM_DUPLICATOR.INO Rev: 07/29/24.  FINISHED AND TESTED.
-// 07/29/24: Commented out FRAM rev date check.
+// FRAM_DUPLICATOR.INO Rev: 07/30/24.  FINISHED AND TESTED.
+// 07/30/24: Commented out FRAM rev date check.
 // Copies from one FRAM to another, in either direction depending on if digital pin is grounded or floating.
 // Always performs a test to confirm both FRAMs are identical after copying.
 // There's currently no way to just compare two FRAMs without first doing a copy one way or the other.
@@ -34,7 +34,7 @@
 #include <Train_Consts_Global.h>
 #include <Train_Functions.h>
 const byte THIS_MODULE = ARDUINO_NUL;  // Global just needs to be defined for use by Train_Functions.cpp and Message.cpp.
-char lcdString[LCD_WIDTH + 1] = "DUP 02/27/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "DUP 07/30/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 
 // *** SERIAL LCD DISPLAY CLASS ***
 // #include <Display_2004.h> is already in <Train_Functions.h> so not needed here.
@@ -167,7 +167,7 @@ void duplicateFRAM() {
 
   } else if (copyMode == FRAM_MODE_WRITE) {  // Okay, this is our "normal" copy-from-master-to-duplicate FRAM mode
 
-    pStorageMaster->checkFRAMRevDate();  // Terminate with error if FRAM rev date does not match date in Train_Consts_Global.h
+    //pStorageMaster->checkFRAMRevDate();  // Terminate with error if FRAM rev date does not match date in Train_Consts_Global.h
     #ifdef PERFORM_FRAM_TEST_BEFORE_COPY
       // Test the COPY FRAM (that's about to be overwritten) just for fun.  Don't test the MASTER FRAM or you'll wipe the data!
       sprintf(lcdString, "Test COPY FRAM..."); pLCD2004->println(lcdString); Serial.println(lcdString);

@@ -1,5 +1,7 @@
-// OCCUPANCY_LEDs.H Rev: 06/18/24.  FINISHED BUT NOT YET TESTED.
+// OCCUPANCY_LEDs.H Rev: 07/30/24.  FINISHED BUT NOT YET TESTED.
 // Part of O_OCC.
+// 07/30/24: Deleted paintOneOccupancySensorLED() since thus far we only paint all or darken all.
+//           Also swapped the order of Red/Blue so RED = Reserved (but not occupied) and BLUE = Occupied.
 // 06/18/24: Deleted getSensorStatus() as we don't need it.  Use SENSOR_BLOCK to keep track of sensor status T/C.  I.e. for
 //           purposes of occupancy LEDs, we'll update the sensor status as necessary, but we'll never need to retrieve those
 //           values outside of this class.  See pSensorBlock->setSensorStatus(), pSensorBlock->getSensorStatus().
@@ -31,10 +33,8 @@ class Occupancy_LEDs {
     void setBlockStatic(const byte t_blockNum);
     // Populated during Registration, used during Auto/Park when illuminating RED/BLUE BLOCK OCCUPANCY LEDs.
 
-    void paintOneOccupancySensorLED(const byte t_sensorNum);
-    // Originally for REGISTRATION mode only, unless turning ALL off, but now I think Reg mode will light all occupied.
-    // Turn ONE WHITE OCCUPANCY SENSOR LED ON and turn all the others OFF.
-    // Passing t_sensorNum == 0 will turn off ALL Occupancy Sensor LEDs (such as when initially powering up the system.)
+    void darkenAllOccupancySensorLEDs();
+    // This is what paintOneOccupancySensorLED(0) was supposed to do...
 
     void paintAllOccupancySensorLEDs(const byte t_mode, const byte t_state);
     // Works for ALL MODES.  Assumes private m_sensorStatus[] array reflects current state of all Occupancy Sensors.
@@ -47,7 +47,7 @@ class Occupancy_LEDs {
 
     void paintAllBlockOccupancyLEDs();
     // AUTO/PARK RUNNING/STOPPING modes only.
-    // Scan Train Progress and illuminate all RED "occupied" and BLUE "reserved" LEDs.  We will ONLY call this function when we
+    // Scan Train Progress and illuminate all RED "reserved" and BLUE "occupied" LEDs.  We will ONLY call this function when we
     // first start Auto or Park mode (Park, because we can't guarantee that we will run Auto mode before starting Park mode) AND
     // whenever a Sensor state-change message is received when Auto/Park is Running/Stopping.  This is the only time that we'll
     // want to paint the entire control panel blue/red LEDs.  So we won't even bother checking mode and state here.

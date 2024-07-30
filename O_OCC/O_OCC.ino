@@ -1,4 +1,4 @@
-// O_OCC.INO Rev: 06/22/24.  FINISHED BUT NOT TESTED.
+// O_OCC.INO Rev: 07/30/24.  FINISHED BUT NOT TESTED.
 // OCC paints the WHITE Occupancy Sensor LEDs and RED/BLUE Block Occupancy LEDs on the Control Panel.
 // In Registration mode, OCC also prompts operator for initial data, using the Control Panel's Rotary Encoder and 8-Char display.
 // In Auto/Park modes, OCC also autonomously sends arrival and departure announcements to various stations around the layout.
@@ -415,7 +415,7 @@ void OCCManualMode() {  // CLEAN THIS UP SO THAT MAS/OCC/LEG ARE MORE CONSISTENT
       }
       // Okay they want to stop Manual mode.
       // When MANUAL mode is stopped, all there is to do is turn off all the Control Panel LEDs.
-      pOccupancyLEDs->paintOneOccupancySensorLED(0);  // Sending 0 will turn off all WHITE LEDs
+      pOccupancyLEDs->darkenAllOccupancySensorLEDs();
       pOccupancyLEDs->paintOneBlockOccupancyLED(0);   // Sending 0 will turn off all RED/BLUE LEDs
     } else if (msgType != ' ') {  // Remember, pMessage->available() returns ' ' if there is no message.
       sprintf(lcdString, "MAN MSG ERR %c", msgType); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
@@ -453,7 +453,7 @@ void OCCRegistrationMode() {
   // Do this BEFORE RECEIVE SENSOR STATUS MESSAGES, because it resets the local sensor status array that we'll be updating!
   pOccupancyLEDs->begin(pTrainProgress);  // This only initializes the OccupancyLEDs() local arrays.
   // Now paint all Control Panel Occupancy and Block LEDs dark.
-  pOccupancyLEDs->paintOneOccupancySensorLED(0);  // Sending 0 will turn off all WHITE LEDs
+  pOccupancyLEDs->darkenAllOccupancySensorLEDs(); // Turn off all WHITE LEDs
   pOccupancyLEDs->paintOneBlockOccupancyLED(0);   // Sending 0 will turn off all RED/BLUE LEDs
 
   // NOTE: The following Block Reservation read (and then release) MUST take place before we receive sensor status messages.
@@ -677,7 +677,7 @@ void OCCRegistrationMode() {
   // Block reservations are set up for every occupied block (as either STATIC or a real loco.)
 
   // Now that we're done, turn off all the Control Panel LEDs.
-  pOccupancyLEDs->paintOneOccupancySensorLED(0);  // Sending 0 will turn off all WHITE LEDs
+  pOccupancyLEDs->darkenAllOccupancySensorLEDs();  // Sending 0 will turn off all WHITE LEDs
   pOccupancyLEDs->paintOneBlockOccupancyLED(0);  // Sending 0 will turn off all RED/BLUE LEDs
 
   // Send a "train location" message with locoNum 0 to signal we're done.
@@ -884,7 +884,7 @@ void OCCAutoParkMode() {
 
   // Okay, Auto/Park mode has organically stopped!
   // When AUTO/PARK mode is stopped, turn off all the Control Panel LEDs to make it clear that Auto/Park mode has stopped.
-  pOccupancyLEDs->paintOneOccupancySensorLED(0);  // Sending 0 will turn off all WHITE LEDs
+  pOccupancyLEDs->darkenAllOccupancySensorLEDs();  // Sending 0 will turn off all WHITE LEDs
   pOccupancyLEDs->paintOneBlockOccupancyLED(0);   // Sending 0 will turn off all RED/BLUE LEDs
   return;
 }

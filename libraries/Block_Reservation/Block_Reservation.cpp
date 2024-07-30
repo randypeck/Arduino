@@ -47,9 +47,23 @@ void Block_Reservation::begin(FRAM* t_pStorage) {
 // All of the following expect t_blockNum, t_locoNum, sensorNum, etc. to start at 1 not 0.  No checking of input ranges!
 
 void Block_Reservation::reserveBlock(const byte t_blockNum, const byte t_direction, const byte t_locoNum) {
-  // Rev: 01/24/23.
+  // Rev: 07/30/24.  Just updated comments to note it's possible (but wrong) to have both ends of a block occupied during Reg'n.
+  // IMPORTANT: If the block is already reserved for LOCO_ID_STATIC, this function will allow the block to be reserved for a loco.
+  //   We need to allow this during REGISTRATION, since all occupied blocks are first reserved for STATIC, and then actual locos
+  //   get block reservations as they are registered.  The only problem with this, during Registration, is that if a block happens
+  //   to be occupied at both ends, the "first" loco can be defaulted to static and then the "second" loco (second occupied sensor
+  //   to be checked for this block during Registration) can still be registered because it will just see that it's reserved for
+  //   Static, as would be expected even if the other occupancy sensor were not occupied.  We won't bother checking for this
+  //   problem, so just be aware that of course you should never have static equipment at one end of a block and a real loco at the
+  //   othe end!  Duh.
+  // Of course, during Auto/Park when assigning new Routes, once the block is reserved for Static it can't ever be reserved for a
+  //   real train, and we must be certain to check that the block isn't reserved before calling this function.  Which of course we
+  //   must do because trying to reserve a block that's already reserved is always going to be a fatal error -- even though we won't
+  //   catch it here (if it were previously reserved for Static) -- so just don't do it!
   // Retrieve entire Block Res'n record (if not already loaded.)
-  // FATAL ERROR if previously reserved, but this is optional, maybe overkill or even a problem.
+  // FATAL ERROR if previously reserved, but this is optional, maybe overkill or not even a problem since it would always be a bug
+  //   except during Registration if it was previously reserved for Static.  We don't want to wait until we get here to detect the
+  //   problem!
   // Because "direction" can be confusing, let's make sure it's either BE or BW per our global consts...
   // We don't need to check the range of t_blockNum here because it's handled by getBlockReservation()/blockReservationAddress().
   // if ((t_blockNum < 1) || (t_blockNum > TOTAL_BLOCKS)) {

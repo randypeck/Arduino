@@ -1,10 +1,11 @@
-// O_LEG.INO Rev: 06/22/24.
+// O_LEG.INO Rev: 07/30/24.
 // LEG controls physical trains via the Train Progress and Delayed Action tables, and also controls accessories.
 // LEG also monitors the control panel track-power toggle switches, to turn the four PowerMasters on and off at any time.
 // 04/02/24: LEG Conductor/Engineer and Train Progress will always assume that Turnouts are being thrown elsewhere and won't worry
 // about it.  However we might maintain a Turnout Reservation table just to keep the Train Progress code as similar as possible
 // between MAS, OCC, and LEG.
 
+// 07/30/24: Added debug parms to pDelayedAction->initDelayedActionTable() and pEngineer->initLegacyCommandBuf()
 // 05/30/21: Added: const unsigned long SMOKE_TIME_LIMIT = 300000;  // Automatically turn off smoke on locos after this many ms.
 //           300,000ms = 5 minutes.
 
@@ -61,7 +62,7 @@
 #include <Train_Consts_Global.h>
 #include <Train_Functions.h>
 const byte THIS_MODULE = ARDUINO_LEG;  // Global needed by Train_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "LEG 06/22/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "LEG 07/30/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 
 // *** SERIAL LCD DISPLAY CLASS ***
 // #include <Display_2004.h> is already in <Train_Functions.h> so not needed here.
@@ -135,7 +136,7 @@ char         msgType          = ' ';
 char fastOrSlow = ' ';  // Loco startup can be F|S
 char smokeOn    = ' ';  // Smoke can be S|N
 char audioOn    = ' ';  // Audio can be A|N
-char debugOn    = ' ';  // Debug can be D|N
+bool debugOn    = false;
 const unsigned long SMOKE_TIME_LIMIT = 300000;  // Automatically turn off smoke on locos after this many ms.  300,000 = 5 minutes.
 
 // *****************************************************************************************
@@ -281,7 +282,7 @@ void loop() {
   // pMessage->getOCCtoLEGAudioOn(char &audioOrNoAudio);
   //
   // OCC-to-LEG: 'D' Debug/No debug:  REGISTRATION MODE ONLY.
-  // pMessage->getOCCtoLEGDebugOn(char &debugOrNoDebug);
+  // pMessage->getOCCtoLEGDebugOn(char &debugOrNoDebug); // [D|N]
   //
   // OCC-to-ALL: 'L' Location of just-registered train.  One rec/occupied sensor, real and static.  REGISTRATION MODE ONLY.
   // pMessage->getOCCtoALLTrainLocation(byte &locoNum, routeElement &locoLocation);  // 1..50, BE03
@@ -410,34 +411,9 @@ void LEGManualMode() {  // CLEAN THIS UP SO THAT MAS/OCC/LEG ARE MORE CONSISTENT
 // ********************************************************************************************************************************
 
 void LEGRegistrationMode() {
-  // Initialize Delayed Action, Legacy Command Buffer, Release all Block Reservations, and release accessory relays
-  // Initialize the Train Progress table
-  // Receive the status T/C of each sensor. For each sensor retrieved:
-  //   Store sensor status T/C in Sensor-Block table for later use.
-  //   If sensor is Tripped, reserve sensor's block in Block Res'n table.
-  // Receive startup parms incl. Fast/Slow, Smoke On/Off, Audio On/Off, Debug On/Off and store results.
-  // Receive list of active locos and which blocks they occupy.
-  //   For each occupied block identified by operator, IF THE LOCO IS REAL (static already accounted for):
-  //     Update Block Reservation to reflect that loco (will overwrite previous status as reserved for STATIC.)
-  //     Create new entry in Train Progress for this new loco.
-  //     Startup the train
-
-  // Initialize the Delayed Action table as we'll use it when establishing initial Train Progress loco/startup.
-  pDelayedAction->initDelayedActionTable();
-
-  // Initialize the Legacy Command Buffer, used when transferring loco commands from Delayed Action to Legacy
-  pEngineer->initLegacyCommandBuf();
-
-  // This is as good a place as any to release all accessory relays
-  pEngineer->initAccessoryRelays();
 
   // Release all block reservations.
   pBlockReservation->releaseAllBlocks();
-
-  // Initialize the Train Progress table for every possible train (1..TOTAL_TRAINS)
-  for (locoNum = 1; locoNum <= TOTAL_TRAINS; locoNum++) {  // i.e. 1..50 trains
-    pTrainProgress->resetTrainProgress(locoNum);  // Initialize the header and no route for a single train.
-  }
 
   // When starting REGISTRATION mode, SNS will always immediately send status of every sensor.
   // Standby and recieve a Sensor Status from every sensor.  No need to clear first as we'll get them all.
@@ -494,11 +470,30 @@ void LEGRegistrationMode() {
   sprintf(lcdString, "AUDIO %c", audioOn); pLCD2004->println(lcdString); Serial.println(lcdString);
 
   while (pMessage->available() != 'D') {}  // Wait for Debug/No Debug message
-  pMessage->getOCCtoLEGDebugOn(&debugOn);
-  if ((debugOn != 'D') && (debugOn != 'N')) {
+  char debugMode;  // Can be D or N
+  pMessage->getOCCtoLEGDebugOn(&debugMode);
+  if (debugMode == 'D') {
+    debugOn = true;
+  } else if (debugMode == 'N') {
+    debugOn = false;
+  } else {
     sprintf(lcdString, "DEBUG MSG ERR"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
   }
-  sprintf(lcdString, "DEBUG %c", debugOn); pLCD2004->println(lcdString); Serial.println(lcdString);
+  sprintf(lcdString, "DEBUG %c", debugMode); pLCD2004->println(lcdString); Serial.println(lcdString);
+
+  // Initialize the Delayed Action table as we'll use it when establishing initial Train Progress loco/startup.
+  pDelayedAction->initDelayedActionTable(debugOn);
+
+  // Initialize the Legacy Command Buffer, used when transferring loco commands from Delayed Action to Legacy
+  pEngineer->initLegacyCommandBuf(debugOn);
+
+  // This is as good a place as any to release all accessory relays
+  pEngineer->initAccessoryRelays();
+
+  // Initialize the Train Progress table for every possible train (1..TOTAL_TRAINS)
+  for (locoNum = 1; locoNum <= TOTAL_TRAINS; locoNum++) {  // i.e. 1..50 trains
+    pTrainProgress->resetTrainProgress(locoNum);  // Initialize the header and no route for a single train.
+  }
 
   // *** NOW OCC WILL PROMPT OPERATOR FOR LOCO ID OF EVERY OCCUPIED BLOCK, ONE AT A TIME (and send to us) ***
   // As each (non-STATIC) loco ID and location is received, we will update Block Reservation and establish a Train Progress record
@@ -531,10 +526,8 @@ void LEGRegistrationMode() {
         pDelayedAction->populateLocoCommand(millis() + 500, locoNum, LEGACY_ACTION_SET_SMOKE, 0, 0);
       }
 
-// Adding some extra commands here to test out some features...
+      // Adding whistle command just for fun...
       pDelayedAction->populateLocoWhistleHorn(millis() + 3000, locoNum, LEGACY_PATTERN_BACKING);
-      pDelayedAction->populateLocoSpeedChange(millis() + 1500, locoNum, 2, 200, 50);
-
 
       sprintf(lcdString, "REG'D LOCO %i", locoNum); pLCD2004->println(lcdString); Serial.println(lcdString);
     } else {  // Loconum == 0 == LOCO_ID_NULL means we're done
