@@ -7,6 +7,7 @@
 //           values outside of this class.  See pSensorBlock->setSensorStatus(), pSensorBlock->getSensorStatus().
 // This class is responsible for lighting the Control Panel WHITE SENSOR OCCUPANCY SENSOR LEDs and BLUE/RED BLOCK OCCUPANCY LEDs.
 // Illumination depends on Mode and State.
+// RED = RESERVED, BLUE = OCCUPIED.
 // For this class to function properly, it is critical to call updateSensorStatus() every time a sensor change occurs.
 
 #ifndef OCCUPANCY_LEDS_H

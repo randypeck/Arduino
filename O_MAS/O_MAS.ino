@@ -123,7 +123,7 @@ char         msgType          = ' ';
 char fastOrSlow = ' ';  // Loco startup can be F|S
 char smokeOn    = ' ';  // Smoke can be S|N
 char audioOn    = ' ';  // Audio can be A|N
-char debugOn    = ' ';  // Debug can be D|N
+bool debugOn    = false;
 
 // *****************************************************************************************
 // **************************************  S E T U P  **************************************
@@ -266,8 +266,11 @@ void loop() {
   // OCC-to-LEG: 'D' Debug/No debug:  REGISTRATION MODE ONLY.
   // pMessage->getOCCtoLEGDebugOn(char &debugOrNoDebug);
   //
-  // OCC-to-ALL: 'L' Location of just-registered train.  One rec/occupied sensor, real and statuc.  REGISTRATION MODE ONLY.
+  // OCC-to-ALL: 'L' Location of just-registered train:  REGISTRATION MODE ONLY. One rec/occupied sensor, real and static.
   // pMessage->getOCCtoALLTrainLocation(byte &locoNum, routeElement &locoLocation);  // 1..50, BE03
+
+  // In MANUAL mode, the ONLY incoming messages would be BUTTON PRESSES and SENSOR STATUS changes.
+  // In AUTO/PARK mode, the ONLY incoming message would be SENSOR STATUS updates.
 
   // **************************************************************
   // **************************************************************
@@ -292,7 +295,7 @@ void loop() {
       sprintf(lcdString, "BEGIN MAN MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
       MASManualMode();
       sprintf(lcdString, "END MAN MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
-      // Upon return, modeCurrent == MODE_MANUAL and stateCurrent == STATE_STOPPED
+      // Now, modeCurrent == MODE_MANUAL and stateCurrent == STATE_STOPPED
 
     }  // *** MANUAL MODE COMPLETE! ***
 
@@ -302,7 +305,7 @@ void loop() {
       sprintf(lcdString, "BEGIN REG MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
       MASRegistrationMode();
       sprintf(lcdString, "END REG MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
-      // Upon return, modeCurrent == MODE_REGISTER and stateCurrent == STATE_STOPPED
+      // Now, modeCurrent == MODE_REGISTER and stateCurrent == STATE_STOPPED
 
     }  // *** REGISTER MODE COMPLETE! ***
 
@@ -312,7 +315,7 @@ void loop() {
       sprintf(lcdString, "BEGIN AUTO MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
       MASAutoParkMode();
       sprintf(lcdString, "END AUTO MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
-      // Upon return, modeCurrent == MODE_AUTO or MODE_PARK, and stateCurrent == STATE_STOPPED
+      // Now, modeCurrent == MODE_AUTO or MODE_PARK, and stateCurrent == STATE_STOPPED
 
     }  // *** AUTO/PARK MODE COMPLETE! ***
 
@@ -329,15 +332,19 @@ void loop() {
 
 void MASManualMode() {  // CLEAN THIS UP SO THAT MAS/OCC/LEG ARE MORE CONSISTENT WHEN DOING THE SAME THING I.E. RETRIEVING SENSORS AND UPDATING SENSOR-BLOCK *******************************
 
-  // Paint the control panel Mode Dial LEDs to reflect Manual mode, and illuminate the Stop button so operator can press Stop.
+  // Paint the control panel MODE DIAL LEDs to reflect Manual mode, and illuminate the Stop button so operator can press Stop.
+  // NOTE: Although we're illuminating the STOP button here, we won't actually look for it until the preliminary steps below are
+  // complete.  I.e. Get and illuminate all of the sensor status LEDs, and throw all turnouts to their default position.
+  // So the PROPER thing to do here would be to turn off the green START LED, and leave the red STOP LED dark.  Then, after the
+  // preliminary steps below are complete, illuminate the red STOP LED.  We could add that feature in the future if desired.
+  // Meanwhile, the operator can keep pressing the STOP button and it will have no effect, until it's recognized after prelims.
   pModeSelector->paintModeLEDs(modeCurrent, stateCurrent);
 
   // When starting MANUAL mode, MAS/SNS will always immediately send status of every sensor.
   // Recieve a Sensor Status from every sensor.  No need to clear first as we'll get them all.
   // We don't care about sensors in MAS Manual mode, so we disregard them (but other modules will see and want.)
   for (int i = 1; i <= TOTAL_SENSORS; i++) {  // For every sensor on the layout
-    // Get the sensor's current status: Tripped or Cleared.
-    // First we transmit the request...
+    // First, MAS must transmit the request...
     pMessage->sendMAStoSNSRequestSensor(i);
     // Wait for a Sensor message (there better not be any other type that comes in)...
     while (pMessage->available() != 'S') {}  // Do nothing until we have a new message
@@ -363,13 +370,22 @@ void MASManualMode() {  // CLEAN THIS UP SO THAT MAS/OCC/LEG ARE MORE CONSISTENT
 
   // Now operate in Manual mode (Running) until operator presses the Stop button.
   // Just watch the Emergency Stop (halt) line, and monitor for messages:
-  // * Button presses, to throw turnouts.
   // * Sensor updates, which we will just pass along to other modules (esp OCC.)
+  // * Button presses, to throw turnouts.
   // * Mode update (via Control Panel "Stop" button press), in which case we're done and return to the main loop.
   do {
     haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, release relays and just stop
     msgType = pMessage->available();  // Blank = no message; else call appropriate "pMessage->get" function to retrieve data.
-    if (msgType == 'B') {  // Button press from BTN
+    if (msgType == 'S') {  // Sensor status from SNS
+      // This will be the result of SNS independently wanting to send us a change that it detected; not a request from us.
+      pMessage->getSNStoALLSensorStatus(&sensorNum, &trippedOrCleared);
+      if (trippedOrCleared == SENSOR_STATUS_TRIPPED) {
+        sprintf(lcdString, "Sensor %i Tripped", sensorNum); pLCD2004->println(lcdString); Serial.println(lcdString);
+      } else {
+        sprintf(lcdString, "Sensor %i Cleared", sensorNum); pLCD2004->println(lcdString); Serial.println(lcdString);  // Not to LCD
+      }
+      // Just receive the message.  Nothing to do here, but OCC will see the message and update the white occupancy LEDs.
+    } else if (msgType == 'B') {  // Button press from BTN
       byte buttonNum = 0;   // Will be set to 1..30
       char position = ' ';  // Will be set to N or R
       pMessage->getBTNtoMASButton(&buttonNum);  // Will return buttonNum 1..30 corresponding to turnout 1..30
@@ -386,17 +402,6 @@ void MASManualMode() {  // CLEAN THIS UP SO THAT MAS/OCC/LEG ARE MORE CONSISTENT
       pMessage->sendMAStoALLTurnout(buttonNum, position);  // setting = N|R
       // Save new (opposite) position of turnout in Turnout_Reservation.  This is *not* reserving the turnout.
       pTurnoutReservation->setLastOrientation(buttonNum, position);  // Set "last-known" orientation to 'N'ormal or 'R'everse
-    } else if (msgType == 'S') {  // Sensor status from SNS
-      // This will be the result of SNS independently wanting to send us a change that it detected; not a request from us.
-      sensorNum = 0;  // Will be set to 1..52
-      char trippedOrCleared = ' ';  // Will be set to T or C
-      pMessage->getSNStoALLSensorStatus(&sensorNum, &trippedOrCleared);
-      if (trippedOrCleared == SENSOR_STATUS_TRIPPED) {
-        sprintf(lcdString, "Sensor %i Tripped", sensorNum); pLCD2004->println(lcdString); Serial.println(lcdString);
-      } else {
-        sprintf(lcdString, "Sensor %i Cleared", sensorNum); pLCD2004->println(lcdString); Serial.println(lcdString);  // Not to LCD
-      }
-      // Just receive the message.  Nothing to do here, but OCC will see the message and update the white occupancy LEDs.
     } else if (msgType != ' ') {  // If it's not Button, Sensor, or blank, we have a bug!
       sprintf(lcdString, "MAN MSG ERR %c", msgType); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
     }
@@ -508,11 +513,16 @@ void MASRegistrationMode() {
   }
   sprintf(lcdString, "AUDIO %c", audioOn); pLCD2004->println(lcdString); Serial.println(lcdString);
   while (pMessage->available() != 'D') {}  // Wait for Debug/No Debug message
-  pMessage->getOCCtoLEGDebugOn(&debugOn);
-  if ((debugOn != 'D') && (debugOn != 'N')) {
+  char debugMode;  // Can be D or N
+  pMessage->getOCCtoLEGDebugOn(&debugMode);
+  if (debugMode == 'D') {
+    debugOn = true;
+  } else if (debugMode == 'N') {
+    debugOn = false;
+  } else {
     sprintf(lcdString, "DEBUG MSG ERR"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
   }
-  sprintf(lcdString, "DEBUG %c", debugOn); pLCD2004->println(lcdString); Serial.println(lcdString);
+  sprintf(lcdString, "DEBUG %c", debugMode); pLCD2004->println(lcdString); Serial.println(lcdString);
 
   // *** NOW OCC WILL PROMPT OPERATOR FOR LOCO ID OF EVERY OCCUPIED BLOCK, ONE AT A TIME (and send to us) ***
   // As each (non-STATIC) loco ID and location is received, we will update Block Reservation and establish a Train Progress record
@@ -547,6 +557,12 @@ void MASRegistrationMode() {
 // ********************************************************************************************************************************
 
 void MASAutoParkMode() {
+
+  // Upon entry here, modeCurrent == AUTO or PARK, and stateCurrent == RUNNING.
+  // Mode may change from AUTO to PARK, and state may change from RUNNING to STOPPING; it's all handled here.
+
+    haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, just stop
+
 
 
   return;
@@ -744,7 +760,6 @@ void throwAllTurnoutsToDefault() {
   delay(200);
   pMessage->sendMAStoALLTurnout(30, TURNOUT_DIR_NORMAL);
   pTurnoutReservation->setLastOrientation(30, TURNOUT_DIR_NORMAL);
-  return;
   return;
 }
 

@@ -2,6 +2,8 @@
 // ONE RECORD FOR EACH SENSOR.
 // 12/14/20: Added sensor status field Tripped/Cleared get/set for modules *other than* SNS.
 // A set of functions to retrieve data from the Sensor Block cross reference table, which is stored in FRAM.
+// Also used to store the current status of each sensor, as they are tripped and cleared, for use by individual Arduinos so they
+// don't need to query O_SNS every time they need the status of a sensor.
 
 #ifndef SENSOR_BLOCK_H
 #define SENSOR_BLOCK_H

@@ -137,7 +137,7 @@ char fastOrSlow = ' ';  // Loco startup can be F|S
 char smokeOn    = ' ';  // Smoke can be S|N
 char audioOn    = ' ';  // Audio can be A|N
 bool debugOn    = false;
-const unsigned long SMOKE_TIME_LIMIT = 300000;  // Automatically turn off smoke on locos after this many ms.  300,000 = 5 minutes.
+const unsigned long SMOKE_TIME_LIMIT = 180000;  // Automatically turn off smoke on locos after this many ms.  180,000 = 3 minutes.
 
 // *****************************************************************************************
 // **************************************  S E T U P  **************************************
@@ -243,14 +243,16 @@ void setup() {
 
 void loop() {
 
-  haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, release relays and just stop
+  haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, release relays and send e-stop to Legacy
 
   // IMPORTANT: If a control panel track power switch is held, this function delays until 40ms after it is released,
   // so if the operator holds a power switch on while a train is moving and/or there are commands in Delayed Action,
   // no events will be seen while switch is held and sensor trips/releases may be missed.  For this reason, it's best
-  // to only check for PowerMaster switches when NOT in any mode (i.e. stopped state.)
-  checkIfPowerMasterOnOffPressed();  // Turn track power on or off if operator is holding a track-power switch.
+  // to only check for PowerMaster switches when NOT in any mode (i.e. STOPPED state.)
+  checkIfPowerMasterOnOffPressed();      // Turn track power on or off if operator is holding a track-power switch.
   pEngineer->executeConductorCommand();  // Run oldest ripe command in Legacy command buffer, if possible.
+  // Legacy command buffer could include PowerMaster on/off commands, or commands still remaining after completion of Registration
+  // mode, i.e. slow start-up and blowing horns etc.  So just keep checking until operator selects a new mode to start.
 
   // **************************************************************
   // ***** SUMMARY OF MESSAGES RECEIVED & SENT BY THIS MODULE *****
@@ -284,7 +286,7 @@ void loop() {
   // OCC-to-LEG: 'D' Debug/No debug:  REGISTRATION MODE ONLY.
   // pMessage->getOCCtoLEGDebugOn(char &debugOrNoDebug); // [D|N]
   //
-  // OCC-to-ALL: 'L' Location of just-registered train.  One rec/occupied sensor, real and static.  REGISTRATION MODE ONLY.
+  // OCC-to-ALL: 'L' Location of just-registered train:  REGISTRATION MODE ONLY.  One rec/occupied sensor, real and static.
   // pMessage->getOCCtoALLTrainLocation(byte &locoNum, routeElement &locoLocation);  // 1..50, BE03
   // NOTE: LEG will use this to establish an initial Train Progress "Route" and startup the loco.
   //
@@ -384,7 +386,8 @@ void LEGManualMode() {  // CLEAN THIS UP SO THAT MAS/OCC/LEG ARE MORE CONSISTENT
   // * Sensor updates, though nothing to do with them in Manual mode.
   // * Mode update, in which case we're done and return to the main loop.
   do {
-    haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, release relays and just stop
+    haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, release relays and send e-stop to Legacy
+
     msgType = pMessage->available();  // Could be ' ', 'S', or 'M'
     if (msgType == 'S') {  // Got a sensor message in Manual mode; nothing to do though.
       pMessage->getSNStoALLSensorStatus(&sensorNum, &trippedOrCleared);
@@ -520,8 +523,7 @@ void LEGRegistrationMode() {
       if (smokeOn == 'S') {  // Turn on smoke.  Possible levels are 0..3
         pDelayedAction->populateLocoCommand(millis() + 500, locoNum, LEGACY_ACTION_SET_SMOKE, 3, 0);
         // If we start with smoke on, add a command to turn it off in five minutes.
-        //pDelayedAction->populateLocoCommand(millis() + SMOKE_TIME_LIMIT, locoNum, LEGACY_ACTION_SET_SMOKE, 0, 0);
-        pDelayedAction->populateLocoCommand(millis() + 5000, locoNum, LEGACY_ACTION_SET_SMOKE, 0, 0);
+        pDelayedAction->populateLocoCommand(millis() + SMOKE_TIME_LIMIT, locoNum, LEGACY_ACTION_SET_SMOKE, 0, 0);
       } else {  // No smoke
         pDelayedAction->populateLocoCommand(millis() + 500, locoNum, LEGACY_ACTION_SET_SMOKE, 0, 0);
       }
@@ -541,7 +543,7 @@ void LEGRegistrationMode() {
   // *** REGISTRATION COMPLETE! ***
   // We're done, so just wait for the mode-change message from MAS to exit back to main loop...
   do {
-    haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, release relays and just stop
+    haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, release relays and send e-stop to Legacy
     msgType = pMessage->available();  // Could only be ' ' or 'M' i.e. nothing or MODE message
     if (msgType == 'M') {  // If we get a Mode message it can only be Registration Stopped.
       pMessage->getMAStoALLModeState(&modeCurrent, &stateCurrent);
@@ -563,12 +565,14 @@ void LEGRegistrationMode() {
 
 void LEGAutoParkMode() {
 
-  // IF OPERATOR SELECTS SMOKE ON (or works regardless) MIGHT WANT TO AUTOMATICALLY TURN OFF AFTER i.e. 10 MINUTES ***************************************************************************
+  // Upon entry here, modeCurrent == AUTO or PARK, and stateCurrent == RUNNING.
+  // Mode may change from AUTO to PARK, and state may change from RUNNING to STOPPING; it's all handled here.
 
-  // Mode is allowed to change from Auto/Running to Park/Running, without first Auto/Stopping or Auto/Stop.
+  haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, release relays and send e-stop to Legacy
+  pEngineer->executeConductorCommand();  // Run oldest ripe command in Legacy command buffer, if possible.
 
-  // Be sure to call haltIfHaltPinPulledLow() frequently, as the halt line pulled low by another module will only last 1 second.
-  haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, release relays and just stop
+
+
 
 
   return;

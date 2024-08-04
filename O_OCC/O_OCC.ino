@@ -1,4 +1,4 @@
-// O_OCC.INO Rev: 07/30/24.  FINISHED BUT NOT TESTED.
+// O_OCC.INO Rev: 08/03/24.  CODE COMPLETE including Registration and Auto/Park modes.  NEEDS TO BE FULLY TESTED!
 // OCC paints the WHITE Occupancy Sensor LEDs and RED/BLUE Block Occupancy LEDs on the Control Panel.
 // In Registration mode, OCC also prompts operator for initial data, using the Control Panel's Rotary Encoder and 8-Char display.
 // In Auto/Park modes, OCC also autonomously sends arrival and departure announcements to various stations around the layout.
@@ -149,7 +149,7 @@ char         msgType          = ' ';
 char fastOrSlow = ' ';  // Loco startup can be F|S
 char smokeOn    = ' ';  // Smoke can be S|N
 char audioOn    = ' ';  // Audio can be A|N
-char debugOn    = ' ';  // Debug can be D|N
+bool debugOn    = false;
 
 // The Rotary Prompt array is used for both various Y/N pre-registration prompts, as well as for registering trains.
 // Simple prompts such as SMOKE Y/N will use only the first couple of elements.
@@ -230,7 +230,7 @@ void setup() {
   // *** INITIALIZE TRAIN PROGRESS CLASS AND OBJECT ***  (Heap uses 14,552 bytes)
   // WARNING: TRAIN PROGRESS MUST BE INSTANTIATED *AFTER* BLOCK RESERVATION AND ROUTE REFERENCE.
   pTrainProgress = new Train_Progress;  // C++ quirk: no parens in ctor call if no parms; else thinks it's fn decl'n.
-  pTrainProgress->begin(pBlockReservation, pRoute);  // Unnecessary here?  We'll need to call each time we begin Registration.
+  pTrainProgress->begin(pBlockReservation, pRoute);
 
   // *** INITIALIZE 8-CHAR ALPHANUMERIC LED DISPLAY CLASS AND OBJECT ***
   pAlphaNumDisplay = new QuadAlphaNum;
@@ -260,7 +260,7 @@ void setup() {
 
 void loop() {
 
-  haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, release relays and just stop
+    haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, just stop
 
   // **************************************************************
   // ***** SUMMARY OF MESSAGES RECEIVED & SENT BY THIS MODULE *****
@@ -292,7 +292,7 @@ void loop() {
   // SNS-to-ALL: 'S' Sensor status (num [1..52] and Tripped|Cleared)
   // pMessage->getSNStoALLSensorStatus(byte &sensorNum, char &trippedOrCleared);
   //
-  // MAS-to-ALL: 'R' Route sent by FRAM Route Record Number:  ONLY DURING AUTO/PARK MODES RUNNING/STOPPING STATE.
+  // MAS-to-ALL: 'R' Route sent by FRAM Route Record Number:  ONLY DURING AUTO/PARK MODES.
   // pMessage->getMAStoALLRoute(byte &locoNum, char &extOrCont, unsigned int &routeRecNum, unsigned int &countdown);
   // 
   // **************************************************************
@@ -321,7 +321,7 @@ void loop() {
         sprintf(lcdString, "BEGIN MAN MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
         OCCManualMode();
         sprintf(lcdString, "END MAN MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
-        // Upon return, modeCurrent == MODE_MANUAL and stateCurrent == STATE_STOPPED
+        // Now, modeCurrent == MODE_MANUAL and stateCurrent == STATE_STOPPED
 
       }  // *** MANUAL MODE COMPLETE! ***
 
@@ -331,7 +331,7 @@ void loop() {
         sprintf(lcdString, "BEGIN REG MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
         OCCRegistrationMode();
         sprintf(lcdString, "END REG MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
-        // Upon return, modeCurrent == MODE_REGISTER and stateCurrent == STATE_STOPPED
+        // Now, modeCurrent == MODE_REGISTER and stateCurrent == STATE_STOPPED
 
       }  // *** REGISTER MODE COMPLETE! ***
 
@@ -341,7 +341,7 @@ void loop() {
         sprintf(lcdString, "BEGIN AUTO MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
         OCCAutoParkMode();
         sprintf(lcdString, "END AUTO MODE"); pLCD2004->println(lcdString); Serial.println(lcdString);
-        // Upon return, modeCurrent == MODE_AUTO or MODE_PARK, and stateCurrent == STATE_STOPPED
+        // Now, modeCurrent == MODE_AUTO or MODE_PARK, and stateCurrent == STATE_STOPPED
 
       }  // *** AUTO/PARK MODE COMPLETE! ***
       break;
@@ -382,8 +382,8 @@ void OCCManualMode() {  // CLEAN THIS UP SO THAT MAS/OCC/LEG ARE MORE CONSISTENT
     } else {
       sprintf(lcdString, "Sensor %i Cleared", i); Serial.println(lcdString);  // Not to LCD
     }
-    pOccupancyLEDs->updateSensorStatus(sensorNum, trippedOrCleared);  // Update status but don't paint
-    pSensorBlock->setSensorStatus(sensorNum, trippedOrCleared);
+    pOccupancyLEDs->updateSensorStatus(sensorNum, trippedOrCleared);  // Update occupancy sensor status array but don't paint
+//    pSensorBlock->setSensorStatus(sensorNum, trippedOrCleared);  NOTE 8/2/24: THIS CALL SEEMS UNNECESSARY - WE DON'T EVER CALL GETSENSORSTATUS WHEN RUNNING IN MANUAL MODE; CONFIRM MANUAL STILL WORKS WITH THIS COMMENTED OUT ***************************
   }
   // Okay, we've received all TOTAL_SENSORS sensor status updates, and updated the Occupancy_LEDs class.
   // Now go ahead and paint all the WHITE LEDs.
@@ -396,12 +396,12 @@ void OCCManualMode() {  // CLEAN THIS UP SO THAT MAS/OCC/LEG ARE MORE CONSISTENT
   // * Sensor updates, which require us to refresh the Control Panel WHITE LEDs.
   // * Mode update, in which case we're done and return to the main loop.
   do {
-    haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, release relays and just stop
+    haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, just stop
     msgType = pMessage->available();  // Could be ' ', 'S', or 'M'
     if (msgType == 'S') {  // Got a sensor message in Manual mode; update the WHITE LEDs
       pMessage->getSNStoALLSensorStatus(&sensorNum, &trippedOrCleared);
       pOccupancyLEDs->updateSensorStatus(sensorNum, trippedOrCleared);
-      pSensorBlock->setSensorStatus(sensorNum, trippedOrCleared);
+//      pSensorBlock->setSensorStatus(sensorNum, trippedOrCleared);  NOTE 8/2/24: THIS CALL SEEMS UNNECESSARY - WE DON'T EVER CALL GETSENSORSTATUS WHEN RUNNING IN MANUAL MODE; CONFIRM MANUAL STILL WORKS WITH THIS COMMENTED OUT ***************************
       pOccupancyLEDs->paintAllOccupancySensorLEDs(modeCurrent, stateCurrent);
       if (trippedOrCleared == SENSOR_STATUS_TRIPPED) {
         sprintf(lcdString, "Sensor %i Tripped", sensorNum); pLCD2004->println(lcdString); Serial.println(lcdString);
@@ -429,25 +429,11 @@ void OCCManualMode() {  // CLEAN THIS UP SO THAT MAS/OCC/LEG ARE MORE CONSISTENT
 // ********************************************************************************************************************************
 
 void OCCRegistrationMode() {
-  // For OCC only:
-  //   Initialize and clear the Control Panel Occupancy Sensor and Block Occupancy LEDs.
-  //   For each block, read Block Reservation record and store locoNum field in defaultLocoInThisBlock[0..TOTAL_BLOCKS - 1]
-  //     This will preserve left-over last-known locos in each block, to hopefully use as the default loco for each occupied block.
-  // Release all Block Reservations
-  // Initialize the Train Progress table
-  // Receive the status T/C of each sensor. For each sensor retrieved:
-  //   OCC only: Store the sensor status in the Occupany LED class, as LED_OFF or LED_SENSOR_OCCUPIED
-  //   Store sensor status T/C in Sensor-Block table for later use.
-  //   If sensor is Tripped, reserve sensor's block in Block Res'n table.
-  // OCC only: Prompt operator for startup parms incl. Fast/Slow, Smoke On/Off, Audio On/Off, Debug On/Off and store results.
-  // OCC will now prompt operator for the ID of every occupied block; could be a real loco or STATIC equipment.
-  //   For each occupied block identified by operator, IF THE LOCO IS REAL (static already accounted for):
-  //     Update Block Reservation to reflect that loco (will overwrite previous status as reserved for STATIC.)
-  //     Create new entry in Train Progress for this new loco.
 
   sprintf(alphaString, "WAIT...");
   pAlphaNumDisplay->writeToBackpack(alphaString);
 
+  // Initialize and clear the Control Panel Occupancy Sensor and Block Occupancy LEDs.
   // Each time we (re)start Registration, we'll call Occupancy_LEDs::begin() to reset the Static-Equipment Block, Sensor
   // Status, and internal Block status arrays.  No harm in calling begin() and passing the pointer more than once.
   // Do this BEFORE RECEIVE SENSOR STATUS MESSAGES, because it resets the local sensor status array that we'll be updating!
@@ -456,6 +442,8 @@ void OCCRegistrationMode() {
   pOccupancyLEDs->darkenAllOccupancySensorLEDs(); // Turn off all WHITE LEDs
   pOccupancyLEDs->paintOneBlockOccupancyLED(0);   // Sending 0 will turn off all RED/BLUE LEDs
 
+  // For each block, read Block Reservation record and store locoNum field in defaultLocoInThisBlock[0..TOTAL_BLOCKS - 1]
+  //   This will preserve left-over last-known locos in each block, to hopefully use as the default loco for each occupied block.
   // NOTE: The following Block Reservation read (and then release) MUST take place before we receive sensor status messages.
   // Let's take advantage of the fact that we *might* have a still-accurate Block Res'n table in FRAM.  This will occur if
   // the previous operating session ended in Auto or Park mode with all locos stopped.  This can provide us with our best
@@ -483,6 +471,10 @@ void OCCRegistrationMode() {
   }
 
   // When starting REGISTRATION mode, SNS will always immediately send status of every sensor.
+  // Receive the status T/C of each sensor. For each sensor retrieved:
+  //   Store the sensor status in the Occupany LED class, as LED_OFF or LED_SENSOR_OCCUPIED
+  //   Also store sensor status T/C in Sensor-Block table for later use.
+  //   If sensor is Tripped, reserve sensor's block for LOCO_ID_STATIC in Block Res'n table.
   // Standby and recieve a Sensor Status from every sensor.  No need to clear first as we'll get them all.
   for (int i = 1; i <= TOTAL_SENSORS; i++) {
     // Wait for a Sensor message (there better not be any other type that comes in)...
@@ -506,7 +498,7 @@ void OCCRegistrationMode() {
     // Store the sensor status T/C in the Sensor Block table.
     pSensorBlock->setSensorStatus(sensorNum, trippedOrCleared);
 
-    // If the sensor is TRIPPED, then reserve the corresponding block as Static in the Block Reservation table. Later, as we prompt
+    // If the sensor is TRIPPED, then reserve the corresponding block as STATIC in the Block Reservation table. Later, as we prompt
     // the user for the loco ID of each occupied block, we'll update the block reservation for each non-STATIC train.
     if (trippedOrCleared == 'T') {
       if (pSensorBlock->whichEnd(sensorNum) == LOCO_DIRECTION_EAST) {  // 'E'
@@ -565,8 +557,10 @@ void OCCRegistrationMode() {
   promptSelected = pRotaryEncoderPrompter->getSelection(rotaryPrompt, 1, 0);
   if (promptSelected == 0) {
     pMessage->sendOCCtoLEGDebugOn('N');  // No debug
+    debugOn = false;
   } else {
     pMessage->sendOCCtoLEGDebugOn('D');  // Debug
+    debugOn = true;
   }
   // Finished prompting operator for FAST/SLOW, SMOKE/NO SMOKE, AUDIO ON/OFF, DEBUG ON/OFF.
   pRotaryEncoderPrompter->clearDisplay();
@@ -597,6 +591,7 @@ void OCCRegistrationMode() {
   // Now we have a Rotary Encoder array loaded with every active locoRef name, plus STATIC.
   // Our index into rotaryPrompt[] will be 0..(topRotaryElement - 1)
   // For each occuped sensor, ask operator what loco is there.
+  // Occupied sensors/blocks could be a real loco or STATIC equipment.
   for (sensorNum = 1; sensorNum <= TOTAL_SENSORS; sensorNum++) {  // sensorNum variable declared above setup()
     sprintf(lcdString, "Sensor %i %c", sensorNum, pSensorBlock->getSensorStatus(sensorNum));  pLCD2004->println(lcdString); Serial.println(lcdString);
     if (pSensorBlock->getSensorStatus(sensorNum) == SENSOR_STATUS_TRIPPED) {  // We have an occupied block
@@ -666,7 +661,7 @@ void OCCRegistrationMode() {
         // Now take the same action ourselves when a new train is registered: establish new Train Progress rec for this loco.
         pTrainProgress->setInitialRoute(locoSelected, initialBlock);
         // And update our local Block Reservation table to change the block status reservation from STATIC to this loco.
-        pBlockReservation->reserveBlock(blockNum, initialBlock.routeRecType, locoSelected);
+        pBlockReservation->reserveBlock(blockNum, initialBlock.routeRecType, locoSelected);  // blockNum, direction, locoNum
         // I don't *think* we need to do anything with pOccupancyLEDs...
       }
     }
@@ -689,7 +684,7 @@ void OCCRegistrationMode() {
   // *** REGISTRATION COMPLETE! ***
   // We're done, so just wait for the mode-change message from MAS to exit back to main loop...
   do {
-    haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, release relays and just stop
+    haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, just stop
     msgType = pMessage->available();  // Could only be ' ' or 'M' i.e. nothing or MODE message
     if (msgType == 'M') {  // If we get a Mode message it can only be Registration Stopped.
       pMessage->getMAStoALLModeState(&modeCurrent, &stateCurrent);
@@ -713,56 +708,126 @@ void OCCRegistrationMode() {
 void OCCAutoParkMode() {
 
   // Upon entry here, modeCurrent == AUTO or PARK, and stateCurrent == RUNNING.
-  // Keep the Train Progress table, Block Reservation Table, and the Control Panel white and red/blue LEDs up to date.
+  // Mode may change from AUTO to PARK, and state may change from RUNNING to STOPPING, but OCC doesn't care and won't even see
+  // those RS-485 messages.
+  // So just run until we receive a Mode message (will still be AUTO or PARK) with a new state of STOPPED.
+  // OCC's only job here is to keep the WHITE Occupancy Sensor LEDs and RED/BLUE Block Occupancy LEDs correctly illuminated.
+  // To do this, it must keep track of incoming Routes and Sensor Trips/Clears, and use that to keep the Train Progress table and
+  // Block Reservation table up to date.
 
-  // We may receive new Route (Extension/Continuation) messages to be added to Train Progress and Block Reservation.
-  //   When a new Route message is received (extension or continuation), re-paint the Control Panel RED/BLUE BLOCK OCCUPANCY LEDs.
-  //   No need to re-paint the white occupancy sensor LEDs when a new Route is received as they won't have changed.
-  //   Also update the Block Reservation table to include the new blocks as "Reserved."
-  // We may receive Sensor Trip/Clear messages to update Train Progress and release Block Reservations.
-  //   When a new Sensor trip/clear message is received, re-paint the Control Panel WHITE OCCUPANCY SENSOR LEDs and also the
-  //   RED/BLUE BLOCK OCCUPANCY LEDs.
-  //   When a sensor clears, also update the Block Reservation table to release any blocks behind the cleared sensor, unless they
-  //     occur again farther ahead in the route.
+  // THERE ARE ONLY THREE INCOMING MESSAGES WE'LL BE SEEING:
+  // 'M' Mode/State change -- which for us will only be changing from Auto or Park Running or Stopping to Auto or Park Stopped.
+  // 'R' Route: Extension (stopped) or Continuation (moving.)
+  //   Get new Route (based on route record number.)
+  //   Add elements of the new Route to Train Progress
+  //   Reserve each new Block in the Route in Block Reservation as Reserved for this loco.
+  //   Reserve each new Turnout in the Route in Turnout Reservation as Reserved for this loco.  MAS ONLY (not OCC or LEG.)
+  //   Re-paint Control Panel RED/BLUE BLOCK OCCUPANCY LEDs to include the new Blocks as RED/Reserved (unless currently Occupied.)
+  //     RED = RESERVED, BLUE = OCCUPIED.
+  //     No need to re-paint the white occupancy sensor LEDs when a new Route is received as they won't have changed.
+  // 'S' Sensor Trip/Clear.
+  //   Get the Sensor Trip/Clear sensorNum and Tripped/Cleared.
+  //   Update our internal Occupancy LED array that keeps track of sensor status (OCC ONLY.)  Not sure how this affects MAS or LEG.
+  //   Sensor TRIP:
+  //     Advance Next-To-Trip pointer if possible.
+  //   Sensor CLEAR:
+  //     Release Block Reservations behind just-cleared sensor (unless block occurs again farther ahead in route.)
+  //     Release Turnout Reservations behind just-cleared sensor (unless turnout occurs again farther ahead in route.)  MAS ONLY.
+  //     Advance Next-To-Clear pointer if possible.
+  //   Re-paint the Control Panel WHITE OCCUPANCY SENSOR LEDs
+  //   Re-paint the Control Panel RED/BLUE BLOCK OCCUPANCY LEDs.
 
-  // Upon starting Auto/Park mode, all white and red/blue LEDs will be dark, so paint them here.
+  // Upon starting Auto/Park, all white and red/blue LEDs will be dark, so paint them here to reflect what we know from Reg'n.
   pOccupancyLEDs->paintAllOccupancySensorLEDs(modeCurrent, stateCurrent);
   pOccupancyLEDs->paintAllBlockOccupancyLEDs();
 
-  // State may change from STATE_RUNNING to STATE_STOPPING but that won't affect us and OCC won't see those RS485 messages.
-  // So just run in Auto/Park mode until we receive a Mode message which CAN ONLY BE Auto or Park with (new) state Stopped.
-  do {  // Operate in Auto/Park until mode stopped
+  do {  // Operate in Auto/Park until mode == STOPPED
+    haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, just stop
+
     msgType = pMessage->available();  // Could be ' ', Sensor, Route, or Mode message (others ignored)
     // Note: If there is no message incoming for this module, msgType will be set to ' ' (blank).
 
-    if (msgType == 'S') {  // Got a Sensor-change message in Auto/Park mode
-      pMessage->getSNStoALLSensorStatus(&sensorNum, &trippedOrCleared);  // Get the Sensor trip/clear message
-      pOccupancyLEDs->updateSensorStatus(sensorNum, trippedOrCleared);   // Update internal occupancy sensor status tracker
-      // Update the corresponding WHITE LED to reflect the change...
-      pOccupancyLEDs->paintAllOccupancySensorLEDs(modeCurrent, stateCurrent);
-      // We can't yet update the RED/BLUE block-occupancy LEDs until we look at the Train Progress table.
+    if (msgType == 'R') {  // We've got a new Route to add to Train Progress.  Could be Continuation or Extension.
+
+      // First, get the incoming Route message which we know is waiting for us...
+      pMessage->getMAStoALLRoute(&locoNum, &extOrCont, &routeRecNum, &countdown);
+
+// Add debug code to dump Train Progress for lcooNum, before adding the Extension or Continuation route ***************************
+
+      //   Add elements of the new Route to Train Progress
+      if (extOrCont == ROUTE_TYPE_EXTENSION) {
+        // Add this extension route to Train Progress (our train is currently stopped.)
+        pTrainProgress->setExtensionRoute(locoNum, routeRecNum, countdown);
+      } else if (extOrCont == ROUTE_TYPE_CONTINUATION) {
+        // Add this continuation route to Train Progress (our train is currently moving.)
+        pTrainProgress->setContinuationRoute(locoNum, routeRecNum);
+      }
+
+// Add debug code to dump Train Progress to confim that the new route was added properly.  Test with a new route that begins in
+// Reverse as well as with a Continuation route that should change the penultimate VL (VL01) command to the block's default speed
+// for that direction, and adds records and updates the pointers as expected. *****************************************************
+
+      // Reserve each new Block in the Route in Block Reservation as Reserved for this loco.
+      //   Allow for the possibility that the new Route includes a Block that may already be in the loco's existing Train Progress.
+      //   But even if the block is already reserved for this loco, it's not a problem.
+      // Reserve each new Turnout in the Route in Turnout Reservation as Reserved for this loco.  MAS ONLY (not OCC or LEG.)
+      // Probably easiest to just scan the entire Train Progress record for this loco from Tail to Head and (re)reserve the blocks
+      // (and turnouts if applicable.)
+      // This will work because we're only RESERVING Blocks and Turnouts; we won't release any Block or Turnout reservations here.
+      byte tempTPPointer = pTrainProgress->tailPtr(locoNum);  // Element number, not a sensor number
+      routeElement tempTPElement;  // Working/scratch Train Progress element
+      // We'll stop scanning forward when we reach stopPtr, since there will never be a block or turnout element beyond that.
+      while (tempTPPointer != pTrainProgress->stopPtr(locoNum)) {
+        tempTPElement = pTrainProgress->peek(locoNum, tempTPPointer);
+        // See what it is and decide if any action is necessary.
+        if ((tempTPElement.routeRecType == BE) || (tempTPElement.routeRecType == BW)) {  // Block must be reserved
+          // reserveBlock(blockNum, direction, locoNum);
+          pBlockReservation->reserveBlock(tempTPElement.routeRecVal, tempTPElement.routeRecType, locoNum);
+        } else if ((tempTPElement.routeRecType == TN) || (tempTPElement.routeRecType == TR)) {  // Turnout must be reserved
+          // We don't need to reserve Turnout reservations in OCC or LEG, but this is where we'll do it in MAS.
+          // reserveTurnout(turnoutNum, locoNum);
+          // pTurnoutReservation->reserveTurnout(tempTPElement.routeRecVal, locoNum);
+        }
+        // Advance pointer to the next element in this loco's Train Progress table...
+        tempTPPointer = pTrainProgress->incrementTrainProgressPtr(tempTPPointer);
+      }  // We've reached the end of the Route.  All Blocks and Turnouts (re)reserved.
+
+      // Since this is OCC, re-paint the Red/Blue LEDs on the Control Panel.
+      // The White sensor LEDs aren't affected when we add a new Route, but the Red/Blue Block LEDs need to be updated.
+      pOccupancyLEDs->paintAllBlockOccupancyLEDs();
+
+    }  // End of "we received a new Route" message
+
+    else if (msgType == 'S') {  // Got a Sensor-change message in Auto/Park mode
+
+      // Get the Sensor Trip/Clear sensorNum and Tripped/Cleared.
+      pMessage->getSNStoALLSensorStatus(&sensorNum, &trippedOrCleared);
+
+      // Update our internal Occupancy LED array that keeps track of sensor status (OCC ONLY.)  How does this affect MAS or LEG??? **************
+      pOccupancyLEDs->updateSensorStatus(sensorNum, trippedOrCleared);  // Does not illuminate any LEDs, just tracks status.
 
       if (trippedOrCleared == SENSOR_STATUS_TRIPPED) {
+
+        // Which loco tripped the sensor?
         locoNum = pTrainProgress->locoThatTrippedSensor(sensorNum);
 
-        // Advance Train Progress pointer from current Next-To-Trip each next sensor (if any) until we find the next sensor (which
-        // will become the new Next-To-Trip sensor.  As we move our pointer forward, handle each route element as necessary.
-        // In the event we have tripped the final sensor in the route (by checking pTrainProgress->atEndOfRoute()), then obviously
-        // don't advance the pointer as we will be at the end of the route (until/unless we are assigned a new Extension route.)
+        // If we're not already pointing to the STOP sensor, advance Next-To-Trip pointer until we find the next sensor, which will
+        // become the new Next-To-Trip sensor.  As we move our pointer forward, handle each route element as necessary.
         // We'll want to flag any Block records that we encounter as Occupied (which will have been previously only Reserved,)
-        // which will be done automatically when we call OccupancyLEDs->paintAllBlockOccupancyLEDs().
-        // First check if we're at the end of the Route (i.e. just tripped the STOP sensor) in which case OCC has nothing to do.
-        if ((pTrainProgress->atEndOfRoute(locoNum) == false)) {  // If not at end of route
-
+        // but that will be done automatically when we call OccupancyLEDs->paintAllBlockOccupancyLEDs().
+        // First check if we're at the end of the Route (i.e. just tripped the STOP sensor) in which case we can't advance.
+        if ((pTrainProgress->atEndOfRoute(locoNum) == false)) {  // If not at end of route (we did not just trip the STOP sensor.)
           byte tempTPPointer = pTrainProgress->nextToTripPtr(locoNum);  // Element number, not a sensor number, just tripped
           routeElement tempTPElement;  // Working/scratch Train Progress element
-
           do {
-            // Advance pointer to the next element in this loco's Train Progress table...
+            // Advance pointer to the next element in this loco's Train Progress table until we reach the next sensor...
             tempTPPointer = pTrainProgress->incrementTrainProgressPtr(tempTPPointer);
             tempTPElement = pTrainProgress->peek(locoNum, tempTPPointer);
+
             // If there was anything to do with any Train Progress elements, we would do it here.
+
           } while (tempTPElement.routeRecType != SN);  // Watching for the new nextToTrip sensor.
+          // We've reached the next sensor, so set it to be the new Next-To-Trip sensor...
           pTrainProgress->setNextToTripPtr(locoNum, tempTPPointer);
         }
         // Now the next-to-trip pointer is up to date; whether it was already at the end of the route, or if we advanced it.
@@ -778,23 +843,21 @@ void OCCAutoParkMode() {
         // and Red/Occupied.
         // Also, the Block Reservation table isn't affected when a sensor is tripped, only possibly when a sensor is cleared,
         // because Block Res'n doesn't differentiate between RESERVED and OCCUPIED, only RESERVED and NOT_RESERVED.
-      } else {  // Loco Cleared a sensor
-        locoNum = pTrainProgress->locoThatClearedSensor(sensorNum);
-  
-        // When we clear the Next-To-Clear sensor there is much to do:
-        // * All blocks between the old Tail and the old Next-To-Clear can be released IFF they don't recur again farther ahead in
-        //   this route.
-        // * All turnouts between the old Tail and the old Next-To-Clear can be released IFF they don't recur again farther ahead
-        //   in this route (LEG only.)
+
+      } else {  // SENSOR_STATUS_CLEARED
+
+        // * Release Block Reservations behind just-cleared sensor (unless block occurs again ahead in route.)
+        // * Release Turnout Reservations behind just-cleared sensor (unless turnout occurs again ahead in route.)  MAS ONLY.
         // * Update the Tail to be equal to the old Next-To-Clear.
-        // * Update the Next-To-Clear to be next Sensor record ahead in the route.
+        // * Advance Next-To-Clear to be next Sensor record ahead in the route.
         //   Note that there will always be a sensor record ahead of any sensor that is cleared, even at the end of a route.
 
+        // Which loco cleared the sensor?
+        locoNum = pTrainProgress->locoThatClearedSensor(sensorNum);
         byte tempTPPointer = pTrainProgress->tailPtr(locoNum);  // Element number, not a sensor number
         routeElement tempTPElement;  // Working/scratch Train Progress element
-
-        do {
-          // Advance pointer to the next element in this loco's Train Progress table...
+        do {  // Starting at the tail and working forward towards the sensor that was just cleared...
+          // Advance a temporary pointer to the next element in this loco's Train Progress table...
           tempTPPointer = pTrainProgress->incrementTrainProgressPtr(tempTPPointer);
           tempTPElement = pTrainProgress->peek(locoNum, tempTPPointer);
           // See what it is and decide if any action is necessary.
@@ -804,17 +867,18 @@ void OCCAutoParkMode() {
               pBlockReservation->releaseBlock(tempTPElement.routeRecVal);
             }
           } else if ((tempTPElement.routeRecType == TN) || (tempTPElement.routeRecType == TR)) {  // Turnout can maybe be released
-              // If turnout does *not* recur ahead in this TP route, we can release its reservation (n/a for OCC)
+            // If turnout does *not* recur ahead in this TP route, we can release its reservation (n/a for OCC)
             if (pTrainProgress->turnoutOccursAgainInRoute(locoNum, tempTPElement.routeRecVal, tempTPPointer) == false) {
-              // We don't need to release Turnout reservations in OCC
+              // We don't need to release Turnout reservations in OCC or LEG, but we will in MAS
             }
           }
+          // Other modules, MAS and LEG, may consider actions on other element types here...
         } while (tempTPElement.routeRecType != SN);  // Watching for the new nextToTrip sensor.
         // Now our tempTPPointer is pointing at the new tail / old next-to-clear.  Let's be sure!
         if (tempTPPointer != pTrainProgress->nextToClearPtr(locoNum)) {  // Fatal error
           sprintf(lcdString, "NTC POINTER ERR!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
         }
-        // Assign the new Tail pointer value
+        // Assign the new Tail pointer value as the old next-to-clear...
         pTrainProgress->setTailPtr(locoNum, pTrainProgress->nextToClearPtr(locoNum));
         // Now assign the new Next-To-Clear pointer value by traversing T.P. forward until we find the next SN sensor record.
         tempTPPointer = pTrainProgress->tailPtr(locoNum);  // Start at new Tail
@@ -826,52 +890,24 @@ void OCCAutoParkMode() {
         // Found a sensor record - this will be the new Next-To-Clear.
         pTrainProgress->setNextToClearPtr(locoNum, tempTPPointer);
       }
-      // Whether sensor tripped or cleared, paint the RED/BLUE Block Occupancy LEDs to reflect the loco's updated location.
-      pOccupancyLEDs->paintAllBlockOccupancyLEDs();
-    }  // End of "if we received a Senor tripped or cleared message
 
-    else if (msgType == 'R') {  // We've got a new Route to add to Train Progress.  Could be Continuation or Extension.
+      // Regardless of Tripped or Cleared, re-paint the Control Panel WHITE OCCUPANCY SENSOR LEDs
+      pOccupancyLEDs->paintAllOccupancySensorLEDs(modeCurrent, stateCurrent);
 
-      // 04/11/24: Add the new Route to Train Progress, update Block (and Turnout reservations if MAS), (and re-paint red/blue
-      // sensors if OCC).
-      // First, get the incoming Route message which we know is waiting for us...
-      pMessage->getMAStoALLRoute(&locoNum, &extOrCont, &routeRecNum, &countdown);
-      // Add Route to Train Progress, update reserved Blocks and Turnouts, then re-paint the Red/Blue LEDs on the Control Panel.
-      if (extOrCont == ROUTE_TYPE_EXTENSION) {
-        // Add this extension route to Train Progress (our train is currently stopped.)
-        pTrainProgress->setExtensionRoute(locoNum, routeRecNum, countdown);
-      } else if (extOrCont == ROUTE_TYPE_CONTINUATION) {
-        // Add this continuation route to Train Progress (our train is currently moving.)
-        pTrainProgress->setContinuationRoute(locoNum, routeRecNum);
-      }
-      // We'll also need to Reserve every block (and turnout, if MAS) that's part of the Route just added.
-      // We've already added the elements to Train Progress and updated those pointers, so probably easiest to just scan the entire
-      // Train Progress table from Tail to Head for this loco and (re)reserve the blocks and turnouts.
-      byte tempTPPointer = pTrainProgress->tailPtr(locoNum);  // Element number, not a sensor number
-      routeElement tempTPElement;  // Working/scratch Train Progress element
-      while (tempTPPointer != pTrainProgress->stopPtr(locoNum)) {  // Stop pointer is always two elements before head, so AOK
-        tempTPElement = pTrainProgress->peek(locoNum, tempTPPointer);
-        // See what it is and decide if any action is necessary.
-        if ((tempTPElement.routeRecType == BE) || (tempTPElement.routeRecType == BW)) {  // Block must be reserved
-          pBlockReservation->reserveBlock(tempTPElement.routeRecVal, tempTPElement.routeRecType, locoNum);
-        } else if ((tempTPElement.routeRecType == TN) || (tempTPElement.routeRecType == TR)) {  // Turnout must be reserved
-          // We don't need to reserve Turnout reservations in OCC
-        }
-        // Advance pointer to the next element in this loco's Train Progress table...
-        tempTPPointer = pTrainProgress->incrementTrainProgressPtr(tempTPPointer);
-      }  // We've reached the end of the Route.  All Blocks and Turnouts (re)reserved.
-      // The White sensor LEDs aren't affected when we add a new Route, but the Red/Blue Block LEDs need to be updated.
+      // Regardless of Tripped or Cleared, re-paint the Control Panel RED/BLUE BLOCK OCCUPANCY LEDs.
       pOccupancyLEDs->paintAllBlockOccupancyLEDs();
-    }
+
+    }  // End of "we received a Senor tripped or cleared" message
 
     else if (msgType == 'M') {  // If we get a Mode message it can only be Auto/Park Stopped and we're done here.
+
       // Message class will have filtered out Mode Auto/Park, State STOPPING for OCC because it's irrelevant.
       // We'll just check to be sure...
       if (((modeCurrent != MODE_AUTO) && (modeCurrent != MODE_PARK)) ||
-        (stateCurrent != STATE_STOPPED)) {
+           (stateCurrent != STATE_STOPPED)) {
         sprintf(lcdString, "AUTO MODE UPDT ERR!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
       }
-      // Okay they want to stop Auto/Park mode.  It must mean all locos are stopped.
+      // Okay they want to STOP Auto/Park mode.  It must mean all locos are stopped.
       // We will just fall out of the loop below since stateCurrent is now STATE_STOPPED
     }
 
@@ -882,18 +918,15 @@ void OCCAutoParkMode() {
 
   } while (stateCurrent != STATE_STOPPED);
 
-  // Okay, Auto/Park mode has organically stopped!
-  // When AUTO/PARK mode is stopped, turn off all the Control Panel LEDs to make it clear that Auto/Park mode has stopped.
-  pOccupancyLEDs->darkenAllOccupancySensorLEDs();  // Sending 0 will turn off all WHITE LEDs
-  pOccupancyLEDs->paintOneBlockOccupancyLED(0);   // Sending 0 will turn off all RED/BLUE LEDs
+  // AUTO/PARK mode STOPPED, so turn off all the Control Panel LEDs.
+  pOccupancyLEDs->darkenAllOccupancySensorLEDs();  // WHITE LEDs
+  pOccupancyLEDs->paintOneBlockOccupancyLED(0);    // Sending 0 will turn off all RED/BLUE LEDs
   return;
 }
 
 // ********************************************************************************************************************************
 // ********************************************************************************************************************************
 // ********************************************************************************************************************************
-
-
 
 // These are the possible values of any given Train Progress record that we may want to deal with...
 //      const byte ER =  2;  // End-Of-Route
@@ -907,4 +940,4 @@ void OCCAutoParkMode() {
 //      const byte VL = 10;  // Velocity (NOTE: "SP" IS RESERVED IN ARDUINO) (values can be SPEED_STOP = 0, thru SPEED_HIGH = 4.)
 //      const byte TD = 11;  // Time Delay in seconds (not ms)
 //      const byte BX = 12;  // Deadlock table only.  Block either direction is a threat.
-//      const byte SC = 13;  // Sensor Clear (not implemented yet, as of 1/23)
+//      const byte SC = 13;  // Sensor Clear (not implemented yet, as of 8/24)

@@ -1,4 +1,4 @@
-// TRAIN_PROGRESS.CPP Rev: 05/04/24.  SOME UTILITY FUNCTIONS WORKING SO FAR BUT NOT TESTED ****************************************************************************************
+// TRAIN_PROGRESS.CPP Rev: 08/03/24.  SOME UTILITY FUNCTIONS WORKING SO FAR BUT NOT TESTED ****************************************************************************************
 // Part of O_MAS, O_OCC, and O_LEG.
 // IMPORTANT: This class expects t_locoNum to always be passed and returned 1..50, but corresponding Train Progress class array
 // elements are internally stored in array elements 0..49.
@@ -171,7 +171,7 @@ void Train_Progress::setInitialRoute(const byte t_locoNum, const routeElement t_
 }
 
 void Train_Progress::setExtensionRoute(const byte t_locoNum, const unsigned int t_routeRecNum, const unsigned long t_countdown) {
-  // Rev: 04/07/24.
+  // Rev: 08/03/24.
   // Append an Extension route (TRAIN WILL BE STOPPED.)
   // Extension route begins with train stopped (in Auto or Park mode.)
   // t_countdown is ms to wait before starting train.
@@ -181,7 +181,7 @@ void Train_Progress::setExtensionRoute(const byte t_locoNum, const unsigned int 
 }
 
 void Train_Progress::setContinuationRoute(const byte t_locoNum, const unsigned int t_routeRecNum) {
-  // Rev: 04/07/24.
+  // Rev: 08/03/24.
   // Append a Continuation route (TRAIN WILL BE MOVING AND KEEPS MOVING.)
   // NOTE: If we add a Continuation route where the prior route ended with the loco reversing into a siding such as BW02 and then
   // pulls forward to stop i.e. BE02 stopping on SN04 -- and then the new Continuation route begins in Reverse such as BW02, that
@@ -193,7 +193,7 @@ void Train_Progress::setContinuationRoute(const byte t_locoNum, const unsigned i
 }
 
 byte Train_Progress::locoThatTrippedSensor(const byte t_sensorNum) {
-  // Rev: 03/04/24.  SEEMS GOOD BUT WOW DOES IT NEED TO BE TESTED!
+  // Rev: 08/03/24.  SEEMS GOOD BUT WOW DOES IT NEED TO BE TESTED!
   // Especially with a route where a sensor occurs more than once, though I think this will work fine.
   // Returns locoNum whose next-to-trip sensor was tripped, else fatal error.
   // A sensor may occur more than once in a train's route (such as if we reverse), but in this case we only need to know locoNum.
@@ -225,7 +225,7 @@ byte Train_Progress::locoThatTrippedSensor(const byte t_sensorNum) {
 }
 
 byte Train_Progress::locoThatClearedSensor(const byte t_sensorNum) {
-  // Rev: 03/04/24.  SEEMS GOOD BUT WOW DOES IT NEED TO BE TESTED!
+  // Rev: 08/03/24.  SEEMS GOOD BUT WOW DOES IT NEED TO BE TESTED!
   // Especially with a route where a sensor occurs more than once, though I think this will work fine.
   // Returns locoNum whose next-to-clear sensor was cleared, else fatal error.
   // A sensor may occur more than once in a train's route (such as if we reverse), but in this case we only need to know locoNum.
@@ -253,13 +253,12 @@ byte Train_Progress::locoThatClearedSensor(const byte t_sensorNum) {
 }
 
 bool Train_Progress::timeToStartLoco(const byte t_locoNum) {
-  // Rev: 03/05/23.  NOT YET TESTED
+  // Rev: 08/03/24.  NOT YET TESTED
   // Returns true if "timeToStart" > millis()
   m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
   if (m_pTrainProgress[m_trainProgressLocoTableNum].timeToStart > millis()) {
     return true;  // Yep, it's okay to get this loco moving!
-  }
-  else {
+  } else {
     return false;  // No, we don't want to start this loco yet
   }
 }
@@ -443,14 +442,13 @@ void Train_Progress::setExpectedStopTime(const byte t_locoNum, const unsigned lo
 }
 
 bool Train_Progress::blockOccursAgainInRoute(const byte t_locoNum, const byte t_blockNum, const byte t_elementNum) {
-  // Rev: 04/11/24.
+  // Rev: 08/03/24.  NEEDS TO BE TESTED!
   // Does a given block occur (again) further ahead in this route (regardless of direction)?
   // So we can release reservation if possible.
   // Requires an element number from Train Progress to know where to start searching.
   // Note that OCC needs this function (in addition to MAS) to know if the block should continue to show as reserved/occupied.
   // Beginning with the first element BEYOND t_elementNum, scan each element in Train Progress forward until we reach End-of-Route.
   // If we find t_blockNum then return true; else return false.  USUALLY we will return false.
-  m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
   byte tempTPPointer = t_elementNum;  // Element number, not a sensor number
   routeElement tempTPElement;  // Working/scratch Train Progress element
   // We are assuming that the beginning element t_elementNum will point to a Sensor so can't be a Block record.
@@ -465,26 +463,25 @@ bool Train_Progress::blockOccursAgainInRoute(const byte t_locoNum, const byte t_
         return true;
       }
     }
-  } while (tempTPPointer != stopPtr(t_locoNum));
+  } while (tempTPPointer != stopPtr(t_locoNum));  // Calling our local function Train_Progress::stopPtr()
   // When scanning ahead for Block records, we know when we've reached stopPtr that there can be no more Block records.
   return false;
 }
 
 bool Train_Progress::turnoutOccursAgainInRoute(const byte t_locoNum, const byte t_turnoutNum, const byte t_elementNum) {
-  // Rev: 04/11/24.
+  // Rev: 08/03/24.  NEEDS TO BE TESTED!
   // Does a given turnout occur (again) further ahead in this route (regardless of orientation)?
   // So we can release reservation if possible.
   // Requires an element number from Train Progress to know where to start searching.
   // Beginning with the first element BEYOND t_elementNum, scan each element in Train Progress forward until we reach End-of-Route.
   // If we find t_turnoutNum then return true; else return false.  USUALLY we will return false.
-  m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
   byte tempTPPointer = t_elementNum;  // Element number, not a sensor number
   routeElement tempTPElement;  // Working/scratch Train Progress element
   // We are assuming that the beginning element t_elementNum will point to a Sensor so can't be a Turnout record.
   do {
     // Advance pointer to the next element in this loco's Train Progress table...
     tempTPPointer = incrementTrainProgressPtr(tempTPPointer);
-    tempTPElement = peek(t_locoNum, tempTPPointer);
+    tempTPElement = peek(t_locoNum, tempTPPointer);  // locoNum, NOT loco table num
     // See what it is and if it's a Turnout, see if it's t_turnoutNum...
     if ((tempTPElement.routeRecType == TN) || (tempTPElement.routeRecType == TR)) {  // Turnout record type found!
       // Is the turnout we're pointing at t_turnoutNum?
@@ -492,7 +489,7 @@ bool Train_Progress::turnoutOccursAgainInRoute(const byte t_locoNum, const byte 
         return true;
       }
     }
-  } while (tempTPPointer != stopPtr(t_locoNum));
+  } while (tempTPPointer != stopPtr(t_locoNum));  // Calling our local function Train_Progress::stopPtr()
   // When scanning ahead for Turnout records, we know when we've reached stopPtr that there can be no more Turnout records.
   return false;
 }
@@ -536,7 +533,7 @@ byte Train_Progress::stopPtr(const byte t_locoNum) {
 
 routeElement Train_Progress::peek(const byte t_locoNum, const byte t_elementNum) {
   // Rev: 03/05/23.  FINISHED BUT NOT TESTED ***********************************************************************************************
-  // Return contents of T.P. element for this loco.
+  // Return contents of T.P. element for this loco.  t_locoNum should be 1..TOTAL_TRAINS (not zero offset.)
   // A peek() into Train Progress function seems useful when we need to search the route elements for various functions.
   // For instance, looking ahead for matching Turnout or Block records to know if we can release a reservation.
   // Also when traversing elements due to sensor trips and clears, to execute those commands and find new sensors.
@@ -547,6 +544,7 @@ routeElement Train_Progress::peek(const byte t_locoNum, const byte t_elementNum)
 bool Train_Progress::atEndOfRoute(const byte t_locoNum) {  // True if the train has reached the end of the route.
   // Rev: 04/11/24.
   // Easiest way to determine if we have reached the end of our route is to check if Next-To-Trip pointer == Stop pointer.
+  m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
   return (m_pTrainProgress[m_trainProgressLocoTableNum].nextToTripPtr == m_pTrainProgress[m_trainProgressLocoTableNum].stopPtr);
 }
 
@@ -596,13 +594,13 @@ void Train_Progress::setTailPtr(const byte t_locoNum, const byte t_tailPtr) {
 
 void Train_Progress::addRoute(const byte t_locoNum, const unsigned int t_routeRecNum, const char t_continuationOrExtension,
   const unsigned long t_countdown) {
-  // Rev: 04/08/24.  READY FOR TESTING.
+  // Rev: 08/03/24.  READY FOR TESTING.
   // PRIVATE FUNCTION called by public functions setExtensionRoute() and setContinuationRoute().
   // Append either an Extension or Continuation route.  Logic is combined since they are so similar.
   // Append an Extension route WHEN TRAIN HAS BEEN STOPPED.
   // Append a Continuation route WHEN TRAIN IS MOVING AND KEEPS MOVING.
   // t_continuationOrExtension from globals can be either ROUTE_TYPE_EXTENSION = 'E' or ROUTE_TYPE_CONTINUATION = 'C'.
-  // t_countdown is ms to wait before starting train.
+  // t_countdown is ms to wait before starting train (only possibly > 0 for an Extension route.)
 
   // Adding a CONTINUATION route (train is moving) is the same as adding an EXTENSION (train is stopped) route, EXCEPT:
   //   1. POINTERS:
@@ -621,7 +619,7 @@ void Train_Progress::addRoute(const byte t_locoNum, const unsigned int t_routeRe
 
   // WE'RE GUARANTEED THE FOLLOWING:
   //   The first four Route Reference records are always         BX## + SN## + FD/RD## + VL##.
-  //   The last  four Train Progress  records are always  VLxx + BX## + SN## + VL00.
+  //   The last  four Train Progress  records are always  VL## + BX## + SN## + VL00.
   //   (And if this is an Extension (stopped), then we're sitting on the nextToClear/nextToTrip/stop sensor.)
   //   The BX## and SN## records will match up with the end of the previous route, so no need to overwrite them.
 
@@ -651,9 +649,13 @@ void Train_Progress::addRoute(const byte t_locoNum, const unsigned int t_routeRe
     // the default speed for that block (typically VL02..VL04.)
     if (tempElement.routeRecType == FD) {  // Look up the default block speed and use it to overwrite the old VL01 speed
       // The VL01 command we want to overwrite will ALWAYS be 2 elements before the (old) Stop pointer (4 elements before the Head.)
-      tempElementPtr = decrementTrainProgressPtr(m_pTrainProgress[m_trainProgressLocoTableNum].stopPtr);  // Stop minus 1
-      tempElementPtr = decrementTrainProgressPtr(tempElementPtr);  // Stop minus 2
-      // Let's just confirm it's a VL01 record, otherwise we have a major bug.
+      tempElementPtr = m_pTrainProgress[m_trainProgressLocoTableNum].stopPtr;  // Set our temp pointer to the Stop pointer
+      tempElementPtr = decrementTrainProgressPtr(tempElementPtr);  // Stop pointer minus 1 (will be a BX## element)
+      tempElementPtr = decrementTrainProgressPtr(tempElementPtr);  // Stop pointer minus 2 (will be a VL## element)
+      // Note that the tempElementPtr will almost always be a VL01 record EXCEPT if we're looking at the initial Registration route,
+      // in which case it would be VL00 (an irrelevant to anything.)  But we will never assign a Continuation route to an initial
+      // Registration route, so we can always assume that tempElementPtr will be VL01 (else it's a bug.)
+      // So let's just confirm tempElementPtr is pointing at a VL01 record, otherwise we have a major bug.
       if ((m_pTrainProgress[m_trainProgressLocoTableNum].route[tempElementPtr].routeRecType != VL) ||
         (m_pTrainProgress[m_trainProgressLocoTableNum].route[tempElementPtr].routeRecVal != 1)) {
         sprintf(lcdString, "T.P. ER ERR B"); pLCD2004->println(lcdString); endWithFlashingLED(5);
@@ -661,11 +663,11 @@ void Train_Progress::addRoute(const byte t_locoNum, const unsigned int t_routeRe
       // Okay we found the "old" Train Progress element with the VL01 that needs a higher speed (at tempElementPtr.)
       // We'll want to retrieve the default block speed for the block number that follows the old VL01 element.
       // Route rules guarantee that the old Train Progress route ends with VL01 + BXNN + SNXX + VL00.
-      // So just add 1 to the tempElementPtr and we'll be pointing at the block number
+      // So just add 1 to the tempElementPtr and we'll be pointing at the block number we need the speed of
       byte blockElementPtr = incrementTrainProgressPtr(tempElementPtr);
       // It had better be a BE or BW record -- let's confirm.
       if ((m_pTrainProgress[m_trainProgressLocoTableNum].route[blockElementPtr].routeRecType != BE) ||
-        (m_pTrainProgress[m_trainProgressLocoTableNum].route[blockElementPtr].routeRecVal != BW)) {
+          (m_pTrainProgress[m_trainProgressLocoTableNum].route[blockElementPtr].routeRecType != BW)) {
         sprintf(lcdString, "T.P. ER ERR C"); pLCD2004->println(lcdString); endWithFlashingLED(5);
       }
       // Yay.  We know the block number to look up, and the Train Progress VL element that needs an updated speed.
@@ -673,8 +675,7 @@ void Train_Progress::addRoute(const byte t_locoNum, const unsigned int t_routeRe
       byte blockDefaultSpeed = 0;
       if (m_pTrainProgress[m_trainProgressLocoTableNum].route[blockElementPtr].routeRecType == BE) {  // Eastbound speed
         blockDefaultSpeed = m_pBlockReservation->eastboundSpeed(blockNum);  // VL00..VL04, likely VL02..VL04
-      }
-      else if (m_pTrainProgress[m_trainProgressLocoTableNum].route[blockElementPtr].routeRecType == BW) {  // Westbound speed
+      } else if (m_pTrainProgress[m_trainProgressLocoTableNum].route[blockElementPtr].routeRecType == BW) {  // Westbound speed
         blockDefaultSpeed = m_pBlockReservation->westboundSpeed(blockNum);
       }
       else {  // Serious bug
@@ -689,11 +690,11 @@ void Train_Progress::addRoute(const byte t_locoNum, const unsigned int t_routeRe
   // ****************************************************************************************************************
   // *** OVERWRITE THE LAST ELEMENT OF THE OLD T.P. (VL00) WITH THE THIRD ELEMENT OF THE NEW ROUTE (FD00 or RD00) ***
   // ****************************************************************************************************************
-  // We're going to start adding records at headPtr - 1.
+  // We're going to start adding records at headPtr - 1 (which will ALWAYS be VL00.)
   tempElementPtr = decrementTrainProgressPtr(m_pTrainProgress[m_trainProgressLocoTableNum].headPtr);
   // Rather than make assumptions, let's just confirm that it's a VL00 record we want to overwrite...
   if ((m_pTrainProgress[m_trainProgressLocoTableNum].route[tempElementPtr].routeRecType != VL) ||
-    (m_pTrainProgress[m_trainProgressLocoTableNum].route[tempElementPtr].routeRecVal != 0)) {
+      (m_pTrainProgress[m_trainProgressLocoTableNum].route[tempElementPtr].routeRecVal != 0)) {
     sprintf(lcdString, "T.P. ER ERR 1"); pLCD2004->println(lcdString); endWithFlashingLED(5);
   }
   // Now take the THIRD element of the new Route (FD00 or RD00) and overwrite the Train Progress final VL00 element...
@@ -712,8 +713,8 @@ void Train_Progress::addRoute(const byte t_locoNum, const unsigned int t_routeRe
   // This could be part of the "for" loop below, but I'm going to be careful and confirm the next Route element is VL##.
   tempElement = m_pRoute->getElement(t_routeRecNum, 3);  // 3 = 4th element because zero offset; better be VL##!
   if ((tempElement.routeRecType != VL) ||
-    (tempElement.routeRecVal < LOCO_SPEED_STOP) ||
-    (tempElement.routeRecVal > LOCO_SPEED_HIGH)) {  // Yikes, fatal!
+      (tempElement.routeRecVal < LOCO_SPEED_STOP) ||
+      (tempElement.routeRecVal > LOCO_SPEED_HIGH)) {  // Yikes, fatal!
     sprintf(lcdString, "T.P. ER ERR 3"); pLCD2004->println(lcdString); endWithFlashingLED(5);
   }
   // Alrighty, we got the new Route's velocity element; add it to Train Progress at headPtr...
@@ -730,22 +731,23 @@ void Train_Progress::addRoute(const byte t_locoNum, const unsigned int t_routeRe
   // Now headPtr is once again pointing to the next available empty element in Train Progress.
 
   // ********************************************************************************************************************
-  // *** NOW BEGIN WRITING ELEMENTS AND INCREMENTING HEADPTR UNTIL WE'VE WRITTEN THE ENTIRE NEW ROUTE (OR OVERFLOWED) ***
+  // *** NOW BEGIN WRITING ELEMENTS AND INCREMENTING headPtr UNTIL WE'VE WRITTEN THE ENTIRE NEW ROUTE (OR OVERFLOWED) ***
   // ********************************************************************************************************************
   // Okay, *now* we can use a loop to transfer the rest of the Route elements into Train Progress...
   // Start retrieving Route elements from Route Reference at the 5th element and adding them Train Process for this train.
-  // Note that since the route elements are zero offset, routeElementNum 4 is the 5th element of the new route.
+  // Note that since the route elements are zero offset, the 5th element of the new route is routeElementNum 4.
   for (byte routeElementNum = 4; routeElementNum < FRAM_SEGMENTS_ROUTE_REF; routeElementNum++) {  // We'll stop at "ER00"
     tempElement = m_pRoute->getElement(t_routeRecNum, routeElementNum);
     // If we retrieve an ER end-of-route record, we're done retrieving route elements...
     if (tempElement.routeRecType == ER) break;
-    // We just grabbed a route element, and it's not the end of the route, so add it to Train Progress headPtr...
+    // We just grabbed a legit route element (it's not the end of the route,) so add it to Train Progress headPtr...
     m_pTrainProgress[m_trainProgressLocoTableNum].route[m_pTrainProgress[m_trainProgressLocoTableNum].headPtr] = tempElement;
     // Now increment headPtr...
     m_pTrainProgress[m_trainProgressLocoTableNum].headPtr =
       incrementTrainProgressPtr(m_pTrainProgress[m_trainProgressLocoTableNum].headPtr);
     checkIfTrainProgressFull(t_locoNum);  // And be sure Train Progress for this loco isn't full...
   }
+  // All of the elements of the new route have been concatenated onto the "old" route.
 
   // *******************************************************
   // *** NOW UPDATE ANY POINTERS THAT NEED TO BE UPDATED ***

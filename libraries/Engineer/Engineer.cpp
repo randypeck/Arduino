@@ -158,6 +158,10 @@ void Engineer::getDelayedActionCommand() {
         Serial.print("Engineer setting Train Progress speed to zero (stop immed or emerg stop) Loco: ");
           Serial.print(m_devNum); Serial.print(", Time: "); Serial.println(millis());
       }
+//      We're commenting these updates out because we don't want to update speed and time in Train Progress until the commands are
+//      actually sent to the Legacy Base.  Even though it will be almost instantaneous, it's not good enough.  For example, we had
+//      problems checking current loco speed in O_Roller_Speed.ino because Train Progress showed that a loco had reached a target
+//      speed even when it technically had not, and it caused problems.
 //      m_pTrainProgress->setSpeedAndTime(m_devNum, 0, millis());
 //      m_pTrainProgress->setStopped(m_devNum, true);
 //      m_pTrainProgress->setTimeStopped(m_devNum, millis());

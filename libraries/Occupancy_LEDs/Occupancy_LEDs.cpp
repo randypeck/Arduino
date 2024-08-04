@@ -2,6 +2,7 @@
 // Part of O_OCC.
 // This class is responsible for illumination of Control Panel WHITE OCCUPANCY SENSOR LEDs and BLUE/RED BLOCK OCCUPANCY LEDs.
 // Illumination depends on Mode and State.
+// RED = RESERVED, BLUE = OCCUPIED.
 // There is no support for blinking WHITE or RED/BLUE LEDs.
 // Note: Sensor Status stores how Control Panel LEDs should be lit, NOT the current status of each sensor.
 // Main modules (MAS, OCC, LEG) use the Sensor Block table to save and retrieve sensor status during Registration and Auto/Park.

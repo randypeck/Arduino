@@ -61,6 +61,9 @@ char Sensor_Block::getSensorStatus(const byte t_sensorNum) {
   // Rev: 01/25/23.
   // Returns field status = SENSOR_STATUS_TRIPPED or SENSOR_STATUS_CLEARED.
   // This reflects what is stored in the Sensor Block table, *not* necessarily the actual status of the sensor.
+  // For instance, in REGISTRATION mode, O_OCC will store the status of every sensor when it is first transmitted by O_OCC, and
+  // then use each sensor's status to identify which blocks are occupied -- rather than sending a message to O_SNS asking again the
+  // status of each sensor.  I suspect (as of 8/2/24) we will also use this in AUTO/PARK mode but not sure yet.
   if (t_sensorNum != m_sensorBlock.sensorNum) {
     Sensor_Block::getSensorBlock(t_sensorNum);
   }
