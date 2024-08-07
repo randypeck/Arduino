@@ -1,7 +1,8 @@
-// DELAYED_ACTION.H Rev: 06/30/24.  HEAP STORAGE.  TESTED AND WORKING with a few exceptions such as Accessory activation.
+// DELAYED_ACTION.H Rev: 08/05/24.  HEAP STORAGE.  TESTED AND WORKING with a few exceptions such as Accessory activation.
 // Part of O_LEG (Conductor and Engineer.)
 // Delayed Action table is used ONLY by LEG.  Populated by LEG Conductor and de-populated by LEG Engineer.
 // Uses about 10K on HEAP.
+// 08/05/24: Removed expected stop time field and functions as it's easily calculated via speedChangeTime() function.
 // 06/30/24: Added debug switch.
 // 02/15/23: populateLocoCommand() no longer needs to send devType as a parm.  Uses ptr to Loco Ref to just lookup.
 
@@ -153,8 +154,7 @@ class Delayed_Action {
     // t_targetSpeed SHOULD (not must) be one of this loco's "standard" speeds Crawl/Low/Med/High, 0..199, per Loco Ref.
     // The first speed command populated to Delayed Action by this function will be one t_speedStep more/less than our current
     // speed, as there is no point in sending a command to go the speed we're already moving at!
-    // When slowing Crawl, caller should add a delay so loco will ideally reach Crawl just at the moment it trips the Stop sensor,
-    // and it could also update "expectedStopTime" so we can compare it to the time we actually trip the Crawl sensor.
+    // When slowing Crawl, caller should add a delay so loco will ideally reach Crawl just at the moment it trips the Stop sensor.
 
     void populateLocoSlowToStop(const byte t_devNum);
     // Add new set of recs to Delayed Action to stop the loco from current speed (hopefully Crawl or nearly so) to Stop in 3 secs.

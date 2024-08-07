@@ -1,6 +1,9 @@
-// TRAIN_PROGRESS.H Rev: 04/08/24.  HEAP STORAGE.  Used by MAS, LEG, and OCC.  Not needed by SNS or LED.
+// TRAIN_PROGRESS.H Rev: 08/04/24.  HEAP STORAGE.  Used by MAS, LEG, and OCC.  Not needed by SNS or LED.
 // Part of O_MAS, O_OCC, and O_LEG.
 // Keeps track of the route and location of each train during Registration, Auto and Park modes.
+// 08/04/24: Added lastTrippedPtr to Train Progress.  LEG needs to keep track of where the loco is located and I can't think of a
+// way to check that using nextToClearPtr, nextToTripPtr, stopPtr, headPtr, etc.
+// 08/05/24: Removed expectedStopTime field and functions as not needed for anything.
 
 // The Train Progress table is used by MAS, LEG, and OCC during Registration, Auto and Park modes.
 //   Train Progress is cleared then populated (enqueued) with its inital parked position during Registration.
@@ -40,6 +43,9 @@
 //   The CONT, STN, CRAWL, and STOP pointers are always at the end of each route, even if there are stops to revers direction
 //     earlier in the route.  These pointers help us know when we can assign new Continuation and Extension routes, and also when
 //     to turn on the bell and make announcements etc. when coming to a station stop.
+//   LAST_TRIPPED_PTR points to the element the loco is currently sitting on (if stopped) or most recently tripped.  Initially set
+//     to the STOP/CLEAR/TRIP pointer values when a new train is Registered, then updated during Auto/Park each time
+//     locoThatTrippedSensor() is called.  Can also be updated via setLastTrippedPtr() and retrieved via lastTrippedPtr().
 
 // TERMINOLOGY: To differentiate when a train stops at it's destination re-starting, versus non-stop route extension:
 // * EXTENSION ROUTE when a train is stopped (incl. just following Registration), or is about to stop, and starts on a newly-
@@ -196,7 +202,7 @@
 //   timeStopped is updated by MAS/OCC/LEG Train Progress each time isStopped is set true.
 //   timeToStart is set to 99999999 by MAS/OCC/LEG Train Progress  when Registration begins (resetTrainProgress().)
 //   timeToStart is updated by MAS/OCC/LEG Train Progress each time an Extension Route is received.  This field is not relevant
-//             when setInitialRoute() is transmitted because there is nowhere to go, and not relevant when setContinuationRoute()
+//             when setInitialRoute() is transmitted because there is nowhere to go, and not relevant when addContinuationRoute()
 //             is transmitted because we will already be moving.
 //             The field can be used by OCC and LEG to make announcements, and of course by Conductor to start the train moving.
 //   currentSpeed LEG ONLY is set to 0, and currentSpeedTime is set to the current time millis() by MAS/OCC/LEG Train Progress when
@@ -206,12 +212,6 @@
 //             Conductor will always use this as our starting speed when calculating new accel/decel commands.  If the value is not
 //             an exact match for one of the loco's three speeds (L/M/H) then we have some sort of a problem, likely a "bug" in the
 //             Route Reference spreadsheet (not allowing enough time/distance to reach a subsequent speed.)
-//   expectedStopTime LEG ONLY is set to the current millis() by MAS/OCC/LEG Train Progress when Registration begins
-//             (resetTrainProgress().)
-//   expectedStopTime is NOT YET USED anywhere, and can't seemingly be set by anyone other than LEG Delayed Action when it calls
-//             populateSpeedChange(), by also calling speedChangeTime().  If we populate it each time we slow to Crawl, with the
-//             time we expect to trip the Stop sensor, we can use it to help debug deceleration parameters, maybe sending debug
-//             information to the serial display and/or mini thermal printer.
 //
 // NOTE: The following pointer fields are ELEMENT NUMBERS, NOT SENSOR NUMBERS.  Trivial array index lookup to get sensorNums.
 //
@@ -262,6 +262,10 @@
 //                might as well just record it each time a route is added, for easy lookup.
 // stopPtr        Points to the last sensor in a route, where we are stopping.  When tripped, Conductor can turn off bell and
 //                make an arrival horn toot.  LEG Conductor and OCC PA can send "train has arrived" announcements.
+// lastTrippedPtr Points to the element number of the sensor that was most recently tripped by a loco.  It helps LEG Auto/Park mode
+//                determine if it should start a stopped loco, such as when Auto/Park starts after Registration, or after a train
+//                has stopped and is then assigned an Extension route.  Automatically updated when train is Registered, and whenever
+//                locoThatTrippedSensor() is called.  Can also be updated by setLastTrippedPtr() and retrieved by lastTrippedPtr().
 
 #ifndef TRAIN_PROGRESS_H
 #define TRAIN_PROGRESS_H
@@ -301,15 +305,16 @@ class Train_Progress {
     // STATIC trains aren't part of Train Progress -- MAS will simply reserve the blocks that STATIC trains are occupying during
     // registration, and thus those blocks won't be available as part of routes being assigned to Train Progress.
 
-    void setExtensionRoute(const byte t_locoNum, const unsigned int t_routeRecNum, const unsigned long t_countdown);
+    void addExtensionRoute(const byte t_locoNum, const unsigned int t_routeRecNum, const unsigned long t_countdown);
     // Extension route begins with train stopped (in Auto or Park mode.)
     // t_countdown is ms to wait before starting train.
 
-    void setContinuationRoute(const byte t_locoNum, const unsigned int t_routeRecNum);
+    void addContinuationRoute(const byte t_locoNum, const unsigned int t_routeRecNum);
     // Continuation route means the train is moving and won't stop as it continues into this route (unless the new route begins
     // with a direction reverse, in which case it obviously must stop long enought to reverse.)
 
-    byte locoThatTrippedSensor(const byte t_sensorNum);  // Returns locoNum whose next-to-trip sensor was tripped.
+    byte locoThatTrippedSensor(const byte t_sensorNum);  // Returns locoNum whose next-to-trip sensor was tripped.  Also updates
+                                                         // lastTrippedPtr for the loco, using the sensor pointer number.
     byte locoThatClearedSensor(const byte t_sensorNum);  // Returns locoNum whose next-to-clear sensor was cleared.
 
     bool timeToStartLoco(const byte t_locoNum);  // Returns true if "timeToStart" > millis()
@@ -319,12 +324,11 @@ class Train_Progress {
     // *** PUBLIC GETTERS ***
     bool isActive(const byte t_locoNum);   // Not active means this loco is static or not on layout.
     bool isParked(const byte t_locoNum);   // MAS only
-    bool isStopped(const byte t_locoNum);  // Stopped at end of a route; not necessarily in a 'P'arking siding.
-    unsigned long timeStopped(const byte t_locoNum);
+    bool isStopped(const byte t_locoNum);  // LEG only.  Kept up-to-date by Engineer.  Does not imply stopped at end of a route.
+    unsigned long timeStopped(const byte t_locoNum);       // LEG only.  Kept up-to-date by Engineer.
     unsigned long timeToStart(const byte t_locoNum);
-    byte currentSpeed(const byte t_locoNum);  // 0..199.  LEG only.
-    unsigned long currentSpeedTime(const byte t_locoNum);  // LEG only.
-    unsigned long expectedStopTime(const byte t_locoNum);  // LEG ONLY time we expect to trip Crawl sensor when slowing.
+    byte currentSpeed(const byte t_locoNum);               // LEG only.  Kept up-to-date by Engineer.  0.199.
+    unsigned long currentSpeedTime(const byte t_locoNum);  // LEG only.  Kept up-to-date by Engineer.
 
     // *** PUBLIC SETTERS ***
     void setActive(const byte t_locoNum, const bool t_active);    // True if Active
@@ -333,7 +337,6 @@ class Train_Progress {
     void setTimeStopped(const byte t_locoNum, unsigned long t_timeStopped);
     void setTimeToStart(const byte t_locoNum, unsigned long t_timeToStart);
     void setSpeedAndTime(const byte t_locoNum, const byte t_locoSpeed, const unsigned long t_locoTime);
-    void setExpectedStopTime(const byte t_locoNum, unsigned long t_expectedStopTime);
 
     bool blockOccursAgainInRoute(const byte t_locoNum, const byte t_blockNum, const byte t_elementNum);
     // Does a given block occur (again) further ahead in this route (regardless of direction)?
@@ -346,7 +349,7 @@ class Train_Progress {
     // So we can release reservation if possible.
     // Requires t_elementNum so it knows where in Train Progress to start looking.
 
-// FUNCTIONS CALLED BY Occupancy_LEDs.h/.cpp.  Prettys sloppy encapsulation, should be private, but for now we'll go with it...
+// FUNCTIONS CALLED BY Occupancy_LEDs and maybe LEG Auto/Park.  Sloppy encapsulation, should be private, but okay for now...
 
     // Increment/Decrement Pointer functions return the next/prev rec num 0..139; they don't update the passed value.
     byte incrementTrainProgressPtr(const byte t_oldPtrVal);  // Just add 1, but use MODULO to wrap from end to 0.
@@ -355,6 +358,7 @@ class Train_Progress {
     byte nextToTripPtr(const byte t_locoNum);          // Returns element number that holds NextToTrip sensor.
     byte nextToClearPtr(const byte t_locoNum);         // Returns element number that holds NextToClear sensor.
     byte stopPtr(const byte t_locoNum);                // Returns element number that holds last sensor in route.
+    byte lastTrippedPtr(const byte t_locoNum);         // Returns element number that holds the sensor most recently tripped.
 
     byte tailPtr(const byte t_locoNum);                // Returns element number that holds Tail sensor.
     routeElement peek(const byte t_locoNum, const byte t_elementNum);  // Return contents of T.P. element for this loco.
@@ -363,10 +367,11 @@ class Train_Progress {
     // when we add route extensions if we need to change a VL01 to the block standard speed (which requires poke().)  Also when
     // traversing elements due to sensor trips and clears, to execute those commands and find new sensors.
 
-    bool atEndOfRoute(const byte t_locoNum);  // True if the train has reached the end of the route and should be stopped.
+    bool atEndOfRoute(const byte t_locoNum);  // True if lastTrippedPtr == stopPtr.
     void setNextToTripPtr(const byte t_locoNum, const byte t_nextToTripPtr);
     void setNextToClearPtr(const byte t_locoNum, const byte t_nextToClearPtr);
     void setTailPtr(const byte t_locoNum, const byte t_tailPtr);
+    void setLastTrippedPtr(const byte t_locoNum, const byte t_lastTrippedPtr);
 
 private:
 
@@ -393,7 +398,6 @@ private:
       unsigned long timeToStart;
       byte          currentSpeed;    // 0..199 (Legacy) or 0..31 (TMCC.)
       unsigned long currentSpeedTime;
-      unsigned long expectedStopTime;
       // Note: The following pointers are ELEMENT NUMBERS in Train Progress; i.e. 0..(HEAP_RECS_TRAIN_PROGRESS - 1).
       byte          headPtr;
       byte          nextToTripPtr;
@@ -403,6 +407,7 @@ private:
       byte          stationPtr;      // 3rd-from-last sensor.  Cont'n route may not be assigned once this sensor is tripped.
       byte          crawlPtr;        // Penultimate sensor must always slow to Crawl, turn on loco's bell, etc.
       byte          stopPtr;         // Last sensor in route, must always stop immediately when tripped.
+      byte          lastTrippedPtr;  // Element of sensor that loco is sitting on, if stopped, or most recently tripped, if moving.
       routeElement  route[HEAP_RECS_TRAIN_PROGRESS];  // 0..(HEAP_RECS_TRAIN_PROGRESS - 1) = 0..139.  I.e. BW03, TN23, VL00.
     };
 

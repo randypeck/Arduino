@@ -157,8 +157,7 @@ void Delayed_Action::populateLocoSpeedChange(const unsigned long t_startTime, co
   // Delayed Action table, both populateLocoSpeedChange() and populateLocoSlowToStop() will automatically do two things:
   // 1. Get the loco's current speed via m_pTrainProgress->currentSpeed() to use as the starting speed; and
   // 2. Call Delayed_Action::wipeLocoSpeedCommands() to ensure there are no residual speed commands in Delayed Action.
-  // When slowing Crawl, caller should add a delay so loco will ideally reach Crawl just at the moment it trips the Stop sensor,
-  // and we could also update "expectedStopTime" so we can compare it to the time we actually trip the Crawl sensor.
+  // When slowing Crawl, caller should add a delay so loco will ideally reach Crawl just at the moment it trips the Stop sensor.
 
   // First, let's get our current speed, which we'll use as our starting speed...
   byte t_startSpeed = m_pTrainProgress->currentSpeed(t_devNum);

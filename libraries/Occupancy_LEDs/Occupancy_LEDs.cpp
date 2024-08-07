@@ -118,13 +118,18 @@ void Occupancy_LEDs::paintOneBlockOccupancyLED(const byte t_blockNum) {
 }
 
 void Occupancy_LEDs::paintAllBlockOccupancyLEDs() {
-  // Rev: 07/30/24.  FINISHED BUT NOT YET TESTED.  THIS WILL BE DIFFICULT TO TEST UNTIL I AM ABLE TO POPULATE THE TRAIN PROGRESS TABLE WITH SOME GOOD DATA **********
-  // Works for AUTO/PARK RUNNING (and STOPPING) modes only, as it relies on an accurate Train Progress table.
-  // Scan Train Progress and illuminate all RED "reserved" and BLUE "occupied" LEDs.  We will ONLY call this function when we
-  // first start Auto or Park mode (Park, because we can't guarantee that we will run Auto mode before starting Park mode) AND
-  // whenever an Extension or Continuation route is added AND whenever a Sensor state-change message is received when Auto/Park is
-  // Running/Stopping.  This is the only time that we'll want to paint the entire control panel blue/red LEDs.  So we won't even
-  // bother checking mode and state here.
+  // Rev: 08/05/24.  FINISHED BUT NOT YET TESTED.  THIS WILL BE DIFFICULT TO TEST UNTIL I AM ABLE TO POPULATE THE TRAIN PROGRESS TABLE WITH SOME GOOD DATA **********
+  // IMPORTANT: We should probably modify this to accept a locoNum parm, and only re-paint for a given Train Progress record.  But
+  //            that would not be trivial, since we re-initialize every Block LED value at the beginning of this function.  So only
+  //            worry about this if performance becomes an issue (and since this is OCC's only job, that seems unlikely, but we will
+  //            have to see if it results in flashing LEDs when it's refreshed or other annoying behavior.
+  // Works for OCC AUTO/PARK (Running and Stopping) modes only, as it relies on an accurate Train Progress table.
+  // Scan the ENTIRE Train Progress table, for all locos, and illuminate all RED "reserved" and BLUE "occupied" LEDs.
+  // We will call this function in Auto/Park mode:
+  //   1. When we first start Auto/Park
+  //   2. Whenever an Extension or Continuation route is added in Auto/Park
+  //   3. Whenever a Sensor state-change message (Tripped or Cleared) is received in Auto/Park
+  // Since we'll only want to paint the entire control panel blue/red LEDs in Auto/Park mode, don't bother checking mode/state.
   // Always be sure the Train Progress "next to trip" pointer has been updated BEFORE calling this function to paint the LEDs.
 
   // Although Train Progress will include all "real" locos that have Reserved or Occupied blocks, it does NOT include STATIC
@@ -141,13 +146,12 @@ void Occupancy_LEDs::paintAllBlockOccupancyLEDs() {
   // Then, for each element, we compare it to the old value m_oldBlockStatus[] and *if they are different* write to the LED.
   // This is because digitalWrite() is really slow, so we keep a second parallel array so we only write when something changes.
 
-  // Eventually we might refine this so we don't have to do the entire process every time this function is called.  After all,
-  // we'll only call here to paint every Block LED each time a sensor changes (except for when Auto/Park mode starts.)  So we can
-  // probably get away with ONLY updating the blocks that are part of this particular train's Train Progress route -- not every
-  // single train.  However, maybe not a big deal as this function will ONLY be called when Running/Stopping in Auto/Park mode, and
-  // ONLY when a sensor status changes (and when starting modes) -- not every time through the main loop of the calling program.
+  // Eventually we might refine this so we don't have to do the entire process every time this function is called.  We'll call here
+  // to paint every Block LED each time a sensor changes, each time Auto/Park mode starts, and each time a new Route is added in
+  // Auto/Park mode.  Maybe we can get away with ONLY updating blocks that are part of this particular train's Train Progress
+  // route -- not every single train.
   // But if this performance is ever an issue, I *think* this will work just fine if we limit ourselves to the loco that tripped
-  // or cleared the sensor that caused us to be called.  So we could easily also pass the locoNum that tripped or cleared the
+  // or cleared the sensor or got the new Route assigned.  So we could easily also pass the locoNum that tripped or cleared the
   // sensor, and *only* process blocks that are part of that route.  Not sure what impact that would have on m_oldBlockStatus[],
   // because what happens if we clear a sensor and have already moved Tail forward and have an orphan block that we won't see in
   // the route anymore?  If we did pass a t_locoNum parm, then when we first start Auto and Park modes, we could set up a loop for

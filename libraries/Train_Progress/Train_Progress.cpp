@@ -1,4 +1,4 @@
-// TRAIN_PROGRESS.CPP Rev: 08/03/24.  SOME UTILITY FUNCTIONS WORKING SO FAR BUT NOT TESTED ****************************************************************************************
+// TRAIN_PROGRESS.CPP Rev: 08/07/24.  SOME UTILITY FUNCTIONS WORKING SO FAR BUT NOT TESTED ****************************************************************************************
 // Part of O_MAS, O_OCC, and O_LEG.
 // IMPORTANT: This class expects t_locoNum to always be passed and returned 1..50, but corresponding Train Progress class array
 // elements are internally stored in array elements 0..49.
@@ -69,7 +69,6 @@ void Train_Progress::resetTrainProgress(const byte t_locoNum) {
   m_pTrainProgress[m_trainProgressLocoTableNum].timeToStart = 99999999;  // Don't start until someone tells us to.
   m_pTrainProgress[m_trainProgressLocoTableNum].currentSpeed = 0;
   m_pTrainProgress[m_trainProgressLocoTableNum].currentSpeedTime = millis();
-  m_pTrainProgress[m_trainProgressLocoTableNum].expectedStopTime = millis();
   // The following eight "Pointer" fields are ELEMENT NUMBERS that point to the route element of interest.
   m_pTrainProgress[m_trainProgressLocoTableNum].headPtr = 0;
   m_pTrainProgress[m_trainProgressLocoTableNum].nextToTripPtr = 0;
@@ -79,6 +78,7 @@ void Train_Progress::resetTrainProgress(const byte t_locoNum) {
   m_pTrainProgress[m_trainProgressLocoTableNum].stationPtr = 0;
   m_pTrainProgress[m_trainProgressLocoTableNum].crawlPtr = 0;
   m_pTrainProgress[m_trainProgressLocoTableNum].stopPtr = 0;
+  m_pTrainProgress[m_trainProgressLocoTableNum].lastTrippedPtr = 0;
   for (byte routeElement = 0; routeElement < HEAP_RECS_TRAIN_PROGRESS; routeElement++) {  // 0..139 if max 140 route elements.xxxxx
       m_pTrainProgress[m_trainProgressLocoTableNum].route[routeElement].routeRecType = ER;
       m_pTrainProgress[m_trainProgressLocoTableNum].route[routeElement].routeRecVal = 0;
@@ -87,8 +87,9 @@ void Train_Progress::resetTrainProgress(const byte t_locoNum) {
 }
 
 void Train_Progress::setInitialRoute(const byte t_locoNum, const routeElement t_block) {
-  // Rev: 03/04/24.  COMPLETE BUT NOT TESTED.
+  // Rev: 08/04/24.  COMPLETE BUT NOT TESTED.
   // REGISTRATION MODE ONLY.
+  // 08/04/24: Added support for lastTrippedPtr.
   // 03/23/23: Eliminated sensorNum as parm since we can infer it by block route element i.e. BE03 -> Sensor 6.
   // (Only) during Registration, setInitialRoute() sets up a new Train Progress record as each real train (not STATIC) is learned.
   // Sets up an initial set of Train Progress route elements reflecting the location and direction of the newly-registered train,
@@ -130,7 +131,6 @@ void Train_Progress::setInitialRoute(const byte t_locoNum, const routeElement t_
   m_pTrainProgress[m_trainProgressLocoTableNum].timeToStart = 99999999;  // Don't start until someone tells us to.
   m_pTrainProgress[m_trainProgressLocoTableNum].currentSpeed = 0;
   m_pTrainProgress[m_trainProgressLocoTableNum].currentSpeedTime = millis();
-  m_pTrainProgress[m_trainProgressLocoTableNum].expectedStopTime = millis();
   // The following eight "Pointer" fields are ELEMENT NUMBERS that point to the route element of interest.  Because of our rigid
   // rules about the initial Train Progress state, we're safe to just hard-code the initial pointer values here.
   m_pTrainProgress[m_trainProgressLocoTableNum].headPtr = 7;
@@ -141,6 +141,7 @@ void Train_Progress::setInitialRoute(const byte t_locoNum, const routeElement t_
   m_pTrainProgress[m_trainProgressLocoTableNum].stationPtr = 2;
   m_pTrainProgress[m_trainProgressLocoTableNum].crawlPtr = 2;
   m_pTrainProgress[m_trainProgressLocoTableNum].stopPtr = 5;
+  m_pTrainProgress[m_trainProgressLocoTableNum].lastTrippedPtr = 5;
 
   // Element 0 VL00 must always be a Velocity zero command.
   m_pTrainProgress[m_trainProgressLocoTableNum].route[0].routeRecType = VL;  // Velocity zero
@@ -170,7 +171,7 @@ void Train_Progress::setInitialRoute(const byte t_locoNum, const routeElement t_
   return;
 }
 
-void Train_Progress::setExtensionRoute(const byte t_locoNum, const unsigned int t_routeRecNum, const unsigned long t_countdown) {
+void Train_Progress::addExtensionRoute(const byte t_locoNum, const unsigned int t_routeRecNum, const unsigned long t_countdown) {
   // Rev: 08/03/24.
   // Append an Extension route (TRAIN WILL BE STOPPED.)
   // Extension route begins with train stopped (in Auto or Park mode.)
@@ -180,7 +181,7 @@ void Train_Progress::setExtensionRoute(const byte t_locoNum, const unsigned int 
   return;
 }
 
-void Train_Progress::setContinuationRoute(const byte t_locoNum, const unsigned int t_routeRecNum) {
+void Train_Progress::addContinuationRoute(const byte t_locoNum, const unsigned int t_routeRecNum) {
   // Rev: 08/03/24.
   // Append a Continuation route (TRAIN WILL BE MOVING AND KEEPS MOVING.)
   // NOTE: If we add a Continuation route where the prior route ended with the loco reversing into a siding such as BW02 and then
@@ -193,7 +194,8 @@ void Train_Progress::setContinuationRoute(const byte t_locoNum, const unsigned i
 }
 
 byte Train_Progress::locoThatTrippedSensor(const byte t_sensorNum) {
-  // Rev: 08/03/24.  SEEMS GOOD BUT WOW DOES IT NEED TO BE TESTED!
+  // Rev: 08/04/24.  SEEMS GOOD BUT WOW DOES IT NEED TO BE TESTED!
+  // 08/04/24: When called, updates lastTrippedPtr for the loco that tripped sensorNum.
   // Especially with a route where a sensor occurs more than once, though I think this will work fine.
   // Returns locoNum whose next-to-trip sensor was tripped, else fatal error.
   // A sensor may occur more than once in a train's route (such as if we reverse), but in this case we only need to know locoNum.
@@ -212,9 +214,12 @@ byte Train_Progress::locoThatTrippedSensor(const byte t_sensorNum) {
     byte locoNum = m_trainProgressLocoTableNum + 1;
     // Skip this T.P. record if it's not Active
     if (isActive(locoNum)) {
-      byte elementNum = m_pTrainProgress[m_trainProgressLocoTableNum].nextToTripPtr;  // Train's T.P. element num we want to examine
+      // nextToTripPtr only gives us an element number, not the sensor number so we have to retrieve that for comparison.
+      byte elementNum = m_pTrainProgress[m_trainProgressLocoTableNum].nextToTripPtr;  // Loco's T.P. element num we want to examine
+      // Although elementNum should ALWAYS contain a routeRecType of SN (sensor), we'll confirm and also check if sensorNum match.
       if ((m_pTrainProgress[m_trainProgressLocoTableNum].route[elementNum].routeRecType == SN) &&
           (m_pTrainProgress[m_trainProgressLocoTableNum].route[elementNum].routeRecVal == t_sensorNum)) {
+        Train_Progress::setLastTrippedPtr(locoNum, elementNum);  // IMPORTANT: Set this to element num, NOT sensor num.
         return (locoNum);
       }
     }
@@ -280,7 +285,6 @@ void Train_Progress::display(const byte t_locoNum) {
   Serial.print(F("Time Starting     : ")); Serial.println(m_pTrainProgress[m_trainProgressLocoTableNum].timeToStart);
   Serial.print(F("Current Speed     : ")); Serial.println(m_pTrainProgress[m_trainProgressLocoTableNum].currentSpeed);
   Serial.print(F("Current Speed Time: ")); Serial.println(m_pTrainProgress[m_trainProgressLocoTableNum].currentSpeedTime);
-  Serial.print(F("Expected Stop Time: ")); Serial.println(m_pTrainProgress[m_trainProgressLocoTableNum].expectedStopTime);
   // The following eight "Pointer" fields are ELEMENT NUMBERS that point to the route element of interest.
   Serial.print(F("Head              : ")); Serial.println(m_pTrainProgress[m_trainProgressLocoTableNum].headPtr);
   Serial.print(F("Next To Trip      : ")); Serial.println(m_pTrainProgress[m_trainProgressLocoTableNum].nextToTripPtr);
@@ -290,6 +294,7 @@ void Train_Progress::display(const byte t_locoNum) {
   Serial.print(F("Station           : ")); Serial.println(m_pTrainProgress[m_trainProgressLocoTableNum].stationPtr);
   Serial.print(F("Crawl             : ")); Serial.println(m_pTrainProgress[m_trainProgressLocoTableNum].crawlPtr);
   Serial.print(F("Stop              : ")); Serial.println(m_pTrainProgress[m_trainProgressLocoTableNum].stopPtr);
+  Serial.print(F("Last Tripped      : ")); Serial.println(m_pTrainProgress[m_trainProgressLocoTableNum].lastTrippedPtr);
   for (byte routeElement = m_pTrainProgress[m_trainProgressLocoTableNum].tailPtr;
     routeElement != m_pTrainProgress[m_trainProgressLocoTableNum].headPtr;
     routeElement = (routeElement + 1) % HEAP_RECS_TRAIN_PROGRESS) {
@@ -362,13 +367,6 @@ unsigned long Train_Progress::currentSpeedTime(const byte t_locoNum) {
   return m_pTrainProgress[m_trainProgressLocoTableNum].currentSpeedTime;
 }
 
-unsigned long Train_Progress::expectedStopTime(const byte t_locoNum) {
-  // Rev: 03/04/23.  DONE BUT NOT TESTED.
-  // LEG ONLY time we expect to trip Crawl sensor when slowing.
-  m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
-  return m_pTrainProgress[m_trainProgressLocoTableNum].expectedStopTime;
-}
-
 // *** PUBLIC SETTERS ***
 
 void Train_Progress::setActive(const byte t_locoNum, const bool t_active) {
@@ -425,19 +423,6 @@ void Train_Progress::setSpeedAndTime(const byte t_locoNum, const byte t_locoSpee
   m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
   m_pTrainProgress[m_trainProgressLocoTableNum].currentSpeed = t_locoSpeed;
   m_pTrainProgress[m_trainProgressLocoTableNum].currentSpeedTime = t_locoTime;
-  return;
-}
-
-void Train_Progress::setExpectedStopTime(const byte t_locoNum, const unsigned long t_expectedStopTime) {
-  // Rev: 03/04/23.  DONE BUT NOT TESTED.
-  // t_locoNum must be 1..50, not 0..49.
-  // Intended to be populated by LEG Conductor when sending "slow to a crawl" command to Delayed Action, so we'll be able to
-  // compare the loco's expected time it will trip the Crawl sensor (easily calculated via Delayed_Action::speedChangeTime().)
-  if (outOfRangeLocoNum(t_locoNum)) {
-    sprintf(lcdString, "T.P. LOCONUM ERR 5"); pLCD2004->println(lcdString); endWithFlashingLED(5);
-  }
-  m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
-  m_pTrainProgress[m_trainProgressLocoTableNum].expectedStopTime = t_expectedStopTime;
   return;
 }
 
@@ -531,6 +516,13 @@ byte Train_Progress::stopPtr(const byte t_locoNum) {
   return m_pTrainProgress[m_trainProgressLocoTableNum].stopPtr;
 }
 
+byte Train_Progress::lastTrippedPtr(const byte t_locoNum) {
+  // Rev: 08/04/24.
+  // Returns element number that holds the sensor most recently tripped.  Needed by LEG.
+  m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
+  return m_pTrainProgress[m_trainProgressLocoTableNum].lastTrippedPtr;
+}
+
 routeElement Train_Progress::peek(const byte t_locoNum, const byte t_elementNum) {
   // Rev: 03/05/23.  FINISHED BUT NOT TESTED ***********************************************************************************************
   // Return contents of T.P. element for this loco.  t_locoNum should be 1..TOTAL_TRAINS (not zero offset.)
@@ -542,10 +534,10 @@ routeElement Train_Progress::peek(const byte t_locoNum, const byte t_elementNum)
 }
 
 bool Train_Progress::atEndOfRoute(const byte t_locoNum) {  // True if the train has reached the end of the route.
-  // Rev: 04/11/24.
-  // Easiest way to determine if we have reached the end of our route is to check if Next-To-Trip pointer == Stop pointer.
+  // Rev: 08/05/24.
+  // Easiest way to determine if we have reached the end of our route is to check if lastTrippedPtr == stopPtr.
   m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
-  return (m_pTrainProgress[m_trainProgressLocoTableNum].nextToTripPtr == m_pTrainProgress[m_trainProgressLocoTableNum].stopPtr);
+  return (m_pTrainProgress[m_trainProgressLocoTableNum].lastTrippedPtr == m_pTrainProgress[m_trainProgressLocoTableNum].stopPtr);
 }
 
 byte Train_Progress::incrementTrainProgressPtr(const byte t_oldPtrVal) {
@@ -590,55 +582,82 @@ void Train_Progress::setTailPtr(const byte t_locoNum, const byte t_tailPtr) {
   return;
 }
 
+void Train_Progress::setLastTrippedPtr(const byte t_locoNum, const byte t_lastTrippedPtr) {
+  // Rev: 08/04/24.  Used by LEG, though also updated each time locoThatTrippedSensor() is called.
+  // t_locoNum must be 1..50.  lastTrippedPtr is an element number in this loco's Train Progress record.
+  if (outOfRangeLocoNum(t_locoNum)) {
+    sprintf(lcdString, "T.P. LOCONUM ERR 9"); pLCD2004->println(lcdString); endWithFlashingLED(5);
+  }
+  m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
+  m_pTrainProgress[m_trainProgressLocoTableNum].lastTrippedPtr = t_lastTrippedPtr;
+  return;
+
+}
+
+
 // ***** PRIVATE FUNCTIONS ***
 
 void Train_Progress::addRoute(const byte t_locoNum, const unsigned int t_routeRecNum, const char t_continuationOrExtension,
   const unsigned long t_countdown) {
-  // Rev: 08/03/24.  READY FOR TESTING.
-  // PRIVATE FUNCTION called by public functions setExtensionRoute() and setContinuationRoute().
+  // Rev: 08/07/24.  READY FOR TESTING -- I feel very good about this.
+  // *** Be sure to call pTrainProgress->display(locoNum) before and after adding a route, with every combination of Extension and
+  // *** Continuation, with the new route starting in Forward and Reverse. ******************************************************************************
+  // 08/07/24: New logic to handle Continuation route that starts in Reverse -- loco must stop before beginning new Route.
+  // PRIVATE FUNCTION called by public functions addExtensionRoute() and addContinuationRoute().
   // Append either an Extension or Continuation route.  Logic is combined since they are so similar.
-  // Append an Extension route WHEN TRAIN HAS BEEN STOPPED.
-  // Append a Continuation route WHEN TRAIN IS MOVING AND KEEPS MOVING.
+  // Append an EXTENSION route WHEN TRAIN HAS BEEN STOPPED.
+  // Append a CONTINUATION route WHEN TRAIN IS MOVING AND KEEPS MOVING (except if it needs to stop before reversing, of course.)
   // t_continuationOrExtension from globals can be either ROUTE_TYPE_EXTENSION = 'E' or ROUTE_TYPE_CONTINUATION = 'C'.
-  // t_countdown is ms to wait before starting train (only possibly > 0 for an Extension route.)
-
-  // Adding a CONTINUATION route (train is moving) is the same as adding an EXTENSION (train is stopped) route, EXCEPT:
-  //   1. POINTERS:
-  //      Continuation route won't need to update nextToTripPtr because our moving train hasn't tripped it yet.
-  //      Extension route needs to update nextToTripPtr because it's been sitting stopped and there was no route element ahead that
-  //      the nextToTripPtr could have been advanced to; only after we add the new route elements can we advance that pointer.
-  //      In BOTH CASES:
-  //        tailPtr and nextToClearPtr can be left as-is in both cases.
-  //        headPtr will be updated to the front of the new route in both cases.
-  //        contPtr, stationPtr, crawlPtr, and stopPtr will be updated identically in both cases.
-  //   2. OVERWRITE FINAL CRAWL COMMAND:
-  //      With Continuation, IFF THE TRAIN WILL NOT BE STOPPING TO CHANGE DIRECTION, replace the final VL01 of the previous route
-  //      with the default speed of the previous block from the Block Res'n table.  I.e. we don't want to slow to a Crawl if we are
-  //      not going to stop!  Since all routes must end with the loco moving Forward, all we need to check is if the new route
-  //      begins with RD00 rather than FD00 to decide if we should replace the final VL01 with a higher speed or not.
-
+  // t_countdown is ms to wait before starting train (only possibly > 0 for an Extension route.)  pTrainProgress->timeToStart().
+  //   This isn't writing to Delayed Action, but will be used when Delayed Action records are populated for this new route.
   // WE'RE GUARANTEED THE FOLLOWING:
   //   The first four Route Reference records are always         BX## + SN## + FD/RD## + VL##.
   //   The last  four Train Progress  records are always  VL## + BX## + SN## + VL00.
   //   (And if this is an Extension (stopped), then we're sitting on the nextToClear/nextToTrip/stop sensor.)
-  //   The BX## and SN## records will match up with the end of the previous route, so no need to overwrite them.
+  //   The new BX## and SN## records will match up with the end of the previous route, so no need to overwrite them.
+
+  // Differences when adding an EXTENSION (train is stopped) versus a CONTINUATION route (train is moving):
+  //   1. POINTERS:
+  //      EXTENSION (stopped) route needs to update nextToTripPtr because it's been sitting stopped and there was no route element
+  //      ahead that it could have been advanced to; we can only advance nextToTrip after we add the new route elements.
+  //      CONTINUATION (moving) route won't need to update nextToTripPtr because our moving train hasn't tripped it yet.
+  //      In BOTH CASES:
+  //        tailPtr and nextToClearPtr should remain unchanged in both cases.
+  //        headPtr will be updated to the front of the new route in both cases.
+  //        contPtr, stationPtr, crawlPtr, and stopPtr will be updated identically in both cases.
+  //   2. SPEED COMMANDS AT END OF OLD ROUTE / BEGINNING OF NEW ROUTE:
+  //      EXTENSION (stopped) routes, where the NEW route starts in FORWARD:
+  //        Overlay by placing the new route's 3rd element (FD or RD) at (headPtr - 1), which will be the last element of the old
+  //        route, which will always be VL00.  The train is already stopped (that final VL00 has already been executed,) and the
+  //        first two elements of the new route (BX## + SN##) are always identical to the old route's 3rd & 4th from last elements.
+  //      EXTENSION (stopped) routes, where the NEW route starts in REVERSE:
+  //        Exact same logic as above (EXTENSION route that ended in Forward) because the loco is stopped.
+  //      CONTINUATION (moving) routes, where the NEW route starts in FORWARD:
+  //        Exact same logic as EXTENSION routes (FORWARD or REVERSE), except we'll ALSO need to overwrite the old
+  //        route's 4th-from-last VL01 element with the Block Res'n default block speed, in order to keep moving at reasonable
+  //        speed rather than slowing to Crawl at the end of the old route (the new Route should start at VL02=Low or faster.)
+  //      CONTINUATION (moving) routes, where the NEW route starts in REVERSE:
+  //        Exact same logic as EXTENSION routes (including leaving the penultimate VL01 element intact,) except we must RETAIN the
+  //        VL00 element at the end of the old route, just before the new Route's inital RD00 element.
+  //        The loco will be at a Crawl as it nears the end of the previous route, but the above logic overwrites the final VL00
+  //        "Stop" element.  And since we're reversing direction (routes always end moving forward,) we need to stop first.
+  //        The easiest way to do this is to overwrite starting with the new route's 3rd element, placed at headPtr.  This will
+  //        leave the old route's final VL00 in place -- and the elements before that (BX## + SN##) are duplicated.
 
   // Since we know this loco will be continuing on either immediately or after some delay, we can set some of it's Train Progress
   // parameters right off the bat:
   m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
   m_pTrainProgress[m_trainProgressLocoTableNum].isParked = false;   // If we'll be moving again, we aren't parked!
-  m_pTrainProgress[m_trainProgressLocoTableNum].isStopped = false;  // Ditto
+  m_pTrainProgress[m_trainProgressLocoTableNum].isStopped = false;  // Ditto; we're no longer at the end of a route (if we were.)
   m_pTrainProgress[m_trainProgressLocoTableNum].timeToStart = millis() + t_countdown;  // Could be zero or some delay in ms
-  routeElement tempElement;  // Used in various operations below as a scratch element i.e. BE01
+  routeElement tempElement;  // Used in various operations below as a scratch element routeRecType, routeRecVal i.e. BE01
   byte tempElementPtr = 0;   // Used in various operations below as a scratch pointer
 
-  // ************************************************************************************************************************
-  // *** IF THIS IS A CONTINUATION ROUTE, POSSIBLY OVERWRITE OLD ROUTE'S FINAL CRAWL SPEED WITH THE BLOCK'S DEFAULT SPEED ***
-  // ************************************************************************************************************************
-  // First things first, IFF this is a Continuation (not stopping) addition, then we need to consider if we must overwrite the
-  // VL01 Crawl command at headPtr - 4 with the default speed of that block.  If the new route begins in Reverse, then we'll need
-  // to stop regardless (much as if this were an Extension (stopping) route.)  But if the Continuation begins in Forward, then we
-  // won't want to slow down to VL01 before tripping the soon-to-be-updated Stop sensor, and need to overwrite that Crawl record.
+  // **********************************************************************************************************************
+  // *** IF THIS IS A CONTINUATION THAT CONTINUES FORWARD, OVERWRITE OLD ROUTE'S FINAL CRAWL WITH BLOCK'S DEFAULT SPEED ***
+  // **********************************************************************************************************************
+  // If this is a CONTINUATION (not stopping) route that will continue FORWARD (not starting in reverse), then we need to overwrite
+  // the VL01 Crawl command at headPtr - 4 with the default speed of that block.
   if (t_continuationOrExtension == ROUTE_TYPE_CONTINUATION) {
     // Take the THIRD element of the new Route, which must always be either FD00 or RD00, and see which it is.
     tempElement = m_pRoute->getElement(t_routeRecNum, 2);  // Third element (zero offset) of new route better be FD or RD!
@@ -652,8 +671,8 @@ void Train_Progress::addRoute(const byte t_locoNum, const unsigned int t_routeRe
       tempElementPtr = m_pTrainProgress[m_trainProgressLocoTableNum].stopPtr;  // Set our temp pointer to the Stop pointer
       tempElementPtr = decrementTrainProgressPtr(tempElementPtr);  // Stop pointer minus 1 (will be a BX## element)
       tempElementPtr = decrementTrainProgressPtr(tempElementPtr);  // Stop pointer minus 2 (will be a VL## element)
-      // Note that the tempElementPtr will almost always be a VL01 record EXCEPT if we're looking at the initial Registration route,
-      // in which case it would be VL00 (an irrelevant to anything.)  But we will never assign a Continuation route to an initial
+      // Note that the tempElementPtr will always be a VL01 record EXCEPT if we're looking at the initial Registration route, in
+      // which case it would be VL00 (and irrelevant to anything.)  But we will never assign a Continuation route to an initial
       // Registration route, so we can always assume that tempElementPtr will be VL01 (else it's a bug.)
       // So let's just confirm tempElementPtr is pointing at a VL01 record, otherwise we have a major bug.
       if ((m_pTrainProgress[m_trainProgressLocoTableNum].route[tempElementPtr].routeRecType != VL) ||
@@ -674,69 +693,57 @@ void Train_Progress::addRoute(const byte t_locoNum, const unsigned int t_routeRe
       byte blockNum = m_pTrainProgress[m_trainProgressLocoTableNum].route[blockElementPtr].routeRecVal;
       byte blockDefaultSpeed = 0;
       if (m_pTrainProgress[m_trainProgressLocoTableNum].route[blockElementPtr].routeRecType == BE) {  // Eastbound speed
-        blockDefaultSpeed = m_pBlockReservation->eastboundSpeed(blockNum);  // VL00..VL04, likely VL02..VL04
+        blockDefaultSpeed = m_pBlockReservation->eastboundSpeed(blockNum);  // VL02..VL04
       } else if (m_pTrainProgress[m_trainProgressLocoTableNum].route[blockElementPtr].routeRecType == BW) {  // Westbound speed
         blockDefaultSpeed = m_pBlockReservation->westboundSpeed(blockNum);
-      }
-      else {  // Serious bug
+      } else {  // Serious bug
         sprintf(lcdString, "T.P. ER ERR D"); pLCD2004->println(lcdString); endWithFlashingLED(5);
       }
+      // blockDefaultSpeed retrieved from Block Reservation will be LOCO_SPEED_STOP, _CRAWL, _LOW, _MEDIUM, or _HIGH = 0..4.
+      // This corresponds nicely with the value assigned to the route element .routeRecVal = 0..4 for "VL" speed elements.
       // Now we have a default speed, overwrite the 4th-from-last element of the "old" route.
-      m_pTrainProgress[m_trainProgressLocoTableNum].route[tempElementPtr].routeRecVal = blockDefaultSpeed;
-    }  // Else tempElement == RD and we'll need to stop, so don't want to overwrite the Crawl speed element
-  }  // Else it's an Extension route and we don't want to overwrite the Crawl speed element
-  // Okay, so we have over-written the final VL01 Crawl speed element of the old route IF WE ARE NOT GOING TO STOP.
+      m_pTrainProgress[m_trainProgressLocoTableNum].route[tempElementPtr].routeRecVal = blockDefaultSpeed;  // Will be 2..4
+    }  // if it's FORWARD
+  }    // if it's CONTINUATION
 
-  // ****************************************************************************************************************
-  // *** OVERWRITE THE LAST ELEMENT OF THE OLD T.P. (VL00) WITH THE THIRD ELEMENT OF THE NEW ROUTE (FD00 or RD00) ***
-  // ****************************************************************************************************************
-  // We're going to start adding records at headPtr - 1 (which will ALWAYS be VL00.)
-  tempElementPtr = decrementTrainProgressPtr(m_pTrainProgress[m_trainProgressLocoTableNum].headPtr);
-  // Rather than make assumptions, let's just confirm that it's a VL00 record we want to overwrite...
-  if ((m_pTrainProgress[m_trainProgressLocoTableNum].route[tempElementPtr].routeRecType != VL) ||
-      (m_pTrainProgress[m_trainProgressLocoTableNum].route[tempElementPtr].routeRecVal != 0)) {
-    sprintf(lcdString, "T.P. ER ERR 1"); pLCD2004->println(lcdString); endWithFlashingLED(5);
+  // ************************************************************************************************************************
+  // *** FOR ANY COMBINATION OF EXTENSION/CONTINUATION STARTING FORWARD/REVERSE, START OVERLAYING THE NEW ROUTE BEGINNING ***
+  // *** WITH THE THIRD ELEMENT OF THE NEW ROUTE (always either FD00 or RD00.)  THE ONLY DIFFERENCE IS WHERE TO START.    ***
+  // *** FOR CONTINUATION ROUTES THAT START IN REVERSE:                                                                   ***
+  // ***   Overlay starting with the 3rd element of the new route AT OLD ROUTE headPtr.                                   ***
+  // *** FOR EXTENSION ROUTES, and for CONTINUATION ROUTES THAT START IN FORWARD:                                         ***
+  // ***   Overlay starting with the 3rd element of the new route AT OLD ROUTE (headPtr - 1) == VL00.                     ***
+  // ************************************************************************************************************************
+
+  // Start by taking the THIRD element of the new Route, which must always be either FD00 or RD00, and see which it is.
+  tempElement = m_pRoute->getElement(t_routeRecNum, 2);  // Third element (zero offset) of new route better be FD or RD!
+  if ((tempElement.routeRecType != FD) && (tempElement.routeRecType != RD)) {  // Yikes, fatal error!  Whahappen?
+    sprintf(lcdString, "T.P. ER ERR A"); pLCD2004->println(lcdString); endWithFlashingLED(5);
   }
-  // Now take the THIRD element of the new Route (FD00 or RD00) and overwrite the Train Progress final VL00 element...
-  tempElement = m_pRoute->getElement(t_routeRecNum, 2);  // 2 = 3rd element because zero offset; better be FD or RD!
+
+  // Decide at which element in the old route we want to start adding records from the new route...
+  if ((t_continuationOrExtension == ROUTE_TYPE_CONTINUATION) && (tempElement.routeRecType == RD)) {
+    // For Continuation routes that start in Reverse, overlay starting with the 3rd element of the new route AT OLD ROUTE headPtr.
+    tempElementPtr = m_pTrainProgress[m_trainProgressLocoTableNum].headPtr;
+  } else {
+    // In all other cases, overlay starting with the 3rd element of the new route AT OLD ROUTE (headPtr - 1) == VL00.
+    tempElementPtr = decrementTrainProgressPtr(m_pTrainProgress[m_trainProgressLocoTableNum].headPtr);
+  }
+  // Okay, now tempElementPtr is pointing to the element where we want to start overlaying the new route (starting w/ 3rd element.)
+  tempElement = m_pRoute->getElement(t_routeRecNum, 2);  // 2 = 3rd element because zero offset; will be FD or RD.
   if ((tempElement.routeRecType != FD) && (tempElement.routeRecType != RD)) {  // Yikes, fatal error!  Whahappen?
     sprintf(lcdString, "T.P. ER ERR 2"); pLCD2004->println(lcdString); endWithFlashingLED(5);
   }
   // Okay, we've just retrieved the third element of the incoming Route, which is either FD00 or RD00.
-  // Let's plop it on top of the Train Progress old route's final record -- which we've already confirmed is VL00...
+  // Let's plop it at the end of Train Progress old route...
   m_pTrainProgress[m_trainProgressLocoTableNum].route[tempElementPtr] = tempElement;
-
-  // *****************************************************************************************
-  // *** WRITE THE NEXT ELEMENT FROM THE ROUTE TO THE VACANT RECORD WHERE HEAD IS POINTING ***
-  // *****************************************************************************************
-  // Now we'll insert the next Route element, which better be VL##, at the Train Progress headPtr and increment headPtr.
-  // This could be part of the "for" loop below, but I'm going to be careful and confirm the next Route element is VL##.
-  tempElement = m_pRoute->getElement(t_routeRecNum, 3);  // 3 = 4th element because zero offset; better be VL##!
-  if ((tempElement.routeRecType != VL) ||
-      (tempElement.routeRecVal < LOCO_SPEED_STOP) ||
-      (tempElement.routeRecVal > LOCO_SPEED_HIGH)) {  // Yikes, fatal!
-    sprintf(lcdString, "T.P. ER ERR 3"); pLCD2004->println(lcdString); endWithFlashingLED(5);
-  }
-  // Alrighty, we got the new Route's velocity element; add it to Train Progress at headPtr...
-  tempElementPtr = incrementTrainProgressPtr(tempElementPtr);
-  // Let's double check that we're going to write at headPtr...
-  if (tempElementPtr != m_pTrainProgress[m_trainProgressLocoTableNum].headPtr) {  // Yikes, fatal error!  Whahappen?
-    sprintf(lcdString, "T.P. ER ERR 4"); pLCD2004->println(lcdString); endWithFlashingLED(5);
-  }
-  // Okay we confirmed it's a VL## command and we're writing to the original headPtr element as expected...
-  m_pTrainProgress[m_trainProgressLocoTableNum].route[tempElementPtr] = tempElement;
-  // We wrote to headPtr, so we need to increment it...  Just update the in-memory value since we're on the heap, not FRAM.
-  m_pTrainProgress[m_trainProgressLocoTableNum].headPtr =
-    incrementTrainProgressPtr(m_pTrainProgress[m_trainProgressLocoTableNum].headPtr);
-  // Now headPtr is once again pointing to the next available empty element in Train Progress.
 
   // ********************************************************************************************************************
   // *** NOW BEGIN WRITING ELEMENTS AND INCREMENTING headPtr UNTIL WE'VE WRITTEN THE ENTIRE NEW ROUTE (OR OVERFLOWED) ***
   // ********************************************************************************************************************
-  // Okay, *now* we can use a loop to transfer the rest of the Route elements into Train Progress...
-  // Start retrieving Route elements from Route Reference at the 5th element and adding them Train Process for this train.
-  // Note that since the route elements are zero offset, the 5th element of the new route is routeElementNum 4.
-  for (byte routeElementNum = 4; routeElementNum < FRAM_SEGMENTS_ROUTE_REF; routeElementNum++) {  // We'll stop at "ER00"
+  // Start retrieving Route elements from Route Reference at the 4th element and adding them Train Process for this train.
+  // Note that since the route elements are zero offset, the 4th element of the new route is routeElementNum 3.
+  for (byte routeElementNum = 3; routeElementNum < FRAM_SEGMENTS_ROUTE_REF; routeElementNum++) {  // We'll stop at "ER00"
     tempElement = m_pRoute->getElement(t_routeRecNum, routeElementNum);
     // If we retrieve an ER end-of-route record, we're done retrieving route elements...
     if (tempElement.routeRecType == ER) break;
@@ -752,20 +759,19 @@ void Train_Progress::addRoute(const byte t_locoNum, const unsigned int t_routeRe
   // *******************************************************
   // *** NOW UPDATE ANY POINTERS THAT NEED TO BE UPDATED ***
   // *******************************************************
-  // If we got here, we've added every element from the new incoming Route.
   // The Train Progress pointers should be updated as follows:
   //   headPtr        Should now have been updated, above, so nothing more to do with it.
   //   nextToTripPtr  If (and only if) we're adding an Extension (stopped) route, this pointer will need to be advanced to the next
-  //                  sensor of the route. But if we're adding a Continuation (non-stop) route, nextToTripPtr should still be
-  //                  valid from before calling this function.
+  //                  sensor of the route. (A Continuation (non-stop) route's nextToTripPtr should still be valid.)
   //   nextToClearPtr Should still be valid from before calling this function.
   //   tailPtr        Should still be valid from before calling this function.
   //   contPtr        Must be updated to point to the 4th-from-last sensor of the new Train Progress route.
   //   stationPtr     Must be updated to point to the 3rd-from-last sensor of the new Train Progress route.
   //   crawlPtr       Must be updated to point to the 2nd-from-last sensor of the new Train Progress route.
   //   stopPtr        Must be updated to point to the last sensor of the new Train Progress route.
+  //   lastTrippedPtr Should still be valid from before calling this function.
 
-  // *** FOR NEXT-TO-TRIP, IF WE'RE ADDING AN EXTENSION/STOPPED ROUTE, ADVANCE UNTIL IT POINTS TO THE NEXT SENSOR OF THE ROUTE ***
+  // *** FOR NEXT-TO-TRIP, IF WE'RE ADDING AN EXTENSION (STOPPED) ROUTE, ADVANCE IT POINTS TO THE NEXT SENSOR OF THE ROUTE ***
   // If adding an extension route (where we are stopped), it means we are currently sitting stopped on top of the next-to-trip
   // sensor and we need to advance the pointer to the next sensor along our newly-added route.
   if (t_continuationOrExtension == ROUTE_TYPE_EXTENSION) {
@@ -788,14 +794,13 @@ void Train_Progress::addRoute(const byte t_locoNum, const unsigned int t_routeRe
   }
   // Okay, we're pointing to the LAST sensor of the new route.  This will be our STOP pointer.
   m_pTrainProgress[m_trainProgressLocoTableNum].stopPtr = tempElementPtr;     // Set new value for STOP pointer.
-  // Repeat for each of the next three sensors moving backward from the end of the Train Progress route...
 
   // Find the CRAWL sensor location...
   tempElementPtr = decrementTrainProgressPtr(tempElementPtr);
   while (m_pTrainProgress[m_trainProgressLocoTableNum].route[tempElementPtr].routeRecType != SN) {
     tempElementPtr = decrementTrainProgressPtr(tempElementPtr);
   }
-  // Okay, we've come across the CRAWL (2nd from last) sensor.
+  // Okay, we've found the CRAWL (2nd from last) sensor.
   m_pTrainProgress[m_trainProgressLocoTableNum].crawlPtr = tempElementPtr;    // Set new value for CRAWL pointer.
 
   // Find the STATION sensor location...
@@ -803,7 +808,7 @@ void Train_Progress::addRoute(const byte t_locoNum, const unsigned int t_routeRe
   while (m_pTrainProgress[m_trainProgressLocoTableNum].route[tempElementPtr].routeRecType != SN) {
     tempElementPtr = decrementTrainProgressPtr(tempElementPtr);
   }
-  // Okay, we've come across the STATION (3rd from last) sensor.
+  // Okay, we've stumbled across the STATION (3rd from last) sensor.
   m_pTrainProgress[m_trainProgressLocoTableNum].stationPtr = tempElementPtr;  // Set new value for STATION pointer.
 
   // Find the CONTINUATION sensor location...

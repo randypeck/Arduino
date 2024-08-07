@@ -158,13 +158,6 @@ void Engineer::getDelayedActionCommand() {
         Serial.print("Engineer setting Train Progress speed to zero (stop immed or emerg stop) Loco: ");
           Serial.print(m_devNum); Serial.print(", Time: "); Serial.println(millis());
       }
-//      We're commenting these updates out because we don't want to update speed and time in Train Progress until the commands are
-//      actually sent to the Legacy Base.  Even though it will be almost instantaneous, it's not good enough.  For example, we had
-//      problems checking current loco speed in O_Roller_Speed.ino because Train Progress showed that a loco had reached a target
-//      speed even when it technically had not, and it caused problems.
-//      m_pTrainProgress->setSpeedAndTime(m_devNum, 0, millis());
-//      m_pTrainProgress->setStopped(m_devNum, true);
-//      m_pTrainProgress->setTimeStopped(m_devNum, millis());
     } else if ((m_devCommand == LEGACY_ACTION_ABS_SPEED) &&
                (m_devNum <= TOTAL_TRAINS)) {  // TOTAL_TRAINS = 50; PowerMasters are 91..94 so they're excluded here.
       if (m_debugOn) {
@@ -255,11 +248,16 @@ void Engineer::getDelayedActionCommand() {
 }
 
 void Engineer::sendCommandToTrain() {
-  // Rev: 06/16/22.
+  // Rev: 08/05/24.  Has not been tested with a TMCC loco, especially keeping Train Progress speed/time fields up to date **********************************
   // This function must be called as frequently as possible (every time through loop) by Engineer to keep things moving.
   // Dequeues up to one "plain English" record, if any, from the Legacy/TMCC Command Buffer (not more often than each 30ms).
   // If a record is found, translate to Legacy/TMCC hex and forward to the Legacy Command Base via the RS-232 interface.
   // We'll use our class global 9-byte struct variable m_legacyCommandRecord to hold our working command.
+  // 07/01/24: Updated this function to update Train Progress speed, speed-time, stopped, and time-stopped fields whenever a
+  // command that affects a loco's speed is sent to the Legacy Base.  Previously we were doing this when commands were sent from
+  // Delayed Action to the Legacy Command Buffer, but this caused issues in O_Roller_Speed.ino which would also have presented
+  // problems in O_LEG.  I.e. If we watch Delayed Action for the instant a speed command is sent to the Legacy Command Buffer, we
+  // will think that our loco has achieved a certain speed slightly before the command has actually been sent to the loco.
 
   // First see if we have a 3/6/9-byte commands in the Legacy circular buffer that can be transmitted...  We'll only get
   // something if there is a record available *and* it has been at least 30ms since the last command was sent to the Legacy base.
@@ -271,13 +269,13 @@ void Engineer::sendCommandToTrain() {
     // If this is a command that affects a loco's speed (ABS_SPEED, STOP_IMMED, or EMERG_STOP), NOW is the time to update the
     // Train Progress fields for current speed.  Prior to 7/1/24, we were updating these fields in the getDelayedActionCommand()
     // function, but there were cases when we'd check Delayed Action current speed for a loco, and it would indicate 0 for example,
-    // but in fact that final Speed 0 command had not been sent from the Legacy command buffer - so it was not accurate.
-    // Only by updating the Train Progress loco speed RIGHT NOW, just AFTER the command has actually been sent to the loco, can we
-    // be sure that when we read it from elsewhere in the code, it will be up to date.  Thus, we need to take a moment to identify
-    // any commands that affect a loco's speed...
+    // which might cause a function to exit, when in fact that final Speed 0 command had not been sent from the Legacy command
+    // buffer and the loco was still moving!  Only by updating the Train Progress loco speed RIGHT NOW, just AFTER the command has
+    // actually been sent to the loco, can we be sure that when we read it from elsewhere in the code, it will be up to date.
+    // Thus, we need to take a moment to identify any commands that affect a loco's speed...
     if (m_legacyCommandRecord.legacyCommandByte[0] == 0xFE) {  // It's either an Emegency Stop *or* a TMCC command
       if (m_legacyCommandRecord.legacyCommandByte[1] == 0xFF) return;  // That's an Emergency Stop, so we're done anyway
-      // If we get here, it a TMCC command (not including Emergency Stop). Is it ABS_SPEED (STOP_IMMED not supported by TMCC)?
+      // If we get here, it a TMCC command other than Emergency Stop. Is it ABS_SPEED (STOP_IMMED not supported by TMCC)?
       // For TMCC Abs Speed, the two middle bits of the left-hand nibble of the third byte will always be "11":
       byte locoNum = 0;
       byte locoSpeed = 0;
@@ -286,28 +284,26 @@ void Engineer::sendCommandToTrain() {
         // Identify the TMCC locoNum depends if this is an Engine or a Train...
         bitMask = 0b11000000;  // If 00 it's an Engine, if 11 it's a Train.
         if (m_legacyCommandRecord.legacyCommandByte[1] & bitMask) {  // It's a TMCC Train
-//          sprintf(lcdString, "TMCC Train"); Serial.println(lcdString);
           // locoNum is right-most 3 bits of the second byte combined with the left-most bit of the third byte...
           bitMask = 0b00000111;
           locoNum = (m_legacyCommandRecord.legacyCommandByte[1] & bitMask);
           locoNum = locoNum * 2;
           bitMask = 0b10000000;
           locoNum = locoNum + (m_legacyCommandRecord.legacyCommandByte[2] & bitMask);
-//          sprintf(lcdString, "TMCC loco %i", locoNum); Serial.println(lcdString);
+          sprintf(lcdString, "LCB TMCC TRAIN %i", locoNum); Serial.println(lcdString);  // *** This message can be commented out once we have tested this block of code *********************
         } else {  // It's a TMCC Engine
-//          sprintf(lcdString, "TMCC Engine"); Serial.println(lcdString);
           // locoNum is right-most 6 bits of the second byte combined with the left-most bit of the third byte...
           bitMask = 0b00111111;
           locoNum = (m_legacyCommandRecord.legacyCommandByte[1] & bitMask);
           locoNum = locoNum * 2;
           bitMask = 0b10000000;
           locoNum = locoNum + (m_legacyCommandRecord.legacyCommandByte[2] & bitMask);
-//          sprintf(lcdString, "TMCC loco %i", locoNum); Serial.println(lcdString);
+          sprintf(lcdString, "LCB TMCC ENG %i", locoNum); Serial.println(lcdString);  // *** This message can be commented out once we have tested this block of code *********************
         }
         // Identify the speed by taking the right-hand five bits of the third byte and subtracting 0x60:
         bitMask = 0b00011111;
         locoSpeed = (m_legacyCommandRecord.legacyCommandByte[2] & bitMask) - 0x60;
-//        sprintf(lcdString, "TMCC speed %i", locoSpeed); Serial.println(lcdString);
+        sprintf(lcdString, "LCB TMCC SPEED %i", locoSpeed); Serial.println(lcdString);  // *** This message can be commented out once we have tested this block of code *********************
         // Now update the speed/time fields in Train Progress
         m_pTrainProgress->setSpeedAndTime(locoNum, locoSpeed, millis());
         if (locoSpeed == 0) {
@@ -333,14 +329,10 @@ void Engineer::sendCommandToTrain() {
         // Else it must be a momentum command, which we don't care about...
         if (m_legacyCommandRecord.legacyCommandByte[2] <= 0xC7) {  // It's a Legacy Abs Speed command
           locoSpeed = m_legacyCommandRecord.legacyCommandByte[2];  // So easy!
-          if (m_debugOn) {
-            sprintf(lcdString, "Leg ABS SPEED"); Serial.println(lcdString);
-          }
+          sprintf(lcdString, "LCB LEG ABS SPEED"); Serial.println(lcdString);  // *** This message can be commented out once we have tested this block of code *********************
         } else if (m_legacyCommandRecord.legacyCommandByte[2] == 0xFB) {  // It's a Legacy Stop Immed command
           locoSpeed = 0;
-          if (m_debugOn) {
-            sprintf(lcdString, "Leg STOP IMMED"); Serial.println(lcdString);
-          }
+          sprintf(lcdString, "LCB LEG STOP IMMED"); Serial.println(lcdString);  // *** This message can be commented out once we have tested this block of code *********************
         } else {  // Must be momentum, so we're done
           return;
         }
@@ -348,10 +340,8 @@ void Engineer::sendCommandToTrain() {
         // locoNum is simply the left-most 7 bits of the second byte...
         bitMask = 0b11111110;
         locoNum = (m_legacyCommandRecord.legacyCommandByte[1] & bitMask) / 2;  // Divide by 2 to knock off that last bit
-        if (m_debugOn) {
-          sprintf(lcdString, "Legacy loco %i", locoNum); Serial.println(lcdString);
-          sprintf(lcdString, "Speed %i", locoSpeed); Serial.println(lcdString);
-        }
+        sprintf(lcdString, "LCB LEG LOCO %i", locoNum); Serial.println(lcdString);  // *** This message can be commented out once we have tested this block of code *********************
+        sprintf(lcdString, "LCB LEG SPEED %i", locoSpeed); Serial.println(lcdString);  // *** This message can be commented out once we have tested this block of code *********************
         m_pTrainProgress->setSpeedAndTime(locoNum, locoSpeed, millis());
         if (locoSpeed == 0) {
           m_pTrainProgress->setStopped(locoNum, true);

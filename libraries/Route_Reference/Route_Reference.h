@@ -59,7 +59,7 @@
 //        Route ID is simply used as a cross-reference back to the original spreadsheet, for reporting and debugging.
 //        Route ID CANNOT be used as a lookup into the FRAM table since it's not sorted that way (unless by sequential search.)
 
-// ROUTE RULES rev: 04/07/24:
+// ROUTE RULES rev: 08/07/24:
 // 1. All routes in Route Reference must begin with Block + Sensor + Direction + Velocity.
 //    Train Progress new routes get the SN00+VL01 inserted at the beginning so that Tail has a sensor to point to, and VL01 just
 //    to keep it looking like the end of a normal route.
@@ -107,23 +107,28 @@
 //    to Crawl speed will be incorrect.
 //    So, for example, never have a route with a speed command upon entering block 16W, since that block is too short to make any
 //    speed change using Medium momentum.
+//    This will require some fine tuning on how we decide acceleration and deceleration rates other than when slowing to Crawl
+//    (and including when backing into sidings and then pulling forward.)
 // 9. When stopping then reversing then stopping again within a single block (i.e. back into single-ended siding, then forward
 //    until we trip the exit sensor) speed must be VL01 (Crawl.)
 //    This could get boring when this happens in a long siding and/or a short train, because the train will be crawling the length
 //    of the siding, less the length of the train itself.
 //    FUTURE: We can add logic to make the train speed up then slow back down to crawl within the limited space, but we'll need to
 //    look up length of the train *and* length of the block to know how much track is available.
-// 10. Due to the way turnouts are thrown on routes, a given turnout MUST NOT occur twice in a single route UNLESS there is a
-//     VL00 (stop) between the two occurrences.
-//     So we couldn't have a route that used Turnout 4 to go from BE10 to BW10 via Block 7 unless it included a mid-route stop
-//     (which it could.)
-//     This is because in Auto/Park mode, the Dispatcher will throw all turnouts of a route between the current VL00 and the next
-//     VL00 along the route.  Then each time a loco begins to move after being stopped, either at the beginning of a new route, or
-//     in the middle of a route when reversing, the Dispatcher throws the next batch of turnouts through to the next VL00 (either
-//     to reverse or end-of-route.)
-//     FUTURE: We could allow turnouts to appear twice without requiring a stop, if we have very low delay.  I.e. each time we
-//     tripped a sensor, we could throw all turnouts through the next sensor.  But often a turnout will immediately follow a
-//     sensor, so it better be quick.
+//    Actually, it would be cool to calculate the distance required to accelerate from VL00 to VL02 (Low) and then decelerate back
+//    to VL01 (Crawl) using the Low-to-Crawl deceleration parameters.
+//    I think the time and distance from Crawl-to-Low would be equal to the time and distance from Low-to-Crawl, but we'd need to
+//    test.  And figure out additional time and distance req'd from Stop to Crawl.  We could always add a parm to Loco Ref to
+//    store distance to accelerate from Stop to Crawl using its own set of parameters (step, delay.)  We'd need to calculate the
+//    time (trivial) to know when to start the acceleration from Crawl to Low, and deceleration from Low to Crawl.
+// 10. Due to the way turnouts are thrown on routes, a given turnout MUST NOT occur twice in a single route UNLESS there is a FD/RD
+//     (direction) between the two occurrences.  So we couldn't have a route that used Turnout 4 to go from BE10 to BW10 via Block
+//     7 unless it included a mid-route stop (which it could) (or technically just an inserted FD or RD even without stopping.)
+//     This is because in Auto/Park mode, each time an FD/RD occurs ahead of a tripped sensor, we will throw all turnouts of a
+//     route between that FD/RD and the next FD/RD along the route (or end of route) (even if beyond the next sensor.)
+//     FUTURE: We could allow turnouts to appear twice without requiring intervening FD/RD if we have very low propogation delay.
+//     I.e. each time we tripped a sensor, we could throw all turnouts through the next sensor.  But often a turnout will
+//     immediately follow a sensor, so it better be quick.
 // 11. FUTURE: If a Route includes a SC "Sensor Clear" record type, we must be guaranteed that the longest train will never trip
 //     the next sensor in that direction.  Still working out how Next-To-Trip logic will be impacted.
 //     If backing EB over SN31, I suppose we'd have NTT SN31, VL01, NTC SN31, VL00, FD00, VL02, NTT SN31...

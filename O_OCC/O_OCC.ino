@@ -1,4 +1,4 @@
-// O_OCC.INO Rev: 08/03/24.  CODE COMPLETE including Registration and Auto/Park modes.  NEEDS TO BE FULLY TESTED!
+// O_OCC.INO Rev: 08/07/24.
 // OCC paints the WHITE Occupancy Sensor LEDs and RED/BLUE Block Occupancy LEDs on the Control Panel.
 // In Registration mode, OCC also prompts operator for initial data, using the Control Panel's Rotary Encoder and 8-Char display.
 // In Auto/Park modes, OCC also autonomously sends arrival and departure announcements to various stations around the layout.
@@ -95,6 +95,7 @@ Message* pMessage = nullptr;
 Centipede* pShiftRegister = nullptr;  // Only need ONE object for one or two Centipede boards (SNS only has ONE Centipede.)
 
 // *** TURNOUT RESERVATION TABLE CLASS (IN FRAM) ***
+// 08/04/24: I think the following statement is false; OCC doesn't care about Turnout Reservations for any purpose.
 // OCC needs to track Turnout Res'ns in order to know when it can release Block Res'ns and thus keep Control Panel LEDs accurate.
 #include <Turnout_Reservation.h>
 Turnout_Reservation* pTurnoutReservation = nullptr;
@@ -430,6 +431,10 @@ void OCCManualMode() {  // CLEAN THIS UP SO THAT MAS/OCC/LEG ARE MORE CONSISTENT
 
 void OCCRegistrationMode() {
 
+  // Rev: 08-04-24.
+  // Note that although OCC uses Block Res'n to preserve data for the next Registration loco default location, it does not otherwise
+  // care about Block Reservations, and doesn't care at all about Turnout Reservations.
+
   sprintf(alphaString, "WAIT...");
   pAlphaNumDisplay->writeToBackpack(alphaString);
 
@@ -676,10 +681,10 @@ void OCCRegistrationMode() {
   pOccupancyLEDs->paintOneBlockOccupancyLED(0);  // Sending 0 will turn off all RED/BLUE LEDs
 
   // Send a "train location" message with locoNum 0 to signal we're done.
-  routeElement tempElement;
-  tempElement.routeRecVal = 0;    // Block 0
-  tempElement.routeRecType = BE;  // n/a
-  pMessage->sendOCCtoALLTrainLocation(LOCO_ID_NULL, tempElement);  // locoNum 0 means we're done with Registration
+  routeElement tempTPElement;
+  tempTPElement.routeRecVal = 0;    // Block 0
+  tempTPElement.routeRecType = BE;  // n/a
+  pMessage->sendOCCtoALLTrainLocation(LOCO_ID_NULL, tempTPElement);  // locoNum 0 means we're done with Registration
 
   // *** REGISTRATION COMPLETE! ***
   // We're done, so just wait for the mode-change message from MAS to exit back to main loop...
@@ -707,35 +712,68 @@ void OCCRegistrationMode() {
 
 void OCCAutoParkMode() {
 
+  // Rev: 08-06-24.
+  // Note that although OCC uses Block Res'n to preserve data for the next Registration loco default location, it does not otherwise
+  // care about Block Reservations, and doesn't care at all about Turnout Reservations.
+
   // Upon entry here, modeCurrent == AUTO or PARK, and stateCurrent == RUNNING.
-  // Mode may change from AUTO to PARK, and state may change from RUNNING to STOPPING, but OCC doesn't care and won't even see
-  // those RS-485 messages.
+  // Mode may change from AUTO to PARK, and state may change from RUNNING to STOPPING, but OCC and LEG don't care and won't even
+  // see those RS-485 messages.
   // So just run until we receive a Mode message (will still be AUTO or PARK) with a new state of STOPPED.
   // OCC's only job here is to keep the WHITE Occupancy Sensor LEDs and RED/BLUE Block Occupancy LEDs correctly illuminated.
   // To do this, it must keep track of incoming Routes and Sensor Trips/Clears, and use that to keep the Train Progress table and
   // Block Reservation table up to date.
 
   // THERE ARE ONLY THREE INCOMING MESSAGES WE'LL BE SEEING:
-  // 'M' Mode/State change -- which for us will only be changing from Auto or Park Running or Stopping to Auto or Park Stopped.
+
   // 'R' Route: Extension (stopped) or Continuation (moving.)
-  //   Get new Route (based on route record number.)
-  //   Add elements of the new Route to Train Progress
-  //   Reserve each new Block in the Route in Block Reservation as Reserved for this loco.
-  //   Reserve each new Turnout in the Route in Turnout Reservation as Reserved for this loco.  MAS ONLY (not OCC or LEG.)
+  //   Get new Route (locoNum, extOrCont, routeRecNum, countdown.)
+  //   Create a temp variable to note value of stopPtr.  We'll need it later.
+  //   Add elements of the new Route to Train Progress (incl. update pointers, isParked, isStopped, timeToStart)
+  //   For every element from our old stopPtr (noted above) through our new stopPtr:
+  //     Reserve each new Block in the Route in Block Reservation as Reserved for this loco (MAS and OCC.)
+  //     Reserve each new Turnout in the Route in Turnout Reservation as Reserved for this loco.  MAS ONLY.
+  //     Throw each Turnout from the beginning of the route through the next occurance of FD/RD or end-of-route.  MAS ONLY.
   //   Re-paint Control Panel RED/BLUE BLOCK OCCUPANCY LEDs to include the new Blocks as RED/Reserved (unless currently Occupied.)
   //     RED = RESERVED, BLUE = OCCUPIED.
   //     No need to re-paint the white occupancy sensor LEDs when a new Route is received as they won't have changed.
+
   // 'S' Sensor Trip/Clear.
   //   Get the Sensor Trip/Clear sensorNum and Tripped/Cleared.
-  //   Update our internal Occupancy LED array that keeps track of sensor status (OCC ONLY.)  Not sure how this affects MAS or LEG.
+  //   Update our internal Occupancy LED array that keeps track of sensor status (OCC ONLY.)
   //   Sensor TRIP:
-  //     Advance Next-To-Trip pointer if possible.
+  //     Get the locoNum that tripped the sensor.
+  //     If we didn't just trip the STOP sensor, advance Next-To-Trip pointer to next SN sensor record.
+  //     Even if at end-of-route, process each Route element from just-tripped sensor to new next-to-trip sensor OR HEAD.
+  //       Note: If we tripped Stop sensor, always followed by VL00 as the last element.
+  //       BE##/BW##: Change status of block from Reserved to Occupied (OCC only, automatic in paintAllBlockOccupancyLEDs.)
+  //       TN##/TR##: Throw turnout (MAS only.)
+  //       FD00/RD00: Send immediate command to Delayed Action to set loco direction (LEG only.)
+  //       VL00/VL01/VL02/VL03/VL03: LEG ONLY: Populate Delayed Action as necessary to change loco speed.
+  //         This is not trivial, as it depends on our current speed and target speed i.e. when slowing to Crawl or Stop.
+  //         It's possible we'll encounter a VL00 to stop the loco, then RD00 to revers, then VL## to accelerate.  Be sure that
+  //           the populate Delayed Action commands take into account the time required to complete the first speed change before
+  //           deciding the time to start the second speed change after the direction change.
+  //           NOTE: We won't be able to rely on the Train Progress currentSpeed when assigning the second set of speed commands!
+  //           However, we should always be at Crawl when encountering the VL00 command that preceeds the FD/RD command, so we'll
+  //           assume it will always take 3 seconds for the loco to slow from Crawl to Stop, and maybe add a little more time and
+  //           throw in a whistle/horn "reverse" or "forward" pattern.
+  //       SN##: This is the new Next-To-Trip sensor; update field in Train Progress and we're done.
   //   Sensor CLEAR:
-  //     Release Block Reservations behind just-cleared sensor (unless block occurs again farther ahead in route.)
-  //     Release Turnout Reservations behind just-cleared sensor (unless turnout occurs again farther ahead in route.)  MAS ONLY.
-  //     Advance Next-To-Clear pointer if possible.
+  //     Get the locoNum that cleared the sensor.
+  //     Note that there will always be a sensor record ahead of any sensor that is cleared, even at the end of a route.
+  //     Process each Route element from Tail to just-cleared sensor:
+  //       BE##/BW##: Release block reservation IFF block does not occur farther ahead in route (MAS and OCC.)
+  //       TN##/TR##: Release turnout reservation IFF turnout does not occur farther ahead in route (MAS only.)
+  //       FD00/RD00: Ignore.
+  //       VL00/VL01/VL02/VL03/VL03: Ignore.
+  //       SN##: This becomes the new Next-To-Clear sensor; update field in Train Progress.
+  //     Update Tail to be equal to the old Next-To-Clear.
+  //     Update Next-To-Clear to be next Sensor record ahead in the route.
   //   Re-paint the Control Panel WHITE OCCUPANCY SENSOR LEDs
   //   Re-paint the Control Panel RED/BLUE BLOCK OCCUPANCY LEDs.
+
+  // 'M' Mode/State change -- which for us will only be changing from Auto or Park Running or Stopping to Auto or Park Stopped.
 
   // Upon starting Auto/Park, all white and red/blue LEDs will be dark, so paint them here to reflect what we know from Reg'n.
   pOccupancyLEDs->paintAllOccupancySensorLEDs(modeCurrent, stateCurrent);
@@ -744,93 +782,222 @@ void OCCAutoParkMode() {
   do {  // Operate in Auto/Park until mode == STOPPED
     haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, just stop
 
-    msgType = pMessage->available();  // Could be ' ', Sensor, Route, or Mode message (others ignored)
-    // Note: If there is no message incoming for this module, msgType will be set to ' ' (blank).
+    // See if there is an incoming message for us...could be ' ', Sensor, Route, or Mode message (others ignored)
+    msgType = pMessage->available();  // msgType ' ' (blank) indicates no message
 
     if (msgType == 'R') {  // We've got a new Route to add to Train Progress.  Could be Continuation or Extension.
+      // Rev: 08/05/24.  I feel pretty good about this.
+
+// Test with a new route that begins in Reverse as well as with a Continuation route that should change the penultimate VL (VL01)
+// command to the block's default speed for that direction, and adds records and updates the pointers as expected. *****************************************************
 
       // First, get the incoming Route message which we know is waiting for us...
       pMessage->getMAStoALLRoute(&locoNum, &extOrCont, &routeRecNum, &countdown);
 
-// Add debug code to dump Train Progress for lcooNum, before adding the Extension or Continuation route ***************************
+      // Make a note of stopPtr value, as adding the new route will destroy it; we'll use it as a starting point below.
+      byte tempTPPointer = pTrainProgress->stopPtr(locoNum);  // Element number, not a sensor number
 
-      //   Add elements of the new Route to Train Progress
+      // Debug code to dump Train Progress for locoNum, before adding the Extension or Continuation route
+      sprintf(lcdString, "T.P. loco %i BEFORE", locoNum); Serial.println(lcdString);
+      pTrainProgress->display(locoNum);
+
+      //   Add elements of the new Route to Train Progress.  Also updates pointers, isParked, isStopped, timeToStart
       if (extOrCont == ROUTE_TYPE_EXTENSION) {
         // Add this extension route to Train Progress (our train is currently stopped.)
-        pTrainProgress->setExtensionRoute(locoNum, routeRecNum, countdown);
+        pTrainProgress->addExtensionRoute(locoNum, routeRecNum, countdown);
       } else if (extOrCont == ROUTE_TYPE_CONTINUATION) {
         // Add this continuation route to Train Progress (our train is currently moving.)
-        pTrainProgress->setContinuationRoute(locoNum, routeRecNum);
+        pTrainProgress->addContinuationRoute(locoNum, routeRecNum);
       }
 
-// Add debug code to dump Train Progress to confim that the new route was added properly.  Test with a new route that begins in
-// Reverse as well as with a Continuation route that should change the penultimate VL (VL01) command to the block's default speed
-// for that direction, and adds records and updates the pointers as expected. *****************************************************
+      // Debug code to dump Train Progress for locoNum, after adding the Extension or Continuation route
+      sprintf(lcdString, "T.P. loco %i AFTER", locoNum); Serial.println(lcdString);
+      pTrainProgress->display(locoNum);
 
-      // Reserve each new Block in the Route in Block Reservation as Reserved for this loco.
-      //   Allow for the possibility that the new Route includes a Block that may already be in the loco's existing Train Progress.
-      //   But even if the block is already reserved for this loco, it's not a problem.
-      // Reserve each new Turnout in the Route in Turnout Reservation as Reserved for this loco.  MAS ONLY (not OCC or LEG.)
-      // Probably easiest to just scan the entire Train Progress record for this loco from Tail to Head and (re)reserve the blocks
-      // (and turnouts if applicable.)
-      // This will work because we're only RESERVING Blocks and Turnouts; we won't release any Block or Turnout reservations here.
-      byte tempTPPointer = pTrainProgress->tailPtr(locoNum);  // Element number, not a sensor number
-      routeElement tempTPElement;  // Working/scratch Train Progress element
-      // We'll stop scanning forward when we reach stopPtr, since there will never be a block or turnout element beyond that.
-      while (tempTPPointer != pTrainProgress->stopPtr(locoNum)) {
-        tempTPElement = pTrainProgress->peek(locoNum, tempTPPointer);
-        // See what it is and decide if any action is necessary.
+      // MAS and OCC: (Re)reserve each new Block in the Route in Block Reservation as Reserved for this loco.
+      //   Do we reserve all of the blocks in the route, or just the blocks that were added?  Much easier to just re-reserve all.
+      //   Reminder: OCC tracks block reservations as default loco to use for occupied blocks during subsequent Reg'n.
+      //   Note: For purposes of OCC knowing which blocks are Reserved vs Occupied (for Control Panel LED display RED vs BLUE,)
+      //         that is re-calculated for the entire route each time we re-paint the Block LEDs (that is, each time a route
+      //         changes (when we start Auto/Park, when we add a new Route, and when a sensor changes.  So OCC only cares about if
+      //         Block Res'n is Reserved or not reserved.
+      // MAS: Reserve all, but DO NOT THROW ALL new Turnouts in the Route at this time.
+      //   Instead, as of 8/7/24, each time we trip a sensor we scan if there is a FD/RD element before the next sensor, and if so
+      //   MAS should throw all of the turnouts through that next FD/RD element.  This should also happen when we first start out
+      //   on a new route assigned following Registration.
+
+      // Point to first element beyond the OLD stopPtr (glad we saved that at the top of this block of code!)
+      tempTPPointer = pTrainProgress->incrementTrainProgressPtr(tempTPPointer);
+      do {
+        routeElement tempTPElement = pTrainProgress->peek(locoNum, tempTPPointer);  // Working/scratch Train Progress element
+        // If we have a Block or Turnout element, reserve it if necessary.
         if ((tempTPElement.routeRecType == BE) || (tempTPElement.routeRecType == BW)) {  // Block must be reserved
-          // reserveBlock(blockNum, direction, locoNum);
-          pBlockReservation->reserveBlock(tempTPElement.routeRecVal, tempTPElement.routeRecType, locoNum);
+          pBlockReservation->reserveBlock(tempTPElement.routeRecVal, tempTPElement.routeRecType, locoNum);  // Block, Dir, locoNum
         } else if ((tempTPElement.routeRecType == TN) || (tempTPElement.routeRecType == TR)) {  // Turnout must be reserved
-          // We don't need to reserve Turnout reservations in OCC or LEG, but this is where we'll do it in MAS.
-          // reserveTurnout(turnoutNum, locoNum);
-          // pTurnoutReservation->reserveTurnout(tempTPElement.routeRecVal, locoNum);
+          // We don't need to reserve Turnout reservations in OCC or LEG, but this is where we'll do it in MAS:
+          // pTurnoutReservation->reserveTurnout(tempTPElement.routeRecVal, locoNum);  // Turnout number, locoNum
+        } else if ((tempTPElement.routeRecType == FD) || (tempTPElement.routeRecType == RD)) {  // Loco direction change
+
+
+          // MAS: Throw all turnouts through the next FD/RD or end-of-file, whichever comes first.
+          // 08/07/24: This is tricky.  Not sure where to do this.  Needs to be done when we first start moving, and each time we
+          // reverse direction...  MAS ONLY of course.
+
+
+
+        } else if (tempTPElement.routeRecType == VL) {  // Loco speed change
+          // Nothing to do.
+        } else if (tempTPElement.routeRecType == SN) {  // We better not find a sensor rec other than the Stop sensor! WHAT? **********************************
+
+
+
+// LEFT OFF HERE...
+
+// 08/07/24: Wait, what?  We better not find another sensor unless it's the new stop sensor???  We just assigned a new route, so
+// aren't we scanning the entire route to reserved blocks and turnouts?  And maybe throw a few turnouts?
+// Don't we expect to traverse EVERY sensor in the added-on route???????
+
+// ALSO need to figure out when/where we throw turnouts...maybe we check each time we trip a sensor and scan to the next sensor...
+//   If we find a FD/RD then scan from there to the next FD/RD (or end of route) and throw those turnouts.
+//   So maybe it's enough to handle this when we start an initial route, and when we trip a sensor.
+//   When we start an initial route, we'll treat that as if we'd just tripped the sensor that the loco is sitting on, so maybe the
+//     logic will be part of the same block of code...???
+
+
+
+
+          // Compare the element numbers (not the sensor numbers.)
+          if (tempTPPointer != pTrainProgress->stopPtr(locoNum)) {
+            sprintf(lcdString, "TP SNS ERROR 1!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
+          }
+          // Element numbers match, but let's be paranoid and make sure this sensor number also matches that of the Stop sensor!
+          routeElement stopSensor = pTrainProgress->peek(locoNum, pTrainProgress->stopPtr(locoNum));  // Stop sensor element
+          if (tempTPElement.routeRecVal != stopSensor.routeRecVal) {
+            sprintf(lcdString, "TP SNS ERROR 2!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
+          }
         }
         // Advance pointer to the next element in this loco's Train Progress table...
         tempTPPointer = pTrainProgress->incrementTrainProgressPtr(tempTPPointer);
-      }  // We've reached the end of the Route.  All Blocks and Turnouts (re)reserved.
+        // Stop scanning forward when we reach stopPtr, since there will only ever be VL00 beyond that.
+      } while (tempTPPointer != pTrainProgress->stopPtr(locoNum));  // We've reached the Stop pointer.
 
-      // Since this is OCC, re-paint the Red/Blue LEDs on the Control Panel.
-      // The White sensor LEDs aren't affected when we add a new Route, but the Red/Blue Block LEDs need to be updated.
-      pOccupancyLEDs->paintAllBlockOccupancyLEDs();
+      // OCC: Re-paint Control Panel RED/BLUE BLOCK OCCUPANCY LEDs to include the new Blocks as RED/Reserved (unless Occupied.)
+      //   RED = RESERVED, BLUE = OCCUPIED.
+      //   No need to re-paint the white occupancy sensor LEDs when a new Route is received as they won't have changed.
+      pOccupancyLEDs->paintAllBlockOccupancyLEDs();  // Note that this re-paints all Block LEDs, not just for this loco.
 
     }  // End of "we received a new Route" message
 
     else if (msgType == 'S') {  // Got a Sensor-change message in Auto/Park mode
+      // Rev: 08/05/24.
 
       // Get the Sensor Trip/Clear sensorNum and Tripped/Cleared.
       pMessage->getSNStoALLSensorStatus(&sensorNum, &trippedOrCleared);
 
-      // Update our internal Occupancy LED array that keeps track of sensor status (OCC ONLY.)  How does this affect MAS or LEG??? **************
+      // Update our internal Occupancy LED array that keeps track of sensor status (OCC ONLY.)
       pOccupancyLEDs->updateSensorStatus(sensorNum, trippedOrCleared);  // Does not illuminate any LEDs, just tracks status.
 
       if (trippedOrCleared == SENSOR_STATUS_TRIPPED) {
 
         // Which loco tripped the sensor?
-        locoNum = pTrainProgress->locoThatTrippedSensor(sensorNum);
+        locoNum = pTrainProgress->locoThatTrippedSensor(sensorNum);  // Will also update lastTrippedPtr to this sensor
 
-        // If we're not already pointing to the STOP sensor, advance Next-To-Trip pointer until we find the next sensor, which will
-        // become the new Next-To-Trip sensor.  As we move our pointer forward, handle each route element as necessary.
-        // We'll want to flag any Block records that we encounter as Occupied (which will have been previously only Reserved,)
-        // but that will be done automatically when we call OccupancyLEDs->paintAllBlockOccupancyLEDs().
-        // First check if we're at the end of the Route (i.e. just tripped the STOP sensor) in which case we can't advance.
-        if ((pTrainProgress->atEndOfRoute(locoNum) == false)) {  // If not at end of route (we did not just trip the STOP sensor.)
-          byte tempTPPointer = pTrainProgress->nextToTripPtr(locoNum);  // Element number, not a sensor number, just tripped
-          routeElement tempTPElement;  // Working/scratch Train Progress element
+        // First check if we're at the end of the Route (i.e. if lastTrippedPtr == stopPtr) in which case we can't advance.  But
+        // even if we DID just trip the Stop sensor, there will be one more element in front of us before the Head: VL00 (stop.)
+        //   This is important for LEG, to stop the loco (presumably from Crawl), though not relevant to MAS or OCC.
+        if ((pTrainProgress->atEndOfRoute(locoNum))) {  // We tripped the Stop sensor
+          // A little error checking, just confirm that the next element is VL00.  We'll assume it's followed by headPtr.
+          byte tempTPPointer = pTrainProgress->lastTrippedPtr(locoNum);  // Element number, not a sensor number, just tripped
+          tempTPPointer = pTrainProgress->incrementTrainProgressPtr(tempTPPointer);  // Should now be pointing at VL00
+          routeElement tempTPElement = pTrainProgress->peek(locoNum, tempTPPointer);  // Should contain VL00
+          if ((tempTPElement.routeRecType != VL) || (tempTPElement.routeRecVal != 0)) {  // Whoopsie!  Big bug.
+            sprintf(lcdString, "NOT SN00 AT EOR!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
+          }
+          // Okay, we have the final VL00 record of this route.  Send the slow-down to Legacy (LEG ONLY.)
+          // LEG ONLY: pDelayedAction->populateLocoSlowToStop(locoNum);  // This will stop us from current speed to stopped in 3 seconds.
+          // Now just to triple check, advance our pointer and be sure we're pointing at head.
+          tempTPPointer = pTrainProgress->incrementTrainProgressPtr(tempTPPointer);  // Should now be == headPtr
+          if (tempTPPointer != pTrainProgress->headPtr(locoNum)) {  // Whoopsie!  Big bug!
+            sprintf(lcdString, "NOT HEAD AT EOR!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
+          }
+        } else {  // We did not just trip the Stop sensor, so we tripped some sensor before the end of the route.
+          // First an error check: nextToTripPtr(locoNum) should still point at the sensor we just tripped. And since we called
+          // locoThatTrippedSensor(sensorNum), that function will have updated lastTrippedPtr(locoNum) to point at the same sensor.
+          // So just for fun, let's make sure that the two pointers are equal, otherwise this is a bug!
+          if (pTrainProgress->nextToTripPtr(locoNum) != pTrainProgress->lastTrippedPtr(locoNum)) {
+            sprintf(lcdString, "NEXT/LAST SNS ERR!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
+          }
+          byte tempTPPointer = pTrainProgress->lastTrippedPtr(locoNum);  // Element number, not a sensor number, just tripped
+          // Since tempTPPointer points to the sensor record that we just tripped, the first thing we do in the following do loop
+          // is increment the pointer to the first element following the sensor we just tripped.
+          routeElement tempTPElement;
           do {
-            // Advance pointer to the next element in this loco's Train Progress table until we reach the next sensor...
-            tempTPPointer = pTrainProgress->incrementTrainProgressPtr(tempTPPointer);
-            tempTPElement = pTrainProgress->peek(locoNum, tempTPPointer);
+            // Advance Next-To-Trip pointer until we find the next sensor, which will become the new Next-To-Trip sensor.
+            // As we move our pointer forward, handle each route element as necessary, depending on if MAS, OCC, or LEG.
+            tempTPPointer = pTrainProgress->incrementTrainProgressPtr(tempTPPointer);  // Move pointer to next element of T.P.            tempTPElement = pTrainProgress->peek(locoNum, tempTPPointer);
+            tempTPElement = pTrainProgress->peek(locoNum, tempTPPointer);              // Retrieve that element for analysis
+            if ((tempTPElement.routeRecType == BE) || (tempTPElement.routeRecType == BW)) {  // Block is now considered occupied
+              // MAS and LEG: Can't think of anything they need to do.
+              // OCC: Any BLOCKS that we traverse here should change status from RESERVED to OCCUPIED, but this is handled
+              //      automatically via paintAllBlockOccupancyLEDs().
+            } else if ((tempTPElement.routeRecType == TN) || (tempTPElement.routeRecType == TR)) {  // Turnout
+              // OCC: Can't think of anything OCC needs to do.
+              // MAS: Nothing to do.  MAS throws turnouts when FD/RD records are encountered.
+              // Throw all turnouts of a route between the current VL00 and the next
+              // VL00 along the route.  Then each time a loco begins to move after being stopped, either at the beginning of a new
+              // route, or in the middle of a route when reversing, the Dispatch Board throws the next batch of turnouts through
+              // to the next VL00 (either to reverse or end-of-route.)
+              // FUTURE: We could allow turnouts to appear twice without requiring a stop, if we have very low propogation delay.
+              // I.e. each time we tripped a sensor, we could throw all turnouts through the next sensor.  But often a turnout
+              // will immediately follow a sensor, so it better be quick. However, throwing multiple is cooler than one at a time.
 
-            // If there was anything to do with any Train Progress elements, we would do it here.
+            } else if ((tempTPElement.routeRecType == FD) || (tempTPElement.routeRecType == RD)) {  // Loco direction change
+              // OCC: Can't think of anything OCC needs to do.
+              // LEG: Set loco direction.  IMPORTANT: This may happen *after* a VL00, so LEG should send the Delayed Action
+              // Direction command to start *after* the loco has stopped.
+              // As of 8/5/24, we also need to update pTrainProgress->addRoute() to account for a new Continuation route that
+              // starts in Reverse.  We need to insert a VL00 command to stop the loco before reversing. *******************************************************************************
+              // MAS: Throw all turnouts following each FD/RD through the next FD/RD or end-of-route, whichever comes first.
+              //      Turnouts are thrown by MAS via an RS-485 message to O_SWT.
+              //      MAS does *not* wait until we encounter a TN/TR element following a sensor trip to throw the turnout.
+              //      For every element from the next element until we reach a subsequent FD/RD or end-of-route:
+              //        turnoutDir must be TURNOUT_DIR_NORMAL or TURNOUT_DIR_REVERSE
+              //        byte turnoutNum = tempTPElement.routeRecVal;
+              //        char turnoutDir;
+              //        if (tempTPElement.routeRecType == TN) {
+              //          turnoutDir = TURNOUT_DIR_NORMAL;
+              //        } else {
+              //          turnoutDir = TURNOUT_DIR_REVERSE;
+              //        }
+              //        pMessage->sendMAStoALLTurnout(turnoutNum, turnoutDir);
+              //      Next element
 
+
+
+            } else if (tempTPElement.routeRecType == VL) {  // Loco speed change
+              // MAS and OCC: Can't think of anything they need to do.
+              // LEG: Call Delayed Action to insert a set of speed-up or slow-down commands.  Depending on if we're speeding up or
+              // slowing down, we'll need to use different functions and timing.
+
+
+            }
+
+//            else if (tempTPElement.routeRecType == SN) {  // Great, this is our new next-to-trip sensor, and we're done here.
+//              // MAS, OCC, and LEG all need to finish here by updating the next-to-trip element pointer
+//              pTrainProgress->setNextToTripPtr(locoNum, tempTPPointer);
+//            }
           } while (tempTPElement.routeRecType != SN);  // Watching for the new nextToTrip sensor.
           // We've reached the next sensor, so set it to be the new Next-To-Trip sensor...
           pTrainProgress->setNextToTripPtr(locoNum, tempTPPointer);
         }
         // Now the next-to-trip pointer is up to date; whether it was already at the end of the route, or if we advanced it.
+
+// 8/6/24: Left off here.  Make sure I've covered all of the record types above.
+// Compare all of the above to what I've already written for LEG Sensor Trip (and LEG Route)
+// Update Train Progress addRoute() function to account for Continuation route that starts in Reverse.
+// Add code above for when we receive FD/RD and VL commands.  Could be VL00, RD00, VL03 and the timing needs to work.
+
+
 
         // We *could* have tracked all blocks between the old Next-To-Trip and the new Next-To-Trip and changed from Reserved to
         // Occuped, but instead we'll let paintAllBlockOccupancyLEDs() do that by scanning the whole table.
@@ -847,6 +1014,7 @@ void OCCAutoParkMode() {
       } else {  // SENSOR_STATUS_CLEARED
 
         // * Release Block Reservations behind just-cleared sensor (unless block occurs again ahead in route.)
+        //   OCC tracks block reservations so that it will have an idea of what locos to use for occupied blocks during Reg'n.
         // * Release Turnout Reservations behind just-cleared sensor (unless turnout occurs again ahead in route.)  MAS ONLY.
         // * Update the Tail to be equal to the old Next-To-Clear.
         // * Advance Next-To-Clear to be next Sensor record ahead in the route.
