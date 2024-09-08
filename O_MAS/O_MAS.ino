@@ -558,6 +558,31 @@ void MASRegistrationMode() {
 
 void MASAutoParkMode() {
 
+  // NOTE 09-08-24: WHEN DO WE THROW TURNOUTS??? We have a rule (9/8/24) that says a Turnout *may* occur more than once in a Route
+  // as long as there is a VL00 (Stop) element between successive occurrances of that turnout.
+  // But when do we throw turnouts?
+  // SOLUTION: Deprecated Route Rule 9; we will now allow turnouts to occur  multiple times in a route without any special
+  //   considerations; let's hope MAS can throw them the instant the sensor ahead of them is tripped.
+  // JUSTIFICATION:
+  //   If we throw them only each time we encounter a VL00 element after we trip a sensor, what happens when we add a new
+  //   Continuation route to an existing route, that terminated with VL00?  Now we're overwriting the original VL00 with VL01..04.
+  //   So we won't ever encounter the VL00, and thus won't ever have a chance to throw the turnouts starting with the new route.
+  //   HOWEVER, if we throw all turnouts (at least through the first new VL00 element) when we add a new Route, we don't know how
+  //   far back in the route our train is, and it may still not have encountered the first occurence of a turnout that also occurs
+  //   as part of our new route.  We should only throw a turnout if we're certain a train is not on top of it!  So we don't want to
+  //   throw it when we add the new route.
+  //   In fact, how can we enforce the "no dup turnouts unless an intervening VL00" when we might have two successive routes that
+  //   have the same turnout in different orientations, and when we add the new route as a Continuation (not stopping) route, then
+  //   there might no longer be an intervening VL00 between the two turnouts!
+  // SOLUTION 1: I think the solution, at this point, must be that MAS throws turnouts each time it trips a sensor, through the
+  //   next sensor in the route (except when we trip the STOP sensor.)  THE RISK is that if a sensor occurs very near a subsequent
+  //   turnout, we'd better hope that MAS is quick enough to throw that turnout before the train gets to it!  Otherwise we might
+  //   throw a turnout after part of the train is on top of it!
+  // SOLUTION 2: I was thinking maybe each time we add a new route, and disallow a turnout to recur more than once in a route.
+  //   However, we could add a Continuation route BEFORE a train has passed a turnout that occurs in the initial route, and also
+  //   appears in the Continuation route but in a different orientation.  So we'd be throwing a turnout to a new orientation before
+  //   our train had passed over it the first time.  Or worse, when the train was on top of that turnout!  Yikes.
+
   // Upon entry here, modeCurrent == AUTO or PARK, and stateCurrent == RUNNING.
   // Mode may change from AUTO to PARK, and state may change from RUNNING to STOPPING; it's all handled here.
 

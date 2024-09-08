@@ -1,4 +1,4 @@
-// O_LEG.INO Rev: 08/04/24.
+// O_LEG.INO Rev: 09/05/24.
 // LEG controls physical trains via the Train Progress and Delayed Action tables, and also controls accessories.
 // LEG also monitors the control panel track-power toggle switches, to turn the four PowerMasters on and off at any time.
 // 04/02/24: LEG Conductor/Engineer and Train Progress will always assume that Turnouts are being thrown elsewhere and won't worry
@@ -563,53 +563,152 @@ void LEGRegistrationMode() {
 
 void LEGAutoParkMode() {
 
-  // Rev: 08-05-24.
+  // Rev: 09-08-24.
+  // NOTE 09-02-24: MAS/OCC/LEG need to pay attention to how/when isParked, isStopped, timeStopped, timeToStart, currentSpeed,
+  //   currentSpeedTime, and expectedStopTime are updated -- as I'm not yet confident they're all being updated appropriately.
   // Note that although LEG uses Block Res'n to retrieve block speeds and lengths, it does NOT care about block or turnout res'ns.
-
   // Upon entry here, modeCurrent == AUTO or PARK, and stateCurrent == RUNNING.
   // Mode may change from AUTO to PARK, and state may change from RUNNING to STOPPING, but OCC and LEG don't care and won't even
   // see those RS-485 messages.
   // So just run until we receive a Mode message (will still be AUTO or PARK) with a new state of STOPPED.
 
-  // THERE ARE ONLY THREE INCOMING MESSAGES WE'LL BE SEEING:
-  // 'R' Route: Extension (stopped) or Continuation (moving.)
-  //   Get new Route (based on route record number.)
-  //   Add elements of the new Route to Train Progress
-  //   When a new route is received and a train is stopped, it is always considered an Extension route -- either when a newly-
-  //   registered train gets its first route, or a train that has stopped upon reaching the end of a route is assigned a new route.
-  //   This will require LEG to act on new Train Progress elements without a sensor being tripped, so it will need to periodically
-  //   check Train Progress timeToStartLoco(locoNum) for Stopped locos.
+  // Note that when we're stopped, either in our initial Registration block or at the end of a route, before a train can start
+  // moving, MAS must first obviously send a new Extension Route message - but that alone won't cause the train to move, and in
+  // fact it will not be appropriate for a train to move until its Train Progress timeToStart field has expired.  So in addition
+  // to sending a new Route message (which includes timeToStart,) MAS must regularly check the timeToStart field in its own Train
+  // Progress header.  When it's time to get a train moving, MAS (not LEG) triggers the movement by sending a "fake" Sensor Trip
+  // message to OCC and LEG for the sensor the loco is stopped on (which will always be Next-To-Trip.)
+  // OCC and LEG will get the message that the train is "moving" and LEG will respond to the "trip" by sending FD/RD and VL##
+  // commands to loco, based on subsequent Train Progress route elements.
+  // So outside of the "check for messages" code, MAS, OCC, and LEG should all monitor Train Progress timeToStart:
+  //   MAS uses this to know when to send a "fake" sensor trip message to get a train moving.
+  //   OCC and LEG can use it to make pre-departure station announcements and tower comms seconds before scheduled departure.
+
+
+
+  // THERE ARE ONLY THREE INCOMING MESSAGES LEG WILL BE SEEING:
+
+  // 'R' Route: Extension (stopped) or Continuation (moving.)  Rev: 09-06-24.
+
+  //   Get new Route (locoNum, extOrCont, routeRecNum, countdown.)
+  //   Create a temp variable to note value of stopPtr.  We'll need it later.
+  //   Call Train Progress addExtensionRoute() or addContinuationRoute() to add elements of the new Route to Train Progress (incl.
+  //     update pointers, isParked, isStopped, timeToStart.)
+  //   For every element from our old stopPtr (noted above) through our new stopPtr:
+  //     MAS & OCC: Reserve each new Block in the Route in Block Reservation as Reserved for this loco.
+  //       Reminder: OCC only tracks block res'ns for Reg'n to use as default loco for occupied blocks.
+  //     MAS: Reserve each new Turnout in the Route in Turnout Reservation as Reserved for this loco.
+  //   OCC: Re-paint Control Panel RED/BLUE BLOCK OCCUPANCY LEDs to show the new Blocks as RED/Reserved or BLUE/Occupied.
+  //     No need to re-paint the white occupancy sensor LEDs when a new Route is received as they won't have changed.
+
   // 'S' Sensor Trip/Clear.
-  //   Get the Sensor Trip/Clear sensorNum and Tripped/Cleared.
-  //   Sensor TRIP:
-  //     Note: If just tripped the last sensor on a route (the STOP sensor,) pTrainProgress->atEndOfRoute() will be true.  In such
-  //       case, there will only be one more element before Head: VL00, since all routes must end with SN## + VL00.
-  //     If not at end-of-route, advance Next-To-Trip pointer to next sensor.
-  //     Execute commands as needed ahead of just-tripped sensor, through next sensor or Head (whichever comes first.)
-  //   Sensor CLEAR:
-  //     Advance Next-To-Clear pointer if possible.
-  //     No need to release Block and Turnout reservations as OCC doesn't track them.
-  // 'M' Mode/State change -- which for us will only be changing from Auto or Park Running or Stopping to Auto or Park Stopped.
 
-  // Special consideration when a train is stopped: do we want to start it moving?
-  //   If an Active loco is stopped but no longer sitting on the stop sensor...an Extension Route has been added.
-  //   This occurs when we have a newly-registered train, or a train that stopped before a Continuation Route was assigned, that
-  //   has now had an Extension Route assigned.
+  //   Get the Sensor Trip/Clear message: sensorNum and Tripped/Cleared.
 
-// USE THESE FUNCTION CALLS:
-//   byte pTrainProgress->lastTrippedPtr(locoNum);  // Returns element number that holds the sensor just tripped.
-//   bool pTrainProgress->atEndOfRoute(locoNum);    // True if lastTrippedPtr == stopPtr
+  //   *** SENSOR TRIP ***  Rev: 09-08-24.
+
+  //     Get the locoNum that tripped the sensor.
+
+  //     IF WE TRIPPED THE STOP SENSOR (END OF ROUTE):
+
+  //       None of the 8 pointers need to be updated (CONT, STATION, CRAWL, STOP, TAIL, CLEAR, TRIP, or HEAD.
+  //       Next element will always be VL00, followed by HEAD.
+  //       LEG: Populate Delayed Action to stop the loco (in 3 seconds, from Crawl.)
+  //       LEG: Delay 3 seconds, turn off bell, delay .5 seconds, blow horn LEGACY_PATTERN_STOPPED
+  //       OCC/LEG: Delay as needed, make "has arrived" announcement.
+  //       MAS/OCC/LEG: Update Train Progress isParked = true IFF block is Block Res'n "parking siding."
+  //       MAS/OCC/LEG: Update Train Progress isStopped = true @ millis() + 3000 (due to 3-second stop time from tripping sensor.)
+  //       LEG: Train Progress currentSpeed and currentSpeedTime will be written automatically by Engineer.
+
+  //     ELSE (IF WE TRIPPED ANY SENSOR OTHER THAN STOP SENSOR (END-OF-ROUTE)):
+
+  //       Since we know we didn't just trip the STOP sensor, we are guaranteed to have another sensor ahead in the route, and
+  //         this will become the new Next-To-Trip sensor.
+  //       IF WE TRIPPED THE CONTINUATION sensor: (we may or may not stop ahead)
+  //         MAS: Decide if we want to assign a Continuation (not stopping) route for this train; do so if desired.
+  //         OCC & LEG: Ignore.
+  //       IF WE TRIPPED THE STATION STOP sensor: (means we are for sure stopping)
+  //         OCC and LEG: Make announcement (via PA, via loco.)  Or wait until we trip the CRAWL sensor.
+  //       IF WE TRIPPED THE CRAWL sensor:
+  //         LEG: Turn on bell, make arrival announcement on loco.
+  //         LEG: Blow horn LEGACY_PATTERN_APPROACHING
+  //         OCC: Make arrival announcement at station.
+
+  //       Now, FOR ALL SENSOR TRIPS EXCEPT STOP SENSOR, including the above CONT, STATION, CRAWL:
+  //       Process each T.P. route element from first element following just-tripped sensor to next SN sensor record:
+  //         FD00/RD00: LEG: Confirm we are stopped or will be stopped within 3 seconds (fatal error if not,) add delay to allow
+  //                         stop time, then set loco direction via Delayed Action.
+  //         VL00:    : LEG: Populate D.A. slowToStop (3-second stop.)
+  //         VL01:    : LEG: If SLOWING to VL01, populate D.A. to change loco speed, but consider block length.
+  //                         If STOPPED and FD00, blow horn LEGACY_PATTERN_DEPARTING, add delay to allow horn time, then
+  //                         populateLocoSpeedChange at Med momentum.
+  //                         If STOPPED and RD00, blow horn LEGACY_PATTERN_BACKING, add delay to allow horn time, then
+  //                         populateLocoSpeedChange at Med momentum.
+  //         VL02..04 : LEG: If STOPPED and FD00, blow horn LEGACY_PATTERN_DEPARTING, add delay to allow horn time, then
+  //                         populateLocoSpeedChange at Med momentum.
+  //                         ELSE If STOPPED and RD00, blow horn LEGACY_PATTERN_BACKING, add delay to allow horn time, then
+  //                         populateLocoSpeedChange at Med momentum.
+  //                         ELSE If NOT STOPPED, populateLocoSpeedChange at Med momentum.
+  //         BE##/BW##: OCC: Change status of block from Reserved to Occupied (automatic in paintAllBlockOccupancyLEDs.)
+  //                    LEG: May reference for slowToCrawl() when appropriate.
+  //         TN##/TR##: MAS: Throw the turnout (per new rule as of 09-08-24.)
+  //         SN##     : ALL: Set Next-To-Trip sensor to this sensor element number.
+  //       Note regarding VL00 + FD00/RD00 + VL##: It's possible we'll encounter a VL00 to stop the loco, then RD or FD to reverse,
+  //         then VL## to accelerate.  LEG won't be able to rely on the Train Progress currentSpeed when assigning the second set
+  //         of speed commands!  However, we should always be at Crawl when encountering the VL00 command that preceeds the FD/RD
+  //         command, so we'll assume it will always take 3 seconds for the loco to slow from Crawl to Stop, and maybe add a little
+  //         more time and throw in a whistle/horn "reverse" or "forward" pattern.
+  //       ALL: Advance Next-To-Trip pointer to next SN sensor record.
+  //       ALL: Update Train Progress isParked = false.
+  //       ALL: Update Train Progress isStopped = false.
+
+  //   *** SENSOR CLEAR ***  Rev: 09-06-24.
+
+  //     Get the locoNum that cleared the sensor.
+  //       Note there will always be a subsequent sensor ahead of any sensor just cleared, even at the end of a route.
+
+  //     Process each T.P. route element from "old" Tail through "old" (just cleared) Next-To-Clear sensor:
+  //       FD00/RD00: ALL: Ignore.
+  //       VL##     : ALL: Ignore.
+  //       BE##/BW##: MAS, OCC: IFF block does not recur ahead in route, release block reservation.
+  //       TN##/TR##: MAS: IFF turnout does not recur ahead in route, release turnout reservation.
+  //       SN##     : ALL: Update T.P. Tail = old Next-To-Clear.
+  //                       Update T.P. Next-To-Clear = sensorNum just encountered.
+
+  //   *** EITHER TRIP OR CLEAR ***  Rev: 09-06-24.
+
+  //     OCC: Update internal Occupancy LED array that keeps track of current sensor status, to reflect the change.
+  //     OCC: Re-paint the Control Panel WHITE OCCUPANCY SENSOR LEDs
+  //     OCC: Re-paint the Control Panel RED/BLUE BLOCK OCCUPANCY LEDs.
+
+  // 'M' Mode/State change.  Rev: 09-06-24.
+  //     Which for us will only be changing from Auto or Park Running or Stopping to Auto or Park Stopped.
+
+  //   If new mode != MODE_AUTO and new mode != MODE_PARK, or new state != STATE_STOPPED, then fatal error.
+  //   Else exit back to main loop.
+
+// ********************************************************************************************************************************
+
+
+
+// Left off here 9/6/24 *********************************************************************************************************************************************
+
 
   do {  // Operate in Auto/Park until mode == STOPPED
 
     haltIfHaltPinPulledLow();  // If someone has pulled the Halt pin low, release relays and send e-stop to Legacy
     pEngineer->executeConductorCommand();  // Run oldest ripe command in Legacy command buffer, if possible.
 
-    // SPECIAL CONSIDERATION: Check to see if a stopped loco should start moving.  This can happen in two cases:
-    //   1. A newly-registered loco is still stopped AND a route has been assigned AND timeToStartLoco(locoNum) == true.
-    //   2. A loco stopped at the end of a route AND an Extension route has been assigned AND timeToStartLoco(locoNum) == true.
-    // In either case:
-    //   1. isActive() and isStopped() and timeToStartLoco(locoNum) must return true, AND SIGNIFICANTLY
+    // SPECIAL CONSIDERATION: Check to see if a stopped loco should start moving.  If a loco is stopped, by definition we can only
+    // received an Extension route (for a stopped loco.)  The loco could be freshly Registered (sitting in the initial block), or
+    // stopped following completion of a previous Route.  In either case, the new Route will have a countDown ms to delay before
+    // starting the loco moving.  Thus, after the Route has been added to Train Progress, we'll need to periodically call
+    // pTrainProgress->timeToStartLoco(locoNum) which returns true or false.
+    // NOTE: When a train is Registered, timeToStartLoco is set to > 1 day, so will only set a "sooner" time to start after we have
+    // assigned a new Route (no need to confirm that there is a Route ahead of a train that has reached it's time to start.)
+// HOWEVER, when a train finishes a route (stops) then we need to always reset timetostart to be 99999999 again.
+    // TO START A STOPPED LOCO:
+    //   1. isActive() and isStopped() and timeToStartLoco(locoNum) must all be true, AND SIGNIFICANTLY
     //   2. There must be a Route ahead of the train: pTrainProgress->atEndOfRoute(locoNum) should be false
     // This is the ONLY way to get a stopped train moving!
     for (locoNum = 1; locoNum <= TOTAL_TRAINS; locoNum++) {

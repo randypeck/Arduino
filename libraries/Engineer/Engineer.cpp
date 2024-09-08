@@ -1,5 +1,7 @@
-// ENGINEER.CPP Rev: 07/01/24.
+// ENGINEER.CPP Rev: 09/02/24.
 // Part of O_LEG.
+// 09/02/24: Removed various update T.P. header currentSpeed etc. from getDelayedActionCommand().  Instead we do this the moment
+//           we send speed commands to the Legacy Base from the Legacy Command Buffer.
 // 07/01/24: Moved "Update Train Progress loco speed" from getDelayedActionCommand() into sendCommandToTrain().  The problem was
 //           that if you relied on Train Progress to give you an accurate speed, such as stopped, it's possible that all of the
 //           commands in the Legacy Command Buffer may not have been executed, and thus the train could still be moving at a
@@ -151,43 +153,6 @@ void Engineer::getDelayedActionCommand() {
     m_legacyCommandRecord = translateToLegacy(m_devNum, m_devCommand, m_devParm1, m_devParm2);
     // Then we'll enqueue it into the Legacy/TMCC command buffer (to be executed within milliseconds, we presume.)
     commandBufEnqueue(m_legacyCommandRecord);  // Insert Legacy command into the circular buffer.
-    // If this is a loco speed adjustment, and not a PowerMaster, update Train Progress' loco speed and time header fields.
-    if ((m_devCommand == LEGACY_ACTION_STOP_IMMED) ||
-        (m_devCommand == LEGACY_ACTION_EMERG_STOP)) {
-      if (m_debugOn) {
-        Serial.print("Engineer setting Train Progress speed to zero (stop immed or emerg stop) Loco: ");
-          Serial.print(m_devNum); Serial.print(", Time: "); Serial.println(millis());
-      }
-    } else if ((m_devCommand == LEGACY_ACTION_ABS_SPEED) &&
-               (m_devNum <= TOTAL_TRAINS)) {  // TOTAL_TRAINS = 50; PowerMasters are 91..94 so they're excluded here.
-      if (m_debugOn) {
-        Serial.print("Engineer setting Train Progress speed for loco: "); Serial.print(m_devNum); Serial.print(", Speed: ");
-          Serial.print(m_devParm1); Serial.print(", Time: "); Serial.print(millis());
-      }
-//      m_pTrainProgress->setSpeedAndTime(m_devNum, m_devParm1, millis());
-      // NOTE 3/5/23: Not sure where I want to set Train Progress "stopped", "time stopped", and "time starting" fields, or what
-      // I'll use them for.  For sure, I need MAS Dispatcher to send time to start when it sends an EXTENSION route.
-      // Time to Start (not updated here, by the way) is useful for:
-      //   * LEG Conductor to trigger pre-departure loco/tower comms i.e. get permission to depart
-      //   * LEG Conductor to get the train moving
-      //   * OCC Station Announcer to make pre-departure announcements
-      // For speed adjustments, we can assume that these will be executed almost immediately because they're ripe now.
-      // Thus, we'll update various Train Progress fields such as isStopped, timeStopped, currentSpeed, and currentSpeedTime.
-      if (m_devParm1 == 0) {  // If the train is being stopped (or IMMED or EMERG), set isStopped true and timeStopped.
-        if (m_debugOn) {
-          Serial.print(", Setting T.P. train STOPPED, Time: "); Serial.println(millis());
-        }
-        // Maybe we should have a function to combine setStopped and setTimeStopped, like we do with setSpeedAndTime, but when we
-        // set Stopped to false (i.e. when we start moving) I don't think we'll want to update time stopped.
-//        m_pTrainProgress->setStopped(m_devNum, true);
-//        m_pTrainProgress->setTimeStopped(m_devNum, millis());
-      } else {  // If the speed is changing but not stopping, update isStopped false (in case we were previously stopped.)
-        if (m_debugOn) {
-          Serial.print(", Setting T.P. train NOT stopped, Time: "); Serial.println(millis());
-        }
-//        m_pTrainProgress->setStopped(m_devNum, false);
-      }
-    }
     return;  // If LEGACY_ENGINE or LEGACY_TRAIN command, we're done.
   }
 
@@ -201,29 +166,6 @@ void Engineer::getDelayedActionCommand() {
     m_legacyCommandRecord = translateToTMCC(m_devNum, m_devCommand, m_devParm1, m_devParm2);
     // Then we'll enqueue it into the Legacy/TMCC command buffer (to be executed within milliseconds, we presume.)
     commandBufEnqueue(m_legacyCommandRecord);  // Insert TMCC command into the circular buffer.
-    // If this is a loco speed adjustment, update Train Progress' loco speed and time header fields.
-    // Note that TMCC doesn't support Stop Immediate, and Emerg Stop is handled as Legacy, above.
-    if (m_devCommand == LEGACY_ACTION_ABS_SPEED) {
-      if (m_debugOn) {
-        Serial.print("Engineer setting Train Progress speed for loco: "); Serial.print(m_devNum); Serial.print(", Speed: ");
-          Serial.print(m_devParm1);
-      }
-//      m_pTrainProgress->setSpeedAndTime(m_devNum, m_devParm1, millis());
-      // For speed adjustments, we can assume that these will be executed almost immediately because they're ripe now.
-      // Thus, we'll update various Train Progress fields such as isStopped, timeStopped, currentSpeed, and currentSpeedTime.
-      if (m_devParm1 == 0) {  // If the train is being stopped, set isStopped true and timeStopped.
-        if (m_debugOn) {
-          Serial.print(", Setting train STOPPED, Time: "); Serial.println(millis());
-        }
-//        m_pTrainProgress->setStopped(m_devNum, true);
-//        m_pTrainProgress->setTimeStopped(m_devNum, millis());
-      } else {  // If the speed is changing but not stopping, update isStopped false (in case we were previously stopped.)
-        if (m_debugOn) {
-          Serial.print(", Setting train NOT stopped, Time: "); Serial.println(millis());
-        }
-//        m_pTrainProgress->setStopped(m_devNum, false);
-      }
-    }
     return;  // If TMCC_ENGINE or TMCC_TRAIN command, we're done.
   }
 

@@ -20,11 +20,6 @@
 // The Engineer asks for ripe commands, and when available, translates them into Legacy/TMCC 3/6/9-byte commands, and inserts them
 // into the Legacy Command circular buffer in order to pace output with 30ms delays between commands sent out.
 
-// Also, as ripe speed-change commands (ABS_SPEED, STOP_IMMED, EMERG_STOP) are read from Delayed Action and transferred into the
-// Legacy Command Buffer (for almost-immediate execution,) getDelayedActionCommand() also keeps the loco's Train Progress "current
-// speed & time" up to date (LEG only.)
-// NOTE 3/5/23: isStopped is used primarily by MAS and thus needs to be updated based on tripping a Stop sensor, not by Engineer.
-
 // Accessory (non-Legacy-related) commands control the Accessory Relay bank, used i.e. for lowering/raising crossing gates and
 // other equipment that is affected by the location of the trains.  Accessory commands are executed immediately and are not
 // impacted by Legacy/TMCC commands, so they don't reset the 30ms-minimum-between-successive-Legacy-commands countdown timer.

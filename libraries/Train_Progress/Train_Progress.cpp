@@ -63,7 +63,7 @@ void Train_Progress::resetTrainProgress(const byte t_locoNum) {
   }
   m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
   m_pTrainProgress[m_trainProgressLocoTableNum].isActive = false;
-  m_pTrainProgress[m_trainProgressLocoTableNum].isParked = true;
+  m_pTrainProgress[m_trainProgressLocoTableNum].isParked = true;  // We'll set this later; can't know until we know blockNum.
   m_pTrainProgress[m_trainProgressLocoTableNum].isStopped = true;
   m_pTrainProgress[m_trainProgressLocoTableNum].timeStopped = millis();
   m_pTrainProgress[m_trainProgressLocoTableNum].timeToStart = 99999999;  // Don't start until someone tells us to.
@@ -87,8 +87,9 @@ void Train_Progress::resetTrainProgress(const byte t_locoNum) {
 }
 
 void Train_Progress::setInitialRoute(const byte t_locoNum, const routeElement t_block) {
-  // Rev: 08/04/24.  COMPLETE BUT NOT TESTED.
+  // Rev: 08/22/24.  COMPLETE BUT NOT TESTED.
   // REGISTRATION MODE ONLY.
+  // 08/22/24: Added code to look up if block is a Parking block, and set isParked appropriately.
   // 08/04/24: Added support for lastTrippedPtr.
   // 03/23/23: Eliminated sensorNum as parm since we can infer it by block route element i.e. BE03 -> Sensor 6.
   // (Only) during Registration, setInitialRoute() sets up a new Train Progress record as each real train (not STATIC) is learned.
@@ -125,7 +126,12 @@ void Train_Progress::setInitialRoute(const byte t_locoNum, const routeElement t_
   }
 
   m_pTrainProgress[m_trainProgressLocoTableNum].isActive = true;  // This is the only way this can become Active
-  m_pTrainProgress[m_trainProgressLocoTableNum].isParked = true;
+  // Technically, our initial Registration block may not necessarily be a Parking siding (per Block Res'n) so look it up...
+  if (m_pBlockReservation->isParkingSiding(t_block.routeRecVal)) {
+    m_pTrainProgress[m_trainProgressLocoTableNum].isParked = true;
+  } else {
+    m_pTrainProgress[m_trainProgressLocoTableNum].isParked = false;
+  }
   m_pTrainProgress[m_trainProgressLocoTableNum].isStopped = true;
   m_pTrainProgress[m_trainProgressLocoTableNum].timeStopped = millis();
   m_pTrainProgress[m_trainProgressLocoTableNum].timeToStart = 99999999;  // Don't start until someone tells us to.
@@ -260,6 +266,8 @@ byte Train_Progress::locoThatClearedSensor(const byte t_sensorNum) {
 bool Train_Progress::timeToStartLoco(const byte t_locoNum) {
   // Rev: 08/03/24.  NOT YET TESTED
   // Returns true if "timeToStart" > millis()
+  // Counterintuitively, this function is called by MAS (not LEG!) to decide when to get a loco moving -- MAS will send a "sensor
+  // tripped" message to OCC and LEG when it wants it to start moving.
   m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
   if (m_pTrainProgress[m_trainProgressLocoTableNum].timeToStart > millis()) {
     return true;  // Yep, it's okay to get this loco moving!
@@ -367,6 +375,77 @@ unsigned long Train_Progress::currentSpeedTime(const byte t_locoNum) {
   return m_pTrainProgress[m_trainProgressLocoTableNum].currentSpeedTime;
 }
 
+byte Train_Progress::headPtr(const byte t_locoNum) {
+  // Rev: 03/19/23.  DONE BUT NOT TESTED.
+  // Returns element number stored in headPtr.  Not a sensor element.
+  m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
+  return m_pTrainProgress[m_trainProgressLocoTableNum].headPtr;
+}
+
+byte Train_Progress::nextToTripPtr(const byte t_locoNum) {
+  // Rev: 03/19/23.  DONE BUT NOT TESTED.
+  // Returns element number that holds NextToTrip sensor number.
+  m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
+  return m_pTrainProgress[m_trainProgressLocoTableNum].nextToTripPtr;
+}
+
+byte Train_Progress::nextToClearPtr(const byte t_locoNum) {
+  // Rev: 04/11/24.  DONE BUT NOT TESTED.
+  // Returns element number that holds NextToClear sensor number.
+  m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
+  return m_pTrainProgress[m_trainProgressLocoTableNum].nextToClearPtr;
+}
+
+byte Train_Progress::tailPtr(const byte t_locoNum) {
+  // Rev: 03/19/23.  DONE BUT NOT TESTED.
+  // Returns element number that holds Tail sensor number.
+  m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
+  return m_pTrainProgress[m_trainProgressLocoTableNum].tailPtr;
+}
+
+byte Train_Progress::contPtr(const byte t_locoNum) {
+  // Rev: 09/08/24.  DONE BUT NOT TESTED.
+  // Returns element number that holds Continuation sensor number.
+  m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
+  return m_pTrainProgress[m_trainProgressLocoTableNum].contPtr;
+}
+
+byte Train_Progress::stationPtr(const byte t_locoNum) {
+  // Rev: 09/08/24.  DONE BUT NOT TESTED.
+  // Returns element number that holds Station sensor number.
+  m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
+  return m_pTrainProgress[m_trainProgressLocoTableNum].stationPtr;
+}
+
+byte Train_Progress::crawlPtr(const byte t_locoNum) {
+  // Rev: 09/08/24.  DONE BUT NOT TESTED.
+  // Returns element number that holds Crawl sensor number.
+  m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
+  return m_pTrainProgress[m_trainProgressLocoTableNum].crawlPtr;
+}
+
+byte Train_Progress::stopPtr(const byte t_locoNum) {
+  // Rev: 04/11/24.  DONE BUT NOT TESTED.
+  // Returns element number that holds Stop sensor number.
+  m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
+  return m_pTrainProgress[m_trainProgressLocoTableNum].stopPtr;
+}
+
+byte Train_Progress::lastTrippedPtr(const byte t_locoNum) {
+  // Rev: 08/04/24.
+  // Returns element number that holds the sensor number most recently tripped.
+  m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
+  return m_pTrainProgress[m_trainProgressLocoTableNum].lastTrippedPtr;
+}
+
+bool Train_Progress::atEndOfRoute(const byte t_locoNum) {  // True if the train has reached the end of the route.
+  // Rev: 08/05/24.
+  // Easiest way to determine if we have reached the end of our route is to check if lastTrippedPtr == stopPtr.
+  m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
+  return (m_pTrainProgress[m_trainProgressLocoTableNum].lastTrippedPtr == m_pTrainProgress[m_trainProgressLocoTableNum].stopPtr);
+}
+
+
 // *** PUBLIC SETTERS ***
 
 void Train_Progress::setActive(const byte t_locoNum, const bool t_active) {
@@ -385,10 +464,20 @@ void Train_Progress::setParked(const byte t_locoNum, const bool t_parked) {
 }
 
 void Train_Progress::setStopped(const byte t_locoNum, const bool t_stopped) {
-  // Rev: 03/04/23.  DONE BUT NOT TESTED.
-  // For moving, set t_stopped = false
+  // Rev: 09/31/24.  DONE BUT NOT TESTED.
+  // Updates isStopped as well as a couple of other obvious related fields in Train Progress header.
+  // We could potentially also update isParked, since Train Progress has access to Block Res'n (which indicates if a block is a
+  // "parking" block or not,) but we'd also have to pass the block number which we may not always want to do.
+  // So the calling program (MAS/OCC/LEG Auto/Park) will need to maintain isParked manually.
   m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
-  m_pTrainProgress[m_trainProgressLocoTableNum].isStopped = t_stopped;
+  m_pTrainProgress[m_trainProgressLocoTableNum].isStopped = t_stopped;  // True or False per the passed parm.
+  if (t_stopped) {  // If we are setting STOPPED = TRUE
+    m_pTrainProgress[m_trainProgressLocoTableNum].timeStopped = millis() + 3000;  // Allow for 3-second time to stop from Crawl.
+    // currentSpeed and currentSpeedTime are automatically set in LEG, but MAS and OCC might want to know this too...
+    // In fact, in LEG, Engineer will clobber this as the loco slows down until it's stopped.
+    m_pTrainProgress[m_trainProgressLocoTableNum].currentSpeed = 0;
+    m_pTrainProgress[m_trainProgressLocoTableNum].currentSpeedTime = millis();
+  } // else we are setting STOPPED = FALSE, nothing to do (I don't think we want to set timeToStart = 99999999.)
   return;
 }
 
@@ -479,50 +568,6 @@ bool Train_Progress::turnoutOccursAgainInRoute(const byte t_locoNum, const byte 
   return false;
 }
 
-// PUBLIC FUNCTIONS CALLED BY Occupancy_LEDs.h/.cpp class.
-
-byte Train_Progress::headPtr(const byte t_locoNum) {
-  // Rev: 03/19/23.  DONE BUT NOT TESTED.
-  // Returns element number stored in headPtr.
-  m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
-  return m_pTrainProgress[m_trainProgressLocoTableNum].headPtr;
-}
-
-byte Train_Progress::nextToTripPtr(const byte t_locoNum) {
-  // Rev: 03/19/23.  DONE BUT NOT TESTED.
-  // Returns element number that holds NextToTrip sensor.
-  m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
-  return m_pTrainProgress[m_trainProgressLocoTableNum].nextToTripPtr;
-}
-
-byte Train_Progress::nextToClearPtr(const byte t_locoNum) {
-  // Rev: 04/11/24.  DONE BUT NOT TESTED.
-  // Returns element number that holds NextToClear sensor.
-  m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
-  return m_pTrainProgress[m_trainProgressLocoTableNum].nextToClearPtr;
-}
-
-byte Train_Progress::tailPtr(const byte t_locoNum) {
-  // Rev: 03/19/23.  DONE BUT NOT TESTED.
-  // Returns element number that holds Tail sensor.
-  m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
-  return m_pTrainProgress[m_trainProgressLocoTableNum].tailPtr;
-}
-
-byte Train_Progress::stopPtr(const byte t_locoNum) {
-  // Rev: 04/11/24.  DONE BUT NOT TESTED.
-  // Returns element number that holds Stop sensor.
-  m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
-  return m_pTrainProgress[m_trainProgressLocoTableNum].stopPtr;
-}
-
-byte Train_Progress::lastTrippedPtr(const byte t_locoNum) {
-  // Rev: 08/04/24.
-  // Returns element number that holds the sensor most recently tripped.  Needed by LEG.
-  m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
-  return m_pTrainProgress[m_trainProgressLocoTableNum].lastTrippedPtr;
-}
-
 routeElement Train_Progress::peek(const byte t_locoNum, const byte t_elementNum) {
   // Rev: 03/05/23.  FINISHED BUT NOT TESTED ***********************************************************************************************
   // Return contents of T.P. element for this loco.  t_locoNum should be 1..TOTAL_TRAINS (not zero offset.)
@@ -531,13 +576,6 @@ routeElement Train_Progress::peek(const byte t_locoNum, const byte t_elementNum)
   // Also when traversing elements due to sensor trips and clears, to execute those commands and find new sensors.
   m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
   return m_pTrainProgress[m_trainProgressLocoTableNum].route[t_elementNum];
-}
-
-bool Train_Progress::atEndOfRoute(const byte t_locoNum) {  // True if the train has reached the end of the route.
-  // Rev: 08/05/24.
-  // Easiest way to determine if we have reached the end of our route is to check if lastTrippedPtr == stopPtr.
-  m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
-  return (m_pTrainProgress[m_trainProgressLocoTableNum].lastTrippedPtr == m_pTrainProgress[m_trainProgressLocoTableNum].stopPtr);
 }
 
 byte Train_Progress::incrementTrainProgressPtr(const byte t_oldPtrVal) {
@@ -648,8 +686,11 @@ void Train_Progress::addRoute(const byte t_locoNum, const unsigned int t_routeRe
   // parameters right off the bat:
   m_trainProgressLocoTableNum = t_locoNum - 1;  // m_trainProgressLocoTableNum 0..49 == t_locoNum 1..50
   m_pTrainProgress[m_trainProgressLocoTableNum].isParked = false;   // If we'll be moving again, we aren't parked!
-  m_pTrainProgress[m_trainProgressLocoTableNum].isStopped = false;  // Ditto; we're no longer at the end of a route (if we were.)
-  m_pTrainProgress[m_trainProgressLocoTableNum].timeToStart = millis() + t_countdown;  // Could be zero or some delay in ms
+  // But we don't know how long until we start moving, so we'll leave let MAS/OCC/LEG update "isStopped" manually.
+  // We'll also leave "timeToStart" unchanged if this is a Continuation (not stopping) route; else set per passed t_countdown parm.
+  if (t_continuationOrExtension == ROUTE_TYPE_EXTENSION) {
+    m_pTrainProgress[m_trainProgressLocoTableNum].timeToStart = millis() + t_countdown;  // Could be zero or some delay in ms
+  }
   routeElement tempElement;  // Used in various operations below as a scratch element routeRecType, routeRecVal i.e. BE01
   byte tempElementPtr = 0;   // Used in various operations below as a scratch pointer
 

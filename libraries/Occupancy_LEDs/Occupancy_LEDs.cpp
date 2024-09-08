@@ -118,11 +118,11 @@ void Occupancy_LEDs::paintOneBlockOccupancyLED(const byte t_blockNum) {
 }
 
 void Occupancy_LEDs::paintAllBlockOccupancyLEDs() {
-  // Rev: 08/05/24.  FINISHED BUT NOT YET TESTED.  THIS WILL BE DIFFICULT TO TEST UNTIL I AM ABLE TO POPULATE THE TRAIN PROGRESS TABLE WITH SOME GOOD DATA **********
-  // IMPORTANT: We should probably modify this to accept a locoNum parm, and only re-paint for a given Train Progress record.  But
+  // Rev: 08/05/24.  FINISHED BUT NOT YET TESTED.
+  // IMPORTANT: We can always modify this to accept a locoNum parm, and only re-paint for a given Train Progress record.  But that
   //            that would not be trivial, since we re-initialize every Block LED value at the beginning of this function.  So only
   //            worry about this if performance becomes an issue (and since this is OCC's only job, that seems unlikely, but we will
-  //            have to see if it results in flashing LEDs when it's refreshed or other annoying behavior.
+  //            have to see if it results in flashing LEDs when it's refreshed or other annoying behavior.)
   // Works for OCC AUTO/PARK (Running and Stopping) modes only, as it relies on an accurate Train Progress table.
   // Scan the ENTIRE Train Progress table, for all locos, and illuminate all RED "reserved" and BLUE "occupied" LEDs.
   // We will call this function in Auto/Park mode:

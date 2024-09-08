@@ -1,4 +1,4 @@
-// TRAIN_PROGRESS.H Rev: 08/04/24.  HEAP STORAGE.  Used by MAS, LEG, and OCC.  Not needed by SNS or LED.
+// TRAIN_PROGRESS.H Rev: 08/22/24.  HEAP STORAGE.  Used by MAS, LEG, and OCC.  Not needed by SNS or LED.
 // Part of O_MAS, O_OCC, and O_LEG.
 // Keeps track of the route and location of each train during Registration, Auto and Park modes.
 // 08/04/24: Added lastTrippedPtr to Train Progress.  LEG needs to keep track of where the loco is located and I can't think of a
@@ -182,36 +182,66 @@
 //   - SN Sensor: When we encounter the next sensor ahead, set TAIL = (old) NEXT-TO-CLEAR, set NEXT-TO-CLEAR to the
 //     newly-encountered sensor record.
 
-//   ******************************************************************************
-//   ***** EXPLANATION OF TRAIN PROGRESS FLAGS AND POINTERS *** REV: 03/05/23 *****
-//   ******************************************************************************
+// ******************************************************************************
+// ***** EXPLANATION OF TRAIN PROGRESS FLAGS AND POINTERS                   *****
+// ***** Rev: 09/02/24                                                      *****
+// ***** These comments, not the comments in the spreasheed field desc'ns,  *****
+// ***** are the definitive explanation of how each field is used.          *****
+// ******************************************************************************
 //
-//   isActive  is set false by MAS/OCC/LEG Train Progress when Registration begins (resetTrainProgress().)
-//   isActive  is set true  by MAS/OCC/LEG Train Progress when MAS Dispatcher sends setInitialRoute() and never changes.
-//   isParked  MAS ONLY is set true  by MAS/OCC/LEG Train Progress when Registration begins.
-//   isParked  is set true/false by MAS/OCC/LEG Train Progress each time it receives an Extension or Continuation Route, based on
-//             the destination block's type (parking true/false.)  Thus, it will indicate if the loco *will be* parked upon
-//             finishing the current Route.
-//             Needed only by MAS, in Park mode, but could potentially also be used by LEG to shut down loco for nice effect.
-//   isStopped is set true  by MAS/OCC/LEG Train Progress when Registration begins (resetTrainProgress().)
-//   isStopped is set true  by MAS/OCC/LEG Train Progress when stopPtr "stop" sensor is tripped.
-//   isStopped is set false by MAS/OCC/LEG Train Progress each time any other sensor is tripped, or any sensor clears.
-//             Can't let Engineer keep it up to date because MAS needs it.  So we have to rely on sensor trips/clears.
-//   isStopped could alternatively be set false by MAS/OCC/LEG Train Progress each time nextToTripPtr is advanced.  Train may not
-//             actually be moving at that point, but it will be moving soon-ish (per timeToStart.)
-//   timeStopped is updated by MAS/OCC/LEG Train Progress each time isStopped is set true.
-//   timeToStart is set to 99999999 by MAS/OCC/LEG Train Progress  when Registration begins (resetTrainProgress().)
-//   timeToStart is updated by MAS/OCC/LEG Train Progress each time an Extension Route is received.  This field is not relevant
-//             when setInitialRoute() is transmitted because there is nowhere to go, and not relevant when addContinuationRoute()
-//             is transmitted because we will already be moving.
-//             The field can be used by OCC and LEG to make announcements, and of course by Conductor to start the train moving.
-//   currentSpeed LEG ONLY is set to 0, and currentSpeedTime is set to the current time millis() by MAS/OCC/LEG Train Progress when
-//             Registration begins (resetTrainProgress().)  Actually currentSpeedTime isn't even used by LEG.
-//   currentSpeed and currentSpeedTime are kept up to date by (only) LEG Engineer, each time a speed-related command is sent to the
-//             Legacy Command Buffer/Base.  They're used/needed ONLY by LEG Conductor when populating a D.A. speed change.
-//             Conductor will always use this as our starting speed when calculating new accel/decel commands.  If the value is not
-//             an exact match for one of the loco's three speeds (L/M/H) then we have some sort of a problem, likely a "bug" in the
-//             Route Reference spreadsheet (not allowing enough time/distance to reach a subsequent speed.)
+// isActive     ALL MODULES.
+//              How we know if there is a real train for this Train Progress record; first thing we check when scanning T.P.
+//              Automatically set FALSE by T.P. when class initialized at beginning of Registration (resetTrainProgress.)
+//              Automatically set TRUE by T.P. when train is Registered (setInitialRoute.)
+// isParked     ALL MODULES.
+//              In Park mode, how we know if loco is Stopped in a Parking siding.  Can only be true if isStopped also true.
+//              Automatically set TRUE by T.P. when class initialized at beginning of Registration (resetTrainProgress.)
+//                It's arbitrary as we don't have a blockNum yet.
+//              Automatically set TRUE/FALSE by T.P. when train is Registered (setInitialRoute.)  We know we're stopped, and we'll
+//                look up value in Block Res'n table.
+//              Automatically set FALSE by T.P. whenever a new route is added in Auto/Park (addRoute) since we're no longer at the
+//                end of a route thus can't park here.
+//              Must be MANUALLY set by MAS/OCC/LEG Auto/Park each time a Stop sensor is Tripped, per Block Res'n (even if not
+//                Park mode.)  The reason we set even if Auto mode is if user enters Park mode, and we're already stopped in a
+//                parking siding, no need to assign a new route to get to one.
+//              Only really needed by MAS, but maybe useful to OCC for end-of-line station announce, and LEG to shut down loco.
+// isStopped    ALL MODULES.
+//              In Auto/Park mode, how we know if a train is Stopped in a siding (may or may not be a Parking siding.)
+//              Automatically set TRUE by Train Progress when class initialized at beginning of Registration (resetTrainProgress.)
+//              Automatically set TRUE by Train Progress when train is Registered (setInitialRoute.)
+//              Must be MANUALLY set TRUE by MAS/OCC/LEG Auto/Park each time a Stop sensor is Tripped.
+//              Must be MANUALLY set FALSE by MAS/OCC/LEG each time Next-To-Trip is advanced.
+//              For MAS and OCC, "isStopped" implies stopped at the end of a route; not just when stopping to reverse direction.
+//              For MAS and OCC, setting FALSE won't be timely as it won't be set until loco has already started and trips the
+//                next sensor in the route.
+//              For LEG, "isStopped" is set TRUE/FALSE *every time* a speed command is sent to the Legacy base.  So even stopping
+//                to Reverse will flag isStopped, for better or worse.  But MAS and OCC only care about how they set it themselves.
+// timeStopped  ALL MODULES.
+//              In Auto/Park mode, how we'll know how long a train has been stopped -- perhaps to delay re-start for a reasonable
+//                time, or for announcements.
+//              Automatically set to current time by T.P. when class initialized at beginning of Registration (resetTrainProgress.)
+//              Automatically set to current time by T.P. when train is Registered (setInitialRoute.)
+//              Automatically set to current time by T.P. whenever setStopped(locoNum, bool stopped) is set TRUE.
+//                For LEG, "timeStopped" is to millis() every time a speed command of zero is sent to the Legacy base.
+// timeToStart  ALL MODULES.
+//                In Auto/Park mode, for MAS to know when to start a train moving, and all modules to know time of departure, to
+//                  make pre-departure announcements, for example.
+//                  But note that LEG must receive a "fake" Sensor Trip message from MAS, as LEG can't just start a loco moving
+//                  without MAS and OCC knowing about it (i.e. that the sensor the loco is sitting on becomes "Tripped.")
+//                  Thus, LEG will not use timeToStart as a means of starting a stopped train.
+//                Automatically set to infinity by T.P. when class initialized at beginning of Registration (resetTrainProgress.)
+//                Automatically set to infinity by T.P. when train is Registered(setInitialRoute.)
+//                Automatically set to passed parm by T.P. whenever a new Extension (not Cont'n) Route is received (addRoute.)
+
+// currentSpeed LEG ONLY.
+//              In Auto/Park mode, LEG ONLY, this will be the precise speed of the loco at any given moment; in the range 0..199.
+//              Automatically set to 0 by Train Progress when class initialized at beginning of Registration (resetTrainProgress.)
+//              Automatically set to 0 by Train Progress when train is Registered (setInitialRoute.)
+//              Automatically updated by LEG Engineer every time any speed adjustment is transferred from the Legacy Cmd Buf to the
+//                Legacy base.  0..199.
+//              LEG Conductor will always use this as our starting speed when calculating new accel/decel commands.  If the value
+//                is not an exact match for one of the loco's three speeds (L/M/H) then we have a problem, likely a "bug" in Route
+//                Reference (not allowing enough time/distance to reach a subsequent speed,) though not necessarily critical.
 //
 // NOTE: The following pointer fields are ELEMENT NUMBERS, NOT SENSOR NUMBERS.  Trivial array index lookup to get sensorNums.
 //
@@ -264,7 +294,7 @@
 //                make an arrival horn toot.  LEG Conductor and OCC PA can send "train has arrived" announcements.
 // lastTrippedPtr Points to the element number of the sensor that was most recently tripped by a loco.  It helps LEG Auto/Park mode
 //                determine if it should start a stopped loco, such as when Auto/Park starts after Registration, or after a train
-//                has stopped and is then assigned an Extension route.  Automatically updated when train is Registered, and whenever
+//                has stopped and is then assigned an Extension route. Automatically updated when train is Registered, and whenever
 //                locoThatTrippedSensor() is called.  Can also be updated by setLastTrippedPtr() and retrieved by lastTrippedPtr().
 
 #ifndef TRAIN_PROGRESS_H
@@ -329,6 +359,19 @@ class Train_Progress {
     unsigned long timeToStart(const byte t_locoNum);
     byte currentSpeed(const byte t_locoNum);               // LEG only.  Kept up-to-date by Engineer.  0.199.
     unsigned long currentSpeedTime(const byte t_locoNum);  // LEG only.  Kept up-to-date by Engineer.
+    byte headPtr(const byte t_locoNum);                // Note: Head does not point to a sensor (just an empty element)
+    byte nextToTripPtr(const byte t_locoNum);          // Returns element number that holds NextToTrip sensor.
+    byte nextToClearPtr(const byte t_locoNum);         // Returns element number that holds NextToClear sensor.
+    byte tailPtr(const byte t_locoNum);                // Returns element number that holds Tail sensor.
+
+    byte contPtr(const byte t_locoNum);                // Returns element number that holds continuation sensor number.
+    byte stationPtr(const byte t_locoNum);             // Returns element number that holds station sensor number.
+    byte crawlPtr(const byte t_locoNum);               // Returns element number that holds crawl sensor number.
+    byte stopPtr(const byte t_locoNum);                // Returns element number that holds number of last sensor in route.
+
+    byte lastTrippedPtr(const byte t_locoNum);         // Returns element number that holds sensor number most recently tripped.
+
+    bool atEndOfRoute(const byte t_locoNum);  // True if lastTrippedPtr == stopPtr.
 
     // *** PUBLIC SETTERS ***
     void setActive(const byte t_locoNum, const bool t_active);    // True if Active
@@ -354,20 +397,12 @@ class Train_Progress {
     // Increment/Decrement Pointer functions return the next/prev rec num 0..139; they don't update the passed value.
     byte incrementTrainProgressPtr(const byte t_oldPtrVal);  // Just add 1, but use MODULO to wrap from end to 0.
     byte decrementTrainProgressPtr(const byte t_oldPtrVal);  // Just subtract 1, but use MODULO to wrap from 0 back to end.
-    byte headPtr(const byte t_locoNum);                // Note: Head does not point to a sensor (just an empty element)
-    byte nextToTripPtr(const byte t_locoNum);          // Returns element number that holds NextToTrip sensor.
-    byte nextToClearPtr(const byte t_locoNum);         // Returns element number that holds NextToClear sensor.
-    byte stopPtr(const byte t_locoNum);                // Returns element number that holds last sensor in route.
-    byte lastTrippedPtr(const byte t_locoNum);         // Returns element number that holds the sensor most recently tripped.
-
-    byte tailPtr(const byte t_locoNum);                // Returns element number that holds Tail sensor.
     routeElement peek(const byte t_locoNum, const byte t_elementNum);  // Return contents of T.P. element for this loco.
     // peek() allows us to search Train Progress elements without affecting the contents.
     // For instance, looking ahead for matching Turnout or Block records to know if we can release a reservation, and looking back
     // when we add route extensions if we need to change a VL01 to the block standard speed (which requires poke().)  Also when
     // traversing elements due to sensor trips and clears, to execute those commands and find new sensors.
 
-    bool atEndOfRoute(const byte t_locoNum);  // True if lastTrippedPtr == stopPtr.
     void setNextToTripPtr(const byte t_locoNum, const byte t_nextToTripPtr);
     void setNextToClearPtr(const byte t_locoNum, const byte t_nextToClearPtr);
     void setTailPtr(const byte t_locoNum, const byte t_tailPtr);

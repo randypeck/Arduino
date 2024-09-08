@@ -1,6 +1,9 @@
-// ROUTE_REFERENCE.H Rev: 04/07/24.  TESTED AND WORKING.
+// ROUTE_REFERENCE.H Rev: 09/08/24.  TESTED AND WORKING.
 // Route Reference table is stored in FRAM, and is used by MAS, OCC, and LEG to maintain their Train Progress tables.
 // All three modules must have identical matching Route tables in FRAM, as MAS sends FRAM record number to identify routes.
+
+// 09/08/24: Deprecated Route Rule 9; we will now allow turnouts to occur  multiple times in a route without any special
+// considerations; let's hope MAS can throw them the instant the sensor ahead of them is tripped.
 
 // 03/01/23: Eliminated levels field.
 // 01/24/23: Did some tests and determined that as long as an object is instantiated in .ino via a global pointer and using "new"
@@ -59,7 +62,7 @@
 //        Route ID is simply used as a cross-reference back to the original spreadsheet, for reporting and debugging.
 //        Route ID CANNOT be used as a lookup into the FRAM table since it's not sorted that way (unless by sequential search.)
 
-// ROUTE RULES rev: 08/07/24:
+// ROUTE RULES rev: 09/08/24:
 // 1. All routes in Route Reference must begin with Block + Sensor + Direction + Velocity.
 //    Train Progress new routes get the SN00+VL01 inserted at the beginning so that Tail has a sensor to point to, and VL01 just
 //    to keep it looking like the end of a normal route.
@@ -109,8 +112,10 @@
 //    speed change using Medium momentum.
 //    This will require some fine tuning on how we decide acceleration and deceleration rates other than when slowing to Crawl
 //    (and including when backing into sidings and then pulling forward.)
-// 9. When stopping then reversing then stopping again within a single block (i.e. back into single-ended siding, then forward
-//    until we trip the exit sensor) speed must be VL01 (Crawl.)
+// 9. This rule isn't going to work, as documented in MAS Auto/Park mode comments.  Now being written so allow Turnout elements to
+//    recur anywhere, as long as MAS can throw quickly.
+//    DEPRECATED RULE: When stopping then reversing then stopping again within a single block (i.e. back into single-ended siding,
+//    then forward until we trip the exit sensor) speed must be VL01 (Crawl.)
 //    This could get boring when this happens in a long siding and/or a short train, because the train will be crawling the length
 //    of the siding, less the length of the train itself.
 //    FUTURE: We can add logic to make the train speed up then slow back down to crawl within the limited space, but we'll need to
