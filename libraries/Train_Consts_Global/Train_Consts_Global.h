@@ -136,7 +136,7 @@ const unsigned int  HEAP_RECS_TRAIN_PROGRESS =    140;  // Train Progress table 
 // *** DELAYED-ACTION TABLE CONSTS ***
 
 // SUMMARY OF ALL LEGACY/TMCC COMMANDS THAT CAN BE POPULATED IN THE DELAYED-ACTION TABLE as Device Command in Delayed Action:
-// Rev: 02/22/23
+// Rev: 09/11/24
 // THESE CONSTS ARE NEEDED BY THE CONDUCTOR, DELAYED ACTION, AND ENGINEER CLASSES, SO THEY ARE DEFINED GLOBAL HERE.
 // Station PA Announcements aren't part of Delayed Action, because OCC controls the WAV Trigger.
 //   Don't confuse this with Loco and StationSounds Diner announcements, which ARE handled by Delayed Action.
@@ -179,6 +179,8 @@ const byte LEGACY_DIALOGUE             = 41;  // Separate function.  For any of 
 const byte TMCC_DIALOGUE               = 42;  // Separate function.  For any of the 6 TMCC StationSounds Diner cmds, which will be passed as a parm.
 const byte LEGACY_NUMERIC_PRESS        = 43;  // 3-byte.  Need for vol up/down
 
+const byte LEGACY_DEFAULT_SPEED_STEP         =   3;  // 3 Legacy speed steps per speed increment or decrement
+const unsigned int LEGACY_DEFAULT_STEP_DELAY = 300;  // 300ms per Legacy speed step
 
 // LEGACY HORN COMMAND *PATTERNS* (used by Conductor class to pass horn patterns to Delayed_Action class.)
 const byte LEGACY_PATTERN_SHORT_TOOT   =  1;  // S    (Used informally i.e. to tell operator "I'm here" when registering)

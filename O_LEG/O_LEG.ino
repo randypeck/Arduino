@@ -1,4 +1,4 @@
-// O_LEG.INO Rev: 09/05/24.
+// O_LEG.INO Rev: 09/16/24.
 // LEG controls physical trains via the Train Progress and Delayed Action tables, and also controls accessories.
 // LEG also monitors the control panel track-power toggle switches, to turn the four PowerMasters on and off at any time.
 // 04/02/24: LEG Conductor/Engineer and Train Progress will always assume that Turnouts are being thrown elsewhere and won't worry
@@ -56,7 +56,7 @@
 #include <Train_Consts_Global.h>
 #include <Train_Functions.h>
 const byte THIS_MODULE = ARDUINO_LEG;  // Global needed by Train_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "LEG 07/30/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "LEG 09/16/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 
 // *** SERIAL LCD DISPLAY CLASS ***
 // #include <Display_2004.h> is already in <Train_Functions.h> so not needed here.
@@ -563,6 +563,9 @@ void LEGRegistrationMode() {
 
 void LEGAutoParkMode() {
 
+
+// 9/16/24: LEFT OFF HERE Get rid of the following comments that are redundant from what's in the commented code that I'm going to copy from OCC. ******************************
+
   // Rev: 09-08-24.
   // NOTE 09-02-24: MAS/OCC/LEG need to pay attention to how/when isParked, isStopped, timeStopped, timeToStart, currentSpeed,
   //   currentSpeedTime, and expectedStopTime are updated -- as I'm not yet confident they're all being updated appropriately.
@@ -609,30 +612,36 @@ void LEGAutoParkMode() {
 
   //     Get the locoNum that tripped the sensor.
 
+  //     IF WE TRIPPED THE CONTINUATION sensor: (we may or may not stop ahead)
+  //       MAS: Decide if we want to assign a Continuation (not stopping) route for this train; do so if desired.
+  //       OCC & LEG: Ignore.
+
+  //     IF WE TRIPPED THE STATION sensor: (means we are for sure stopping)
+  //       LEG: Make loco-to-tower "now arriving" announcement if it's a major station.
+
+  //     IF WE TRIPPED THE CRAWL sensor:
+  //       OCC: Make arrival announcement at station (if passenger train and passenger station)
+  //       LEG: Turn on loco' bell
+  //       LEG: Blow horn LEGACY_PATTERN_APPROACHING
+
   //     IF WE TRIPPED THE STOP SENSOR (END OF ROUTE):
 
   //       None of the 8 pointers need to be updated (CONT, STATION, CRAWL, STOP, TAIL, CLEAR, TRIP, or HEAD.
-  //       Next element will always be VL00, followed by HEAD.
+  //       OCC: Make "has arrived" station announcement.
+  //       MAS/OCC/LEG: Update Train Progress isParked = true IFF block is Block Res'n "parking siding."
+  //       MAS/OCC/LEG: Update Train Progress isStopped = true @ millis() + 3000 (due to 3-second stop time from tripping sensor.)
   //       LEG: Populate Delayed Action to stop the loco (in 3 seconds, from Crawl.)
   //       LEG: Delay 3 seconds, turn off bell, delay .5 seconds, blow horn LEGACY_PATTERN_STOPPED
   //       OCC/LEG: Delay as needed, make "has arrived" announcement.
-  //       MAS/OCC/LEG: Update Train Progress isParked = true IFF block is Block Res'n "parking siding."
-  //       MAS/OCC/LEG: Update Train Progress isStopped = true @ millis() + 3000 (due to 3-second stop time from tripping sensor.)
   //       LEG: Train Progress currentSpeed and currentSpeedTime will be written automatically by Engineer.
 
-  //     ELSE (IF WE TRIPPED ANY SENSOR OTHER THAN STOP SENSOR (END-OF-ROUTE)):
+
+
+
+  //     IF WE TRIPPED ANY SENSOR OTHER THAN STOP SENSOR (END-OF-ROUTE):
 
   //       Since we know we didn't just trip the STOP sensor, we are guaranteed to have another sensor ahead in the route, and
   //         this will become the new Next-To-Trip sensor.
-  //       IF WE TRIPPED THE CONTINUATION sensor: (we may or may not stop ahead)
-  //         MAS: Decide if we want to assign a Continuation (not stopping) route for this train; do so if desired.
-  //         OCC & LEG: Ignore.
-  //       IF WE TRIPPED THE STATION STOP sensor: (means we are for sure stopping)
-  //         OCC and LEG: Make announcement (via PA, via loco.)  Or wait until we trip the CRAWL sensor.
-  //       IF WE TRIPPED THE CRAWL sensor:
-  //         LEG: Turn on bell, make arrival announcement on loco.
-  //         LEG: Blow horn LEGACY_PATTERN_APPROACHING
-  //         OCC: Make arrival announcement at station.
 
   //       Now, FOR ALL SENSOR TRIPS EXCEPT STOP SENSOR, including the above CONT, STATION, CRAWL:
   //       Process each T.P. route element from first element following just-tripped sensor to next SN sensor record:
@@ -692,7 +701,7 @@ void LEGAutoParkMode() {
 
 
 // Left off here 9/6/24 *********************************************************************************************************************************************
-
+// 9/16/24: I think most of the following code can be deleted and replaced with the code I wrote for OCC Auto/Park Route, Sensor trip/clear, Mode change *********************************************************
 
   do {  // Operate in Auto/Park until mode == STOPPED
 

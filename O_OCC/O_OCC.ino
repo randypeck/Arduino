@@ -1,4 +1,4 @@
-// O_OCC.INO Rev: 09/08/24.
+// O_OCC.INO Rev: 09/16/24.
 // OCC paints the WHITE Occupancy Sensor LEDs and RED/BLUE Block Occupancy LEDs on the Control Panel.
 // In Registration mode, OCC also prompts operator for initial data, using the Control Panel's Rotary Encoder and 8-Char display.
 // In Auto/Park modes, OCC also autonomously sends arrival and departure announcements to various stations around the layout.
@@ -69,7 +69,7 @@
 #include <Train_Consts_Global.h>
 #include <Train_Functions.h>
 const byte THIS_MODULE = ARDUINO_OCC;  // Global needed by Train_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "OCC 06/22/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "OCC 09/16/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 
 // *** SERIAL LCD DISPLAY CLASS ***
 // #include <Display_2004.h> is already in <Train_Functions.h> so not needed here.
@@ -933,16 +933,55 @@ void OCCAutoParkMode() {
       // Get the Sensor Trip/Clear sensorNum and Tripped/Cleared.
       pMessage->getSNStoALLSensorStatus(&sensorNum, &trippedOrCleared);
 
-      // Update our internal Occupancy LED array that keeps track of sensor status (OCC ONLY.)
-      pOccupancyLEDs->updateSensorStatus(sensorNum, trippedOrCleared);  // Does not illuminate any LEDs, just tracks status.
-
       if (trippedOrCleared == SENSOR_STATUS_TRIPPED) {
 
         // Which loco tripped the sensor?
         locoNum = pTrainProgress->locoThatTrippedSensor(sensorNum);  // Will also update lastTrippedPtr to this sensor
+        // Quick error check: nextToTripPtr(locoNum) should still point at the sensor we just tripped. And since we called
+        // locoThatTrippedSensor(sensorNum), that function will have updated lastTrippedPtr(locoNum) to point at the same sensor.
+        // So just for fun, let's make sure that the two pointers are equal, otherwise this is a bug!
+        if (pTrainProgress->nextToTripPtr(locoNum) != pTrainProgress->lastTrippedPtr(locoNum)) {
+          sprintf(lcdString, "NEXT/LAST SNS ERR!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
+        }
+
+        // First some code for special cases where we've just tripped the CONT, STATION, CRAWL, or STOP sensor.
+
+        // *** IF WE JUST TRIPPED THE ROUTE'S CONTINUATION SENSOR ***
+        if (pTrainProgress->lastTrippedPtr(locoNum) == pTrainProgress->contPtr(locoNum)) {
+
+          // MAS: Decide if we want to assign a Continuation (not stopping) route for this train; do so if desired.
+          // OCC & LEG: Ignore.
+          // *** MAS: DECIDE IF WE WANT TO ADD A CONTINUATION ROUTE, AND IF SO, SEND THAT ROUTE MESSAGE. *****************************************************
+
+        }
+
+        // *** IF WE JUST TRIPPED THE ROUTE'S STATION SENSOR ***
+        if (pTrainProgress->lastTrippedPtr(locoNum) == pTrainProgress->stationPtr(locoNum)) {
+
+          // OCC: Nothing to do.  If this is a passenger train and we're approaching a passenger platform or station that has the
+          //      ability to make a P.A. announcement, but we'll wait and do the OCC station "now arriving" announcement WHEN WE
+          //      TRIP CRAWL, so the OCC and LEG annoucements don't overlap.
+          // LEG: If we're coming to a major station (i.e. that would have a control tower,) regardless if this is a freight or
+          // passenger train, do the LEG loco "now arriving" announcement here, so we have a bit of time before we turn on the bell
+          // and blow the whistle.
+          // *** LEG: IF MAJOR STATION (freight or passenger,) CODE TO MAKE LOCO "NOW ARRIVING" ANNOUNCEMENT (Engineer to Tower) ***************************************************************************************
+
+        }
+
+        // *** IF WE JUST TRIPPED THE ROUTE'S CRAWL SENSOR ***
+        if (pTrainProgress->lastTrippedPtr(locoNum) == pTrainProgress->crawlPtr(locoNum)) {
+
+          // OCC: If this is a passenger train, and we're approaching a passenger station or platform that has the ability to make
+          //      a P.A. announcement, then make the "now arriving" announcement now (after LEG has potentially done the loco-to-
+          //      tower "now arriving" announcement, so they don't talk over each other.)
+          // *** OCC: CODE TO MAKE STATION P.A. ARRIVING ANNOUNCEMENT (if passenger train and passenger station) *************************************************************************************
+          // *** LEG: TURN ON LOCO'S BELL. *****************************************************************************************************************
+          // *** LEG: BLOW HORN LEGACY_PATTERN_APPROACHING. ************************************************************************************************
+
+        }
 
         // *** IF WE JUST TRIPPED THE ROUTE'S STOP SENSOR ***
-        if ((pTrainProgress->atEndOfRoute(locoNum))) {  // We tripped the STOP sensor (requires lastTrippedPtr to be up to date)
+        if (pTrainProgress->lastTrippedPtr(locoNum) == pTrainProgress->stopPtr(locoNum)) {
           // A little error checking, just confirm that the next element is VL00.  We'll assume it's followed by headPtr.
           byte tempTPPointer = pTrainProgress->lastTrippedPtr(locoNum);  // Element number, not a sensor number, just tripped
           tempTPPointer = pTrainProgress->incrementTrainProgressPtr(tempTPPointer);  // Should now be pointing at VL00
@@ -955,19 +994,7 @@ void OCCAutoParkMode() {
           if (tempTPPointer != pTrainProgress->headPtr(locoNum)) {  // Whoopsie!  Big bug!
             sprintf(lcdString, "NOT HEAD AT EOR!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
           }
-          // Okay, we have just tripped the route's STOP sensor for sure.
-          // LEG: Send the "slow to stop" sequence to Delayed Action
-          //      Also make "has arrived" announcement on loco?  Test as I'm not sure how this will work with whistle also tooting.
-          //      Wait 3 sec, then turn turn off bell
-          //      Wait .5 sec, then toot whistle pattern "stopped."
-          // pDelayedAction->populateLocoSlowToStop(locoNum);  // Will stop us from current speed to stopped in 3 sec.
-          // pDelayedAction->populateLocoCommand(millis() + 50, locoNum, LEGACY_DIALOGUE, LEGACY_DIALOGUE_E2T_HAVE_ARRIVED, 0);
-          // pDelayedAction->populateLocoCommand(millis() + 3000, locoNum, LEGACY_SOUND_BELL_OFF, 0, 0);
-          // pDelayedAction->populateLocoWhistleHorn(millis() + 3500, locoNum, LEGACY_PATTERN_STOPPED);
-
-          // OCC: Make "has arrived" announcement
-          // ***** ADD THIS FEATURE IN THE FUTURE *****
-
+          // Now we're certain we' ha've just tripped the route's STOP sensor.
           // MAS/OCC/LEG: Check if this is a parking siding and update Train Progress isParked appropriately.  We're guaranteed,
           // based on our Route Rules, that the element before the Stop sensor element will be a Block Number, so use this.
           tempTPPointer = pTrainProgress->stopPtr(locoNum);  // Re-establish our position
@@ -979,84 +1006,157 @@ void OCCAutoParkMode() {
           pTrainProgress->setParked(locoNum, pBlockReservation->isParkingSiding(tempTPElement.routeRecVal));
           pTrainProgress->setStopped(locoNum, millis() + 3000);
 
-        // *** IF WE TRIPPED ANY SENSOR OTHER THAN THE STOP SENSOR ***
-        } else {  // We tripped some sensor before the end of the route.
-          // First an error check: nextToTripPtr(locoNum) should still point at the sensor we just tripped. And since we called
-          // locoThatTrippedSensor(sensorNum), that function will have updated lastTrippedPtr(locoNum) to point at the same sensor.
-          // So just for fun, let's make sure that the two pointers are equal, otherwise this is a bug!
-          if (pTrainProgress->nextToTripPtr(locoNum) != pTrainProgress->lastTrippedPtr(locoNum)) {
-            sprintf(lcdString, "NEXT/LAST SNS ERR!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
-          }
+          // OCC: If this is a passenger train, and we're stopping at a passenger station or platform that has the ability to make
+          //      a P.A. "has arrived" announcement, then wait a few seconds then make the announcement (after LEG has potentially
+          //      made the loco-to-tower "now arriving" announcement.)
+          // LEG: Send the "slow to stop" sequence to Delayed Action
+          // pDelayedAction->populateLocoSlowToStop(locoNum);  // Will stop us from current speed to stopped in 3 sec.
+          // LEG: Wait 3 sec, then turn turn off bell
+          // pDelayedAction->populateLocoCommand(millis() + 3000, locoNum, LEGACY_SOUND_BELL_OFF, 0, 0);
+          // LEG: Wait .5 sec, then toot whistle pattern "stopped."
+          // pDelayedAction->populateLocoWhistleHorn(millis() + 3500, locoNum, LEGACY_PATTERN_STOPPED);
+          // LEG: If this is a passenger train with a Stationsounds Diner car, and we're stopping at a passenger station or
+          //      platform, wait 3 seconds, then have the Stationsounds Diner make a "watch your step" announcement.
+          // pDelayedAction->populateLocoCommand(millis() + 6500, locoNum, LEGACY_DIALOGUE, LEGACY_DIALOGUE_E2T_HAVE_ARRIVED, 0);
 
-          // *** IF WE JUST TRIPPED THE ROUTE'S CONTINUATION SENSOR ***
-          // MAS: Decide if we want to assign a new route (and do so if desired.)
-          if (pTrainProgress->lastTrippedPtr(locoNum) == pTrainProgress->contPtr(locoNum)) {
+        }
 
-            // *** WHATEVER LOGIC MAS NEEDS TO DECIDE IF IT WANTS TO ADD A CONTINUATION ROUTE GOES HERE ********************************************************
-
-          }
-
-          // *** IF WE JUST TRIPPED THE ROUTE'S STATION STOP SENSOR ***
-          // OCC and LEG: Make an announcement via P.A. and loco (or wait for Crawl trip.)
-          if (pTrainProgress->lastTrippedPtr(locoNum) == pTrainProgress->stationPtr(locoNum)) {
-
-            // *** WHATEVER LOGIC OCC AND LEG NEED TO MAKE STATION P.A. AND LOCO "NOW ARRIVING" ANNOUNCEMENTS GOES HERE ****************************************
-
-          }
-
-          // *** IF WE JUST TRIPPED THE ROUTE'S CRAWL SENSOR ***
-          // OCC: Make P.A. arrival announcement at the station.
-          // LEG: Turn on bell, make loco arrival announcement.
-          // LEG: Blow horn LEGACY_PATTERN_APPROACHING
-          if (pTrainProgress->lastTrippedPtr(locoNum) == pTrainProgress->crawlPtr(locoNum)) {
-
-            // *** WHATEVER LOGIC OCC AND LEG NEED TO DO HERE **************************************************************************************************
-
-          }
-
+        // Now run code that applies to *any* sensor trip *except* the Stop sensor (even including Cont, Station, and Crawl.)
+        if (pTrainProgress->lastTrippedPtr(locoNum) != pTrainProgress->stopPtr(locoNum)) {
           // *** FOR ALL SENSOR TRIPS EXCEPT THE ROUTE'S STOP SENSOR ***
+          // Since we know we didn't just trip the STOP sensor, we are guaranteed to have another sensor ahead in the route.
           // Process each T.P. route element from first element following the just-tripped sensor to next SN sensor record.
           byte tempTPPointer = pTrainProgress->lastTrippedPtr(locoNum);  // Element number (not a sensor number) just tripped.
-          // Since tempTPPointer points to the sensor record that we just tripped, the first thing we do in the following do loop
-          // is increment the pointer to the first element following the sensor we just tripped.
           routeElement tempTPElement;
           // Advance Next-To-Trip pointer until we find the next sensor, which will become the new Next-To-Trip sensor.
           // As we move our pointer forward, handle each route element as necessary, depending on if MAS, OCC, or LEG.
+          // Since tempTPPointer still points to the sensor record that we just tripped, the first thing we'll do in the following
+          // do..loop is increment the pointer to the first element following the sensor we just tripped (or are sitting on.)
           do {
             tempTPPointer = pTrainProgress->incrementTrainProgressPtr(tempTPPointer);  // Move pointer to next element of T.P.
             tempTPElement = pTrainProgress->peek(locoNum, tempTPPointer);              // Retrieve that element for analysis
 
-            if (tempTPElement.routeRecType == FD) {  // Loco direction change
-              // LEG: Set loco direction.
-              // IMPORTANT: This should always happen *after* a VL00, so LEG should send the Delayed Action Direction command timed
-              // to occur *after* the loco has stopped -- which takes 3 seconds regardless of incoming speed.
-              //pDelayedAction->populateLocoCommand(millis() + 3500, locoNum, LEGACY_ACTION_FORWARD, 0, 0);
+            // Tricky code when we encounter VL and FD/RD elements, as LEG has to do things different depending on if we are
+            // slowing to a stop to reverse direction, or slowing to a crawl, or accelerating to a crawl, or slowing or
+            // accelerating to some other speed.  Since speed and direction elements must occur together, we'll handle as a group.
+            // Except at EOR (which we're not because we just checked), VL00 will *always* be followed by FD/RD which will *always*
+            // be followed by VL01..VL04, but we may not have the leading VL00 or FD/RD.
+            // So there are only three possibilities:
+            //   VL00 + FD/RD + VL01..VL04 (immediately following SN element) means we want to stop (in 3 seconds), set direction,
+            //                             and then accelerate from stopped using generic acceleration with default step/delay.
+            //          FD/RD + VL01..VL04 (immediately following SN element) means we must be at the beginning of the route and want
+            //                             to accelerate from stopped.  Use generic acceleration using default step/delay momentum.
+            //                  VL01..VL04 (immediately following SN element) simply means adjust speed to this new speed.
+            //                             We will always be already moving when we encounter a lone VL command, and thus:
+            //                             1. A VL01 command will always be "decelerate to Crawl" and consider block length; or
+            //                             2. A VL02..VL04 simply requires a change of speed using default step/delay momentum.
+            // So let's take advantage of those facts to work through these scenarios...
+            if ((tempTPElement.routeRecType == VL) || (tempTPElement.routeRecType == FD) || (tempTPElement.routeRecType == RD)) {
+              // We have a chunk of 1, 2 or 3 Speed/Direction elements to deal with.
+              unsigned long locoTime = millis();  // To keep track of time to execute Delayed Action commands
+              bool weWillBeStopped = false;  // Assume we're moving; will set true if we stop.
 
-            } else if ((tempTPElement.routeRecType == RD) || (tempTPElement.routeRecType == RD)) {  // Loco direction change
-              // LEG: Set loco direction.
-              //pDelayedAction->populateLocoCommand(millis() + 3500, locoNum, LEGACY_ACTION_REVERSE, 0, 0);
-
-            } else if (tempTPElement.routeRecType == VL) {  // Loco speed change.  Applies to LEG only.
-              // LEG: Call Delayed Action to insert a set of speed-up or slow-down commands.  Depending on if we're speeding up or
-              // slowing down, we'll need to use different functions and timing.
-              if (tempTPElement.routeRecVal == 0) {  // Slow to stop (3 seconds)
+              // If we need to stop first, then do that...
+              if ((tempTPElement.routeRecType == VL) && (tempTPElement.routeRecVal == 0)) {
+                // A VL00 can only occur here if it's the first of a 3-element sequence: VL00+FD/RD+VL## accelerate at default mom.
+                // We will almost certainly be going at VL01 Crawl, or very close to it, else something is wrong.
+                // I can't think of a good way to insert a test to confirm we're going slow (may not yet have reached Crawl.)
+                weWillBeStopped = true;  // We know we're stopping now.
+                // Regardless of our current speed, bring the train to a stop in 3 seconds...
                 pDelayedAction->populateLocoSlowToStop(locoNum);  // That was easy!
-              } else if (tempTPElement.routeRecVal == 1) {  // Change speed to CRAWL.
+                locoTime = locoTime + 3500;  // Our next operation will take place after the loco has stopped
+                tempTPPointer = pTrainProgress->incrementTrainProgressPtr(tempTPPointer);  // Move pointer to next element of T.P.
+                tempTPElement = pTrainProgress->peek(locoNum, tempTPPointer);              // Retrieve that element for analysis
+              }
 
-// LEFT OFF HERE 9/8/24 *** LOTS OF OPTIONS DEPENDING IF WE ARE STARTING FROM STOP, OR SLOWING DOWN, ETC. ************************************************************************
+              // If it was necessary for us to stop in order to change direction, then we've stopped (or will in 3 seconds.)
+              // Now see if we need to change direction...could be at the beginning or mid-route, but also not required such as
+              // the case where we simply have a lone VL01..VL04 speed-change command.
+              if (tempTPElement.routeRecType == FD) {
+                // We can be certain that if we encounter an FD or RD, our train must be stopped first.
+                weWillBeStopped = true;
+                pDelayedAction->populateLocoCommand(locoTime, locoNum, LEGACY_ACTION_FORWARD, 0, 0);
+                // We will absolutely start moving in this circumstance, so toot the whistle.
+                pDelayedAction->populateLocoWhistleHorn(locoTime + 100, locoNum, LEGACY_PATTERN_DEPARTING);
+                locoTime = locoTime + 3000;  // Give the whistle time to finish before we start moving
+                tempTPPointer = pTrainProgress->incrementTrainProgressPtr(tempTPPointer);  // Move pointer to next element of T.P.
+                tempTPElement = pTrainProgress->peek(locoNum, tempTPPointer);              // Retrieve that element for analysis
+                weWillBeStopped = true;  // Of course we're stopped to change direction
+              } else if (tempTPElement.routeRecType == RD) {
+                // We can be certain that if we encounter an FD or RD, our train must be stopped first.
+                weWillBeStopped = true;
+                pDelayedAction->populateLocoCommand(locoTime, locoNum, LEGACY_ACTION_REVERSE, 0, 0);
+                // We will absolutely start moving in this circumstance, so toot the whistle.
+                pDelayedAction->populateLocoWhistleHorn(locoTime + 100, locoNum, LEGACY_PATTERN_BACKING);
+                locoTime = locoTime + 3000;  // Give the whistle time to finish before we start moving
+                tempTPPointer = pTrainProgress->incrementTrainProgressPtr(tempTPPointer);  // Move pointer to next element of T.P.
+                tempTPElement = pTrainProgress->peek(locoNum, tempTPPointer);              // Retrieve that element for analysis
+                weWillBeStopped = true;  // Of course we're stopped to change direction
+              }
 
+              // Now, whether we had to stop and change directions, or were already stopped and changed directions, or if we were
+              // already moving -- NOW we'd better be looking at a VL01..VL04 speed command.
+              // If we have a VL01 and we were not stopped, this can only mean we want to slow down to Crawl speed from some higher
+              // speed.  Calculate slow-to-Crawl parms based on block length etc. and slow down.
+              // For any other VL01..VL04, it just means change from the current speed to this new speed using generic step/delay.
+              if (tempTPElement.routeRecType != VL) {  // This would be a bug
+                sprintf(lcdString, "BAD VL COMBO!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
+              } else {  // We've got a VL of some sort
+                if ((tempTPElement.routeRecVal == 1) && (weWillBeStopped == false)) {
+                  // We are *moving* and need to slow to Crawl, so do our magic using block length and loco decel parameters.
+                  // Look up block length so we know how much distance we have to slow from our current speed to Crawl...
 
+                  // Look up the loco deceleration parameters to determine our rate of deceleration and stopping distance.
 
+                  // Based on our current (incoming) speed (which will NOT be zero!), calculate how much longer we should continue
+                  // at this speed before we begin to slow down.
 
+                  pDelayedAction->populateLocoSpeedChange((locoTime + delayTime), locoNum, speedStep, stepDelay, targetSpeed);
 
-            } else if ((tempTPElement.routeRecType == BE) || (tempTPElement.routeRecType == BW)) {  // Block is now considered occupied
+                } else {  // Any speed change other than "slow to Crawl"
+                  // Just for fun, if we're starting from stopped, let's accelerate slower than other speed changes
+                  if (weWillBeStopped == true) {
+
+                    // LEG: Command to slowly accelerate from stopped, but not too slow -- depends on what our target speed is
+
+                  } else {  // We were already moving, so just make a generic speed change using default step and delay
+
+                    // LEG: Generic speed change command when moving, using default step and delay values
+                    // To change speed (other than when slowing to Stop or Crawl,) either use a global default Legacy speed step
+                    // and delay, or have one for each loco...  For now, we'll just pick a global and see how that works out.
+                    // Globals are LEGACY_DEFAULT_SPEED_STEP = 3, and LEGACY_DEFAULT_STEP_DELAY = 300.
+                    // populateLocoSpeedChange expects a Legacy speed value 1..199 (or 1..31 for TMCC) so we need to look that up
+                    // based on our VL value of 01..04.
+                    byte targetLegacySpeed = 0;
+                    if (tempTPElement.routeRecVal == 1) {
+                      targetLegacySpeed = pLoco->crawlSpeed(locoNum);
+                    } else if (tempTPElement.routeRecVal == 2) {
+                      targetLegacySpeed = pLoco->lowSpeed(locoNum);
+                    } else if (tempTPElement.routeRecVal == 3) {
+                      targetLegacySpeed = pLoco->medSpeed(locoNum);
+                    } else if (tempTPElement.routeRecVal == 4) {
+                      targetLegacySpeed = pLoco->highSpeed(locoNum);
+                    } else {
+                      sprintf(lcdString, "VL Speed ERR!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
+                    }
+                    // And we're off and running!
+                    pDelayedAction->populateLocoSpeedChange(locoTime, locoNum, LEGACY_DEFAULT_SPEED_STEP, LEGACY_DEFAULT_STEP_DELAY,
+                                    targetLegacySpeed);
+
+                  }
+                }
+              }
+            // Okay, we've handled the initial VL and FD/RD element(s) that immediately followed our SN sensor, if any.
+
+            } else if ((tempTPElement.routeRecType == BE) || (tempTPElement.routeRecType == BW)) {  // Block element
+              // Block is now considered occupied
               // MAS and LEG: Can't think of anything they need to do.
               // OCC: Any BLOCKS that we traverse here should change status from RESERVED to OCCUPIED, but this is handled
               //      automatically via paintAllBlockOccupancyLEDs().
-            } else if ((tempTPElement.routeRecType == TN) || (tempTPElement.routeRecType == TR)) {  // Turnout
+
+            } else if ((tempTPElement.routeRecType == TN) || (tempTPElement.routeRecType == TR)) {  // Turnout element
               // OCC: Can't think of anything OCC needs to do.
               // MAS: Throw turnout.  Turnouts are thrown by MAS via an RS-485 message to O_SWT.
-
               //        turnoutDir must be TURNOUT_DIR_NORMAL or TURNOUT_DIR_REVERSE
               //        byte turnoutNum = tempTPElement.routeRecVal;
               //        char turnoutDir;
@@ -1068,24 +1168,33 @@ void OCCAutoParkMode() {
               //        pMessage->sendMAStoALLTurnout(turnoutNum, turnoutDir);
 
 
+            } else if (tempTPElement.routeRecType == SN) {  // Sensor means we're almost done!
+              // ALL: Set Next-To-Trip sensor to this sensor element number.
+              pTrainProgress->setNextToTripPtr(locoNum, tempTPPointer);
+              // The only way we can be parked is at the end of a route *and* in a parking siding.  We know we're not at the end
+              // of our route because we already confirmed we didn't just trip the Stop sensor.  So we know we're moving now.
+              pTrainProgress->setParked(locoNum, false);
+              pTrainProgress->setStopped(locoNum, false);
+
+            } else {  // UNEXPECTED ELEMENT TYPE!
+              sprintf(lcdString, "UNEXPECTED ELEMENT!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
             }
 
-//            else if (tempTPElement.routeRecType == SN) {  // Great, this is our new next-to-trip sensor, and we're done here.
-//              // MAS, OCC, and LEG all need to finish here by updating the next-to-trip element pointer
-//              pTrainProgress->setNextToTripPtr(locoNum, tempTPPointer);
-//            }
-          } while (tempTPElement.routeRecType != SN);  // Watching for the new nextToTrip sensor.
-          // We've reached the next sensor, so set it to be the new Next-To-Trip sensor...
-          pTrainProgress->setNextToTripPtr(locoNum, tempTPPointer);
+          } while (tempTPElement.routeRecType != SN);  // Until we reach the next sensor along the route
         }
+
         // Now the next-to-trip pointer is up to date; whether it was already at the end of the route, or if we advanced it.
 
-// 8/6/24: Left off here.  Make sure I've covered all of the record types above.
+// 9/16/24: Left off here.  Make sure I've covered all of the record types above.
 // Compare all of the above to what I've already written for LEG Sensor Trip (and LEG Route)
 // Update Train Progress addRoute() function to account for Continuation route that starts in Reverse.
 // Add code above for when we receive FD/RD and VL commands.  Could be VL00, RD00, VL03 and the timing needs to work.
 
+// 9/16/24: Take all of the above and cut and paste it into LEG.
+// Then I can get started writing MAS Auto/Park ***********************************************************************************************************
 
+// 9/16/24: Also, delete the redundant comments at the top of this section which say everything that's already said in the commented
+// code above (same for LEG.)  Don't want duplicate comments above and in the code. ********************************************************************************
 
         // We *could* have tracked all blocks between the old Next-To-Trip and the new Next-To-Trip and changed from Reserved to
         // Occuped, but instead we'll let paintAllBlockOccupancyLEDs() do that by scanning the whole table.
@@ -1100,6 +1209,18 @@ void OCCAutoParkMode() {
         // because Block Res'n doesn't differentiate between RESERVED and OCCUPIED, only RESERVED and NOT_RESERVED.
 
       } else {  // SENSOR_STATUS_CLEARED
+        //   *** SENSOR CLEAR ***  Rev: 09-06-24.
+
+        //     Get the locoNum that cleared the sensor.
+        //       Note there will always be a subsequent sensor ahead of any sensor just cleared, even at the end of a route.
+
+        //     Process each T.P. route element from "old" Tail through "old" (just cleared) Next-To-Clear sensor:
+        //       FD00/RD00: ALL: Ignore.
+        //       VL##     : ALL: Ignore.
+        //       BE##/BW##: MAS, OCC: IFF block does not recur ahead in route, release block reservation.
+        //       TN##/TR##: MAS: IFF turnout does not recur ahead in route, release turnout reservation.
+        //       SN##     : ALL: Update T.P. Tail = old Next-To-Clear.
+        //                       Update T.P. Next-To-Clear = sensorNum just encountered.
 
         // * Release Block Reservations behind just-cleared sensor (unless block occurs again ahead in route.)
         //   OCC tracks block reservations so that it will have an idea of what locos to use for occupied blocks during Reg'n.
@@ -1147,9 +1268,11 @@ void OCCAutoParkMode() {
         pTrainProgress->setNextToClearPtr(locoNum, tempTPPointer);
       }
 
+      //   *** EITHER TRIP OR CLEAR ***  Rev: 09-06-24.
+      // OCC: Update our internal Occupancy LED array that keeps track of sensor status (OCC ONLY.)
+      pOccupancyLEDs->updateSensorStatus(sensorNum, trippedOrCleared);  // Does not illuminate any LEDs, just tracks status.
       // Regardless of Tripped or Cleared, re-paint the Control Panel WHITE OCCUPANCY SENSOR LEDs
       pOccupancyLEDs->paintAllOccupancySensorLEDs(modeCurrent, stateCurrent);
-
       // Regardless of Tripped or Cleared, re-paint the Control Panel RED/BLUE BLOCK OCCUPANCY LEDs.
       pOccupancyLEDs->paintAllBlockOccupancyLEDs();
 
@@ -1159,13 +1282,14 @@ void OCCAutoParkMode() {
 
     else if (msgType == 'M') {  // Rev: 09-08-24.  We got a Mode message; can only be Auto/Park Stopped and we're done here.
 
-      // Message class will have filtered out Mode Auto/Park, State STOPPING for OCC because it's irrelevant.
-      // We'll just check to be sure...
-      if (((modeCurrent != MODE_AUTO) && (modeCurrent != MODE_PARK)) ||
-           (stateCurrent != STATE_STOPPED)) {
+      // Mode message at this point can only be changing from Auto or Park, Running or Stopping to Auto or Park, Stopped.
+      // Message class will have filtered out Mode Auto/Park, State STOPPING for OCC and LEG because it's irrelevant.
+      // For MAS, changing from Running to Stopping is important.
+      // OCC and LEG: Just check to be sure...
+      if (((modeCurrent != MODE_AUTO) && (modeCurrent != MODE_PARK)) || (stateCurrent != STATE_STOPPED)) {
         sprintf(lcdString, "AUTO MODE UPDT ERR!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
       }
-      // Okay they want to STOP Auto/Park mode.  It must mean all locos are stopped.
+      // Okay they want to STOP Auto/Park mode.  It must mean all locos are stopped (or will be in a few seconds.)
       // We will just fall out of the loop below since stateCurrent is now STATE_STOPPED
     }
 
