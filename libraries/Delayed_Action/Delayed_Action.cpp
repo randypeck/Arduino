@@ -1,8 +1,9 @@
-// DELAYED_ACTION.CPP Rev: 06/30/24.  TESTED AND WORKING with a few exceptions such as PowerMasters and Accessory activation.
+// DELAYED_ACTION.CPP Rev: 09/30/24.  TESTED AND WORKING with a few exceptions such as PowerMasters and Accessory activation.
 // Part of O_LEG (Conductor and Engineer.)
 // One set of functions POPULATES the Delayed Action table (for Conductor)
 // Another set of functions DE-POPULATES the Delayed Action table (for Engineer)
 // ALL DEVICES INCLUDING ACCESSORIES START AT 1, not 0.
+// 09/30/24: Updated whistle/horn sequences to work with locos 2, 4, 5, 8, and 14.
 // 06/30/24: Added debug switch.
 
 #include "Delayed_Action.h"
@@ -303,117 +304,156 @@ void Delayed_Action::populateLocoSlowToStop(const byte t_devNum) {
 }
 
 void Delayed_Action::populateLocoWhistleHorn(const unsigned long t_startTime, const byte t_devNum, const byte t_pattern) {
-  // Rev: 02/22/23.  TESTED AND WORKING.
+  // Rev: 09/30/24.  TESTED AND WORKING on locos 2, 4, 5, 8, and 14.
   // Unless it's a simple toot, whistle/horn commands require multiple records being written to Delayed Action.
   // ALL DEVICES INCLUDING ACCESSORIES START AT 1, not 0.
-  // Note that we do not specify a Regular horn/whistle versus a Quilling horn/whistle; this function will decide.
-  // When the quilling horn is used, we will also hard-code its intensity.  Later we can make this a parm 0..15 if we want.
+  // A single regular-horn toot on steam E5 sounds unreliable and terrible -- often just a whisp.  So we will only use the quilling
+  // horn for any of our sequences, at least for now.
   // Quilling horn is LONGER than regular horn toot and has 16 possible Legacy commands that narrow to about 3 distinct tones:
   //   0..3 same as regular horn but longer
   //   4..12 deeper/louder
   //   13..15 very deep.  Sounds good.
-  // A single regular-horn toot on steam E5 sounds unreliable and terrible -- often just a whisp.  So we will only use the quilling
-  // horn for any of our sequences, at least for now.
   // LEGACY_PATTERN_SHORT_TOOT   =  1;  // S    (Used informally i.e. to tell operator "I'm here" when registering)
   // LEGACY_PATTERN_LONG_TOOT    =  2;  // L    (Used informally)
-  // LEGACY_PATTERN_STOPPED      =  3;  // S    (Applying brakes)
+  // LEGACY_PATTERN_STOPPED      =  3;  // S    (Applying brakes, or TRAIN HAS COME TO A STOP.)
   // LEGACY_PATTERN_APPROACHING  =  4;  // L    (Approaching PASSENGER station -- else not needed.  Some use S.)
-  // LEGACY_PATTERN_DEPARTING    =  5;  // L-L  (Releasing air brakes. Some railroads that use L-S, but I prefer L-L)
+  // LEGACY_PATTERN_DEPARTING    =  5;  // L-L  (Releasing air brakes, PROCEED. Some railroads that use L-S, but I prefer L-L)
   // LEGACY_PATTERN_BACKING      =  6;  // S-S-S
   // LEGACY_PATTERN_CROSSING     =  7;  // L-L-S-L
-  // FOR DISCRETE REGULAR HORN TOOTS, 450ms between commands is the minimum delay; 400ms and they occasionally run together.
-  //   Though 700ms sounds better and 800ms may be necessary for E6 loco.
-  // FOR CONTINUOUS REGULAR HORN TOOTS, 175ms between commands is the maximum delay; 200ms and there are occasional gaps.
-  // FOR DISCRETE QUILLING TOOTS, 1000ms between commands is the minimum delay; 950ms unreliable on SP 1440.
-  // FOR CONTINUOUS QUILLING TOOTS, 650ms between commands is the maximum delay; 700ms introduces occasional gaps
 
   unsigned long tootTime = t_startTime;
-  //unsigned long hornRegularDiscreteGapMinimum = 700;  // Gap between discrete toots must be AT LEAST 450ms, though 700ms sounds better
-  unsigned long hornContinuousQuillingMaxDelay = 650;  // 650ms is reliable maximum on Big Boy, 700 has gaps
-  unsigned long hornCrossingSequenceDelay1Quilling = 2000;  // 1st gap between crossing quilling toots
-  unsigned long hornCrossingSequenceDelay2Quilling = 2000;  // 2nd gap between crossing quilling toots
-  unsigned long hornCrossingSequenceDelay3Quilling = 1500;  // 3rd gap between crossing quilling toots
-  byte quillIntensity = 14;  // Try 2, 6, and 14
-  // quillIntensity 2 is same as regular horn; 6 is deeper, sounds great; 14 is really deep, also sounds great.
-
+  // Quilling Horn "on" time: 650ms is reliable maximum length of a horn toot on Big Boy, 700 has gaps.
+  byte quillIntensity = 13;
+  // quillIntensity 2 is same as regular horn; 6 is deeper, sounds great; 14 is really deep, also sounds great, 15 is too shrill
+  // Due to the following problems with short toots "on" = 120ms, "off" = 280ms, I had to make the delays longer *and* monkey with
+  //   quillIntensity in order to get locos 2, 4, 5, and 8 all working.  Big Boy is still unknown; need to test.
+  // Loco 2, Shay, quillIntensity 15 and other high numbers only gets 2 toots for S-S-S, but intensity 6 works fine.
+  // Loco 8, 803A, intensity 8 only gets 2 toots on S-S-S but intensity 6 works fine.
+  // Loco 4, ATSF 2405, intensity 4 and 6 only gets 2 toots on S-S-S but intensity 2 AND 15 work fine (but 2 not loud.)
+  // On 1484 (loco 5,) 12 is too quiet but 13 is pretty shrill.
+  
   switch (t_pattern) {
 
     case LEGACY_PATTERN_SHORT_TOOT:   // S Regular
     case LEGACY_PATTERN_STOPPED:      // S Regular
     {
-      // Rev: 06/17/22.
-      populateDelayedAction(t_startTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
+      // Rev: 09/30/24.
+      populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
+      tootTime = tootTime + 120;
+      populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, 0, 0);
       break;
     }
     case LEGACY_PATTERN_LONG_TOOT:    // L Quilling horn
     case LEGACY_PATTERN_APPROACHING:  // L Quilling horn
     {
-      // Rev: 06/17/22.
+      // Rev: 09/30/24.
+      populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity - 6, 0);
+      tootTime = tootTime + 50;
       populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
-      tootTime = tootTime + hornContinuousQuillingMaxDelay;
+      tootTime = tootTime + 650;  // 650ms max reliable on Big Boy; 700ms has gaps
       populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
-      tootTime = tootTime + hornContinuousQuillingMaxDelay;
+      tootTime = tootTime + 650;
       populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
+      tootTime = tootTime + 650;
+      populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
+      tootTime = tootTime + 650;
+      populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
+      tootTime = tootTime + 650;
+      populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, 0, 0);
       break;
     }
     case LEGACY_PATTERN_DEPARTING:    // L-L Quilling horn
     {
-      // Rev: 06/17/22.
+      // Rev: 09/30/24.
+      populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity - 6, 0);
+      tootTime = tootTime + 50;
       populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
-      tootTime = tootTime + hornContinuousQuillingMaxDelay;
+      tootTime = tootTime + 650;  // 650ms max reliable on Big Boy; 700ms has gaps
       populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
-      tootTime = tootTime + hornContinuousQuillingMaxDelay;
+      tootTime = tootTime + 650;
       populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
-      tootTime = tootTime + hornCrossingSequenceDelay1Quilling;
+      tootTime = tootTime + 650;
+      populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, 0, 0);
+      tootTime = tootTime + 1000;
+      populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity - 6, 0);
+      tootTime = tootTime + 50;
       populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
-      tootTime = tootTime + hornContinuousQuillingMaxDelay;
+      tootTime = tootTime + 650;  // 650ms max reliable on Big Boy; 700ms has gaps
       populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
-      tootTime = tootTime + hornContinuousQuillingMaxDelay;
+      tootTime = tootTime + 650;
       populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
+      tootTime = tootTime + 650;
+      populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, 0, 0);
       break;
     }
     case LEGACY_PATTERN_BACKING:      // S-S-S Regular horn
     {
-      // Rev: 06/17/22.
-      // GOOD TIMING, BUT PITCH CAN CHANGE FOR EACH TOOT.
+      // Rev: 09/30/24.  Finally working (quillIntensity 12.)
+      // Shay loco 2 is the big problem; we need minimum 100ms "on" time, and minimum 400ms "off" between toots.
+      // Other locos have no problem doing quicker toots.
+      // TODO: Need to test this with the Big Boy.
       populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
-      tootTime = tootTime + hornCrossingSequenceDelay1Quilling;
+      tootTime = tootTime + 120;
+      populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, 0, 0);
+      tootTime = tootTime + 400;
       populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
-      tootTime = tootTime + hornCrossingSequenceDelay1Quilling;
+      tootTime = tootTime + 120;
+      populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, 0, 0);
+      tootTime = tootTime + 400;
       populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
+      tootTime = tootTime + 120;
+      populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, 0, 0);
       break;
     }
     case LEGACY_PATTERN_CROSSING:     // L-L-S-L Quilling
     {
-      // Rev: 06/17/22.
-      // Quilling sequence is longer than with the regular toot, but it sounds really great!
-      // LONG
+      // Rev: 09/30/24.
+      populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity - 6, 0);
+      tootTime = tootTime + 50;
       populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
-      tootTime = tootTime + hornContinuousQuillingMaxDelay;
+      tootTime = tootTime + 650;  // 650ms max reliable on Big Boy; 700ms has gaps
       populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
-      tootTime = tootTime + hornContinuousQuillingMaxDelay;
+      tootTime = tootTime + 650;
       populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
-      // LONG
-      tootTime = tootTime + hornCrossingSequenceDelay1Quilling;
+      tootTime = tootTime + 650;
       populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
-      tootTime = tootTime + hornContinuousQuillingMaxDelay;
+      tootTime = tootTime + 550;
+      populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, 0, 0);
+      tootTime = tootTime + 1200;
+ 
+      populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity - 6, 0);
+      tootTime = tootTime + 50;
       populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
-      tootTime = tootTime + hornContinuousQuillingMaxDelay;
+      tootTime = tootTime + 650;  // 650ms max reliable on Big Boy; 700ms has gaps
       populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
-      // SHORT
-      tootTime = tootTime + hornCrossingSequenceDelay2Quilling;
+      tootTime = tootTime + 650;
       populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
-      // LOOOOONG
-      tootTime = tootTime + hornCrossingSequenceDelay3Quilling;
+      tootTime = tootTime + 650;
       populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
-      tootTime = tootTime + hornContinuousQuillingMaxDelay;
+      tootTime = tootTime + 550;
+      populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, 0, 0);
+      tootTime = tootTime + 1400;
+
       populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
-      tootTime = tootTime + hornContinuousQuillingMaxDelay;
+      tootTime = tootTime + 300;
+      populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, 0, 0);
+      tootTime = tootTime + 1000;
+
+      populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity - 6, 0);
+      tootTime = tootTime + 300;
       populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
-      tootTime = tootTime + hornContinuousQuillingMaxDelay;
+      tootTime = tootTime + 650;  // 650ms max reliable on Big Boy; 700ms has gaps
       populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
-      tootTime = tootTime + hornContinuousQuillingMaxDelay;
+      tootTime = tootTime + 650;
       populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
+      tootTime = tootTime + 650;
+      populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
+      tootTime = tootTime + 650;
+      populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
+      tootTime = tootTime + 650;
+      populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, quillIntensity, 0);
+      tootTime = tootTime + 650;
+      populateDelayedAction(tootTime, t_devNum, LEGACY_SOUND_HORN_QUILLING, 0, 0);
       break;
     }
   }

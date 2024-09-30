@@ -700,8 +700,19 @@ void LEGAutoParkMode() {
 
 
 
+
+
+
+
+
 // Left off here 9/6/24 *********************************************************************************************************************************************
 // 9/16/24: I think most of the following code can be deleted and replaced with the code I wrote for OCC Auto/Park Route, Sensor trip/clear, Mode change *********************************************************
+
+
+
+
+
+
 
   do {  // Operate in Auto/Park until mode == STOPPED
 

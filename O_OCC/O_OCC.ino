@@ -1,4 +1,4 @@
-// O_OCC.INO Rev: 09/16/24.
+// O_OCC.INO Rev: 09/27/24.
 // OCC paints the WHITE Occupancy Sensor LEDs and RED/BLUE Block Occupancy LEDs on the Control Panel.
 // In Registration mode, OCC also prompts operator for initial data, using the Control Panel's Rotary Encoder and 8-Char display.
 // In Auto/Park modes, OCC also autonomously sends arrival and departure announcements to various stations around the layout.
@@ -16,7 +16,7 @@
 // STILL TO BE DONE:
 //   Add code to autonomously manage crossing gate lower/raise (not part of Routes.)
 //   Add code to autonomously manage the P.A. Announcements, when running in Auto mode (and optionally Park mode.)
-//   Both of the above could potentially be controlled by the Sensor Action Table.
+//     Both of the above could potentially be controlled by a Sensor Action Table.
 //   Add code to support DONE as a choice for rotary encoder when selecting occupied blocks (to default to all remaining = STATIC.)
 //     This is actually a bit more complicated than I thought, so I've taken out the early code I had to support it.
 
@@ -40,8 +40,22 @@
 //     This requires OCC to maintain both Train Progress and Block Res'n tables (but not a Turnout Res'n table for OCC.)
 //     BLUE/RED LEDs can change in Auto/Park mode when a sensor is Tripped or Cleared, and when a new Route is received.
 //     IMPORTANT! Don't forget to illuminate STATIC trains (not part of Train Progress) as RED/OCCUPIED!
+
+
+
+
+
 //   OCC needs to track Block Res'ns for two reasons:
-//     1. To illuminate Red/Blue Block Occupancy LEDs appropriately (although this can be gleaned by scanning Train Progress only.)
+//     1. To illuminate Red/Blue Block Occupancy LEDs appropriately.  Although active train locations, both reserved and occupied,
+//        can and are determined by scanning Train Progress, the Block Res'n table shows us blocks that were reserved for STATIC
+//        equipment during Registration.
+// We also maintain a private array in the Occupancy LED class that has true/false as STATIC for each block, defined during Reg'n. ****************************
+
+// Clarify the above -- do we find static equipment via Block Res'n or our private array?  When do we define the contents of the
+// private array?  During Reg'n and it's held over into Auto/Park???? *****************************************************************************************
+// Occupancy_LEDs class maintains bool m_staticBlock[TOTAL_BLOCKS] true or false.
+
+
 //     2. To keep track of each loco's last-known block (location) for next-operating-session Registration defaults.
 
 // There is no support for blinking WHITE, RED, or BLUE LEDs on the Control Panel.  Could always add support in the future.
@@ -60,16 +74,10 @@
 // finished playing, the pin goes to 3.3 volts (not 5 volts.)  That is how OCC will know when to send the next section of the
 // announcement to the WAV Trigger.
 
-// *** REGARDING BLOCKS RESERVED FOR STATIC EQUIPMENT ***
-// In order to properly paint the RED/BLUE BLOCK LEDs during AUTO/PARK modes, in addition to examining Train Progress for each
-// active train and the blocks that are part of its route, OCC will need to know which blocks are occuped by STATIC equipment.
-// We thus maintain a private array in the Occupancy LED class that has true/false as STATIC for each block, defined during
-// Registration.  I don't *think* we need to use Block Reservation at all when painting occupancy LEDs...???
-
 #include <Train_Consts_Global.h>
 #include <Train_Functions.h>
 const byte THIS_MODULE = ARDUINO_OCC;  // Global needed by Train_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "OCC 09/16/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "OCC 09/27/24";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 
 // *** SERIAL LCD DISPLAY CLASS ***
 // #include <Display_2004.h> is already in <Train_Functions.h> so not needed here.

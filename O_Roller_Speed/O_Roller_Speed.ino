@@ -984,10 +984,11 @@ float timePerRev() {
 }
 
 void startUpLoco(byte t_locoNum) {
-  // Rev: 07-25-24
+  // Rev: 09-29-24
   // NOTE: The following startup commands can all be given the same startTime because the Engineer will ensure they are separated
   // by the minimum required delay between successive Legacy commands (25ms.)  However we can add a slight delay if we want them to
   // be executed in a certain order...
+  // Updated 09/29/24 to toot horn three times on startup.
   pDelayedAction->initDelayedActionTable(debugOn);
   // Start up the loco
   pEngineer->initLegacyCommandBuf(debugOn);
@@ -1005,10 +1006,21 @@ void startUpLoco(byte t_locoNum) {
   // Set loco speed stopped
   startTime = startTime + 50;
   pDelayedAction->populateLocoCommand(startTime, t_locoNum, LEGACY_ACTION_ABS_SPEED, 0, 0);
-  // Give a short toot to say Hello
-  startTime = startTime + 50;
-  pDelayedAction->populateLocoWhistleHorn(startTime, t_locoNum, LEGACY_PATTERN_SHORT_TOOT);
-  while (millis() < (startTime + 1000)) {
+
+  // Give a toot to say Hello
+  startTime = startTime + 1000;
+  pDelayedAction->populateLocoWhistleHorn(startTime, t_locoNum, LEGACY_PATTERN_SHORT_TOOT);  // S Stopped, brakes applied
+  startTime = startTime + 2000;
+//  pDelayedAction->populateLocoWhistleHorn(startTime, t_locoNum, LEGACY_PATTERN_LONG_TOOT);   // L Approaching passenger station
+//  startTime = startTime + 5000;
+//  pDelayedAction->populateLocoWhistleHorn(startTime, t_locoNum, LEGACY_PATTERN_BACKING);     // S-S-S Backing up
+//  startTime = startTime + 5000;
+//  pDelayedAction->populateLocoWhistleHorn(startTime, t_locoNum, LEGACY_PATTERN_DEPARTING);   // L-L Releasing brakes, moving ahead
+//  startTime = startTime + 8000;
+//  pDelayedAction->populateLocoWhistleHorn(startTime, t_locoNum, LEGACY_PATTERN_CROSSING);    // L-L-S-L
+//  startTime = startTime + 12000;
+
+  while (millis() < startTime) {
     pEngineer->executeConductorCommand();  // Get a Delayed Action command and send to the Legacy base as quickly as possible
   }
   return;
