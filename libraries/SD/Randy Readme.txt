@@ -1,1 +1,0 @@
-On 1/19/19, Randy modified line 433 of SD.cpp: set value to zero to eliminate annoying compile warning message.

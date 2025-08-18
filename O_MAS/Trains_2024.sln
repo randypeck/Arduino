@@ -23,6 +23,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "O_Roller_Speed", "..\O_Roll
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "O_FRAM_Duplicator", "..\O_FRAM_Duplicator\O_FRAM_Duplicator.vcxproj", "{EF256251-AA6B-4AE3-8299-65B98A1C0400}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "SD_Card_Audio", "..\SD_Card_Audio\SD_Card_Audio.vcxproj", "{D6815112-D2DC-473B-9900-CD51473EE308}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|ARM = Debug|ARM
@@ -151,6 +153,18 @@ Global
 		{EF256251-AA6B-4AE3-8299-65B98A1C0400}.Release|ARM64.ActiveCfg = Release|ARM64
 		{EF256251-AA6B-4AE3-8299-65B98A1C0400}.Release|ARM64.Build.0 = Release|ARM64
 		{EF256251-AA6B-4AE3-8299-65B98A1C0400}.Release|ARM64.Deploy.0 = Release|ARM64
+		{D6815112-D2DC-473B-9900-CD51473EE308}.Debug|ARM.ActiveCfg = Debug|ARM
+		{D6815112-D2DC-473B-9900-CD51473EE308}.Debug|ARM.Build.0 = Debug|ARM
+		{D6815112-D2DC-473B-9900-CD51473EE308}.Debug|ARM.Deploy.0 = Debug|ARM
+		{D6815112-D2DC-473B-9900-CD51473EE308}.Debug|ARM64.ActiveCfg = Debug|ARM64
+		{D6815112-D2DC-473B-9900-CD51473EE308}.Debug|ARM64.Build.0 = Debug|ARM64
+		{D6815112-D2DC-473B-9900-CD51473EE308}.Debug|ARM64.Deploy.0 = Debug|ARM64
+		{D6815112-D2DC-473B-9900-CD51473EE308}.Release|ARM.ActiveCfg = Release|ARM
+		{D6815112-D2DC-473B-9900-CD51473EE308}.Release|ARM.Build.0 = Release|ARM
+		{D6815112-D2DC-473B-9900-CD51473EE308}.Release|ARM.Deploy.0 = Release|ARM
+		{D6815112-D2DC-473B-9900-CD51473EE308}.Release|ARM64.ActiveCfg = Release|ARM64
+		{D6815112-D2DC-473B-9900-CD51473EE308}.Release|ARM64.Build.0 = Release|ARM64
+		{D6815112-D2DC-473B-9900-CD51473EE308}.Release|ARM64.Deploy.0 = Release|ARM64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
