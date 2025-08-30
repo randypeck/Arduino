@@ -1,4 +1,4 @@
-// PINBALL_MESSAGE.CPP  Rev: 08/17/25
+// PINBALL_MESSAGE.CPP  Rev: 08/18/25
 
 #include "Pinball_Message.h"
 
@@ -116,9 +116,9 @@ void Pinball_Message::sendUpdateScore(const byte t_10K, const byte t_100K, const
   int recLen = 6;
   m_RS485Buf[RS485_LEN_OFFSET] = recLen;  // Offset 0 = Length
   m_RS485Buf[RS485_TYPE_OFFSET] = 'S';    // Offset 1 = Type
-  m_RS485Buf[2] = t_10K;
-  m_RS485Buf[3] = t_100K;
-  m_RS485Buf[4] = t_million;
+  m_RS485Buf[RS845_PAYLOAD_OFFSET] = t_10K;
+  m_RS485Buf[RS845_PAYLOAD_OFFSET + 1] = t_100K;
+  m_RS485Buf[RS845_PAYLOAD_OFFSET + 2] = t_million;
   m_RS485Buf[recLen - 1] = calcChecksumCRC8(m_RS485Buf, recLen - 1);
   sendMessageRS485(m_RS485Buf);
   return;
@@ -155,16 +155,16 @@ void Pinball_Message::sendCreditSuccess(const bool t_success) {
   int recLen = 4;
   m_RS485Buf[RS485_LEN_OFFSET] = recLen;  // Offset 0 = Length
   m_RS485Buf[RS485_TYPE_OFFSET] = 'C';    // Offset 1 = Type
-  m_RS485Buf[2] = t_success;
+  m_RS485Buf[RS845_PAYLOAD_OFFSET] = t_success;
   m_RS485Buf[recLen - 1] = calcChecksumCRC8(m_RS485Buf, recLen - 1);
   sendMessageRS485(m_RS485Buf);
   return;
 }
 
 void Pinball_Message::getUpdateScore(byte* t_10K, byte* t_100K, byte* t_million) {
-  *t_10K = m_RS485Buf[2];
-  *t_100K = m_RS485Buf[3];
-  *t_million = m_RS485Buf[4];
+  *t_10K = m_RS485Buf[RS845_PAYLOAD_OFFSET];
+  *t_100K = m_RS485Buf[RS845_PAYLOAD_OFFSET + 1];
+  *t_million = m_RS485Buf[RS845_PAYLOAD_OFFSET + 1];
   return;
 }
 

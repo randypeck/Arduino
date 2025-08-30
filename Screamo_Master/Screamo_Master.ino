@@ -1,10 +1,102 @@
-// Screamo_Master.INO Rev: 08/17/25
+// Screamo_Master.INO Rev: 08/30/25
+
+// Pin assignments:
+// 		RS-485 Serial 2 Tx: Pin 16 = PIN_OUT_MEGA_TX2
+// 		RS-485 Serial 2 Rx: Pin 17 = PIN_IN_MEGA_RX2
+// 		LCD Serial 1 Tx: Pin 18 = PIN_OUT_MEGA_TX1
+// 		LCD Serial 1 Rx: Pin 19 = PIN_IN_MEGA_RX1 (not used)
+// 		Centipede I2C SDA: Pin 20 (also pin 44) = PIN_IO_MEGA_SDA
+// 		Centipede I2C SCL: Pin 21 (also pin 43) = PIN_IO_MEGA_SCL
+//    RS-485 Tx Enable: Pin 22 = PIN_OUT_RS485_TX_ENABLE
+
+// PROBABLY WANT TO SET CONSTS FOR TIME TO PULSE COILS, ETC.  I.e. 50ms is probably long enough for most coils.
+// However, it may vary by coil.
+// Ideally, have an array with both a hold time (in multiples of 10ms) and a strength (0..255) for coils.
+// For Flippers, original Ball Gate, new Ball Release Post, and other coils that may be held after initial activation, include a "hold strength" parm as well.
+// If Hold Strength == 0, then simply release after hold time; else change to Hold Strength until released by software.
+
+// Define Arduino pin numbers unique to this Screamo Master Arduino Mega:
+// For MOSFETs, can do PWM on pins 4-13 and 44-46 = 13 pins.  However, pins 4 and 13 can't have frequency modified; all others can.
+// Use pin numbers 23+ for regular digital pins where PWM is not needed (pin 22 reserved for RS-485 Tx Enable.)
+// If a coil is held on, especially at less than 100%, such as ball tray release, it may hum if using PWM at default frequency.
+// Increase frequency to eliminate hum (pins 5-12 and 44-46, but *not* pins 4 or 13.)
+// Only use pin 4 and 13 for coils that are momentary *and* where PWM may be desired: pop bumper, kickouts, slingshots.
+// Other PWM pins can be used for any coil or motor, but especially those that may be held on *and* where PWM is desired: flippers, ball tray release, ball trough release.
+// Coils that are both momentary and where PWM is not needed, for full-strength momentary MOSFET-on, use any digital output: knocker, selection unit, relay reset unit.
+
+const byte PIN_OUT_MOSFET_COIL_POP_BUMPER          =  5;  // Output: PWM MOSFET to pop bumper coil.
+const byte PIN_OUT_MOSFET_COIL_LEFT_KICKOUT        =  4;  // Output: PWM MOSFET to Left Eject coil (cannot modify PWM freq.)
+const byte PIN_OUT_MOSFET_COIL_RIGHT_KICKOUT       = 13;  // Output: PWM MOSFET to Right Eject coil (cannot modify PWM freq.)
+const byte PIN_OUT_MOSFET_COIL_LEFT_SLINGSHOT      =  6;  // Output: PWM MOSFET to Left Eject coil.
+const byte PIN_OUT_MOSFET_COIL_RIGHT_SLINGSHOT     =  7;  // Output: PWM MOSFET to Right Eject coil.
+const byte PIN_OUT_MOSFET_COIL_LEFT_FLIPPER        =  8;  // Output: PWM MOSFET to coil to add one 10K to the score.  Reduce to low power after initial activation.
+const byte PIN_OUT_MOSFET_COIL_RIGHT_FLIPPER       =  9;  // Output: PWM MOSFET to coil to ring the 10K bell.  Reduce to low power after initial activation.
+const byte PIN_OUT_MOSFET_COIL_BALL_TRAY_RELEASE   = 10;  // Output: PWM MOSFET to (original) Ball Tray Release coil.  Reduce to low power after initial activation.
+
+const byte PIN_OUT_MOSFET_COIL_SELECTION_UNIT      = 23;  // Output: Non-PWM MOSFET to coil that activates Selection Unit (for sound FX only)
+const byte PIN_OUT_MOSFET_COIL_RELAY_RESET         = 24;  // Output: Non-PWM MOSFET to coil that activates Relay Reset Bank (for sound FX only)
+
+const byte PIN_OUT_AC_SSR_MOTOR_SCORE_MOTOR        = 25;  // Output (front of cabinet): AC SSR controls 50vac Score Motor (for sound FX only)
+const byte PIN_OUT_MOSFET_COIL_KNOCKER             = 26;  // Output (front of cabinet): Non-PWM MOSFET to Knocker coil.
+
+const byte PIN_OUT_MOSFET_COIL_BALL_TROUGH_RELEASE = 11;  // Output (front of cabinet): PWM MOSFET to new up/down post to release individual balls from trough.  Reduce to low power after initial activation.
+
+const byte PIN_OUT_MOSFET_MOTOR_SHAKER             = 12;  // Output (front of cabinet): PWM MOSFET to Shaker Motor
+
+// The following switches will be direct inputs to Arduino pins, rather than via Centipede shift register input:
+const byte PIN_IN_BUTTON_FLIPPER_LEFT              = 30;
+const byte PIN_IN_BUTTON_FLIPPER_RIGHT             = 31;
+const byte PIN_IN_SWITCH_POP_BUMPER_SKIRT          = 32;
+const byte PIN_IN_SWITCH_LEFT_SLINGSHOT            = 33;
+const byte PIN_IN_SWITCH_RIGHT_SLINGSHOT           = 34;
+
+// The following are array index numbers that cross reference Centipede Input Pin numbers with front-of-cabinet switches that they are connected to:
+const byte PIN_IN_BUTTON_START                     =  0;
+const byte PIN_IN_BUTTON_DIAG_1                    =  0;
+const byte PIN_IN_BUTTON_DIAG_2                    =  0;
+const byte PIN_IN_BUTTON_DIAG_3                    =  0;
+const byte PIN_IN_BUTTON_DIAG_4                    =  0;
+const byte PIN_IN_BUTTON_KNOCK_OFF                 =  0;
+
+const byte PIN_IN_SWITCH_COIN_MECH                 =  0;  // Input: Add a credit, even if during game play
+const byte PIN_IN_SWITCH_BALL_PRESENT              =  0;  // Input: Is there a ball at the base of the ball lift?
+const byte PIN_IN_SWITCH_TILT                      =  0;  // Input: Tilt
+
+// The following are array index numbers that cross reference Centipede Input Pin numbers with playfield switches that they are connected to:
+
+const byte PIN_IN_SWITCH_DEAD_BUMPER_1             =  0;
+const byte PIN_IN_SWITCH_DEAD_BUMPER_2             =  0;
+const byte PIN_IN_SWITCH_DEAD_BUMPER_3             =  0;
+const byte PIN_IN_SWITCH_DEAD_BUMPER_4             =  0;
+const byte PIN_IN_SWITCH_DEAD_BUMPER_5             =  0;
+const byte PIN_IN_SWITCH_DEAD_BUMPER_6             =  0;
+const byte PIN_IN_SWITCH_LEFT_KICKOUT              =  0;
+const byte PIN_IN_SWITCH_RIGHT_KICKOUT             =  0;
+const byte PIN_IN_SWITCH_HAT_ROLLOVER_1            =  0;
+const byte PIN_IN_SWITCH_HAT_ROLLOVER_2            =  0;
+const byte PIN_IN_SWITCH_HAT_ROLLOVER_3            =  0;
+const byte PIN_IN_SWITCH_HAT_ROLLOVER_4            =  0;
+const byte PIN_IN_SWITCH_TARGET_1                  =  0;
+const byte PIN_IN_SWITCH_TARGET_2                  =  0;
+const byte PIN_IN_SWITCH_TARGET_3                  =  0;
+const byte PIN_IN_SWITCH_TARGET_4                  =  0;
+const byte PIN_IN_SWITCH_TARGET_5                  =  0;
+const byte PIN_IN_SWITCH_TARGET_6                  =  0;
+const byte PIN_IN_SWITCH_TARGET_7                  =  0;
+const byte PIN_IN_SWITCH_TARGET_8                  =  0;
+const byte PIN_IN_SWITCH_TARGET_9                  =  0;
+const byte PIN_IN_SWITCH_TRAP_DOOR                 =  0;
+const byte PIN_IN_SWITCH_ROLLOVER_LEFT             =  0;
+const byte PIN_IN_SWITCH_ROLLOVER_CENTER           =  0;
+const byte PIN_IN_SWITCH_ROLLOVER_RIGHT            =  0;
+
+
 
 #include <Arduino.h>
 #include <Pinball_Consts.h>
 #include <Pinball_Functions.h>
 const byte THIS_MODULE = ARDUINO_MAS;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "MASTER 08/17/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "MASTER 08/30/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which effectively makes it a global.
 // No need to pass lcdString[] to any functions that use it!
 
@@ -39,21 +131,21 @@ void setup() {
 
   // *** INITIALIZE SERIAL PORTS ***
   Serial.begin(SERIAL0_SPEED);   // PC serial monitor window 115200.  Change if using thermal mini printer.
-  // Serial1 instantiated via Pinball_LCD/LCD2004.
-  Serial2.begin(SERIAL2_SPEED);  // RS485 115200.
+  // Serial1 LCD2004 instantiated via pLCD2004->begin.
+  // Serial2 RS485   instantiated via pMessage->begin.
 
   // *** INITIALIZE LCD CLASS AND OBJECT *** (Heap uses 98 bytes)
   // We must pass parms to the constructor (vs begin) because needed by parent DigoleSerialDisp.
   pLCD2004 = new Pinball_LCD(&Serial1, SERIAL1_SPEED);  // Instantiate the object and assign the global pointer.
   pLCD2004->begin();  // 20-char x 4-line LCD display via Serial 1.
   pLCD2004->println(lcdString);  // Display app version, defined above.
-  Serial.println(lcdString);
+  // Serial.println(lcdString);
 
   // *** INITIALIZE RS485 MESSAGE CLASS AND OBJECT *** (Heap uses 30 bytes)
   // WARNING: Instantiating Message class hangs the system if hardware is not connected.
   pMessage = new Pinball_Message;  // C++ quirk: no parens in ctor call if no parms; else thinks it's fn decl'n.
   pMessage->begin(&Serial2, SERIAL2_SPEED);
-//  delay(1000);  // Master-only delay gives the Slave a chance to get ready to receive data.
+delay(1000);  // Master-only delay gives the Slave a chance to get ready to receive data.  ????????????????????????????????? NEEDED?
 
 /*
   // *** INITIALIZE PINBALL_CENTIPEDE SHIFT REGISTER ***
@@ -114,46 +206,29 @@ while (true) {
   // msgType 'C' means this is a response from Slave we're expecting
   // For any message with contents (such as this, which is a bool value), we'll need to call the "pMessage->get" function to retrieve the actual contents of the message.
 
-// wait for a message
-while (msgType == ' ') {}
-
-  while (msgType != ' ') {
-    bool credits = false;
-    switch(msgType) {
-      case 'C' :  // New credit message in incoming RS485 buffer as expected
-        pMessage->getCreditSuccess(&credits);
-        // Just calling the function updates "credits" value ;-)
-        if (credits) {
-          sprintf(lcdString, "True!");
-        } else {
-          sprintf(lcdString, "False!");
-        }
-        pLCD2004->println(lcdString);
-        break;
-      case 'S' :  // Request from MAS to send the status of a specific sensor.
-        // So, which sensor number does MAS want the status of?  It better be 1..52, and *not* 0..51.
-//        pMessage->getMAStoSNSRequestSensor(&sensorNum);
-        // Look at the Centipede shift register to find the status of the specified sensor in stateOfSensor().
-        // We may immediately transmit that information back to MAS -- permission to xmit was implicit with the message
-//        pMessage->sendSNStoALLSensorStatus(sensorNum, stateOfSensor(sensorNum));
-//        if (stateOfSensor(sensorNum) == SENSOR_STATUS_TRIPPED) {
-//          sprintf(lcdString, "Sensor %i Tripped", sensorNum); pLCD2004->println(lcdString); Serial.println(lcdString);
-//        } else {
-//          sprintf(lcdString, "Sensor %i Cleared", sensorNum); Serial.println(lcdString);  // Not to LCD
-//        }
-          sprintf(lcdString, "Hello"); pLCD2004->println(lcdString);
-        break;
-      default:
-        sprintf(lcdString, "MSG TYPE ERROR %c", msgType); pLCD2004->println(lcdString); Serial.println(lcdString);
-        // It's printing a, b, c, etc. i.e. successive characters **************************************************************************
-    }
+  // Wait for a respons from Slave re: are there any credits?
+  // msgType will be 'C' if there is a response, or ' ' (
+  while (msgType == ' ') {
     msgType = pMessage->available();
   }
 
-
-
-delay(3000);
-
+  bool credits = false;
+  switch(msgType) {
+    case 'C' :  // New credit message in incoming RS485 buffer as expected
+      pMessage->getCreditSuccess(&credits);
+      // Just calling the function updates "credits" value ;-)
+      if (credits) {
+        sprintf(lcdString, "True!");
+      } else {
+        sprintf(lcdString, "False!");
+      }
+      pLCD2004->println(lcdString);
+      break;
+    default:
+      sprintf(lcdString, "MSG TYPE ERROR %c", msgType); pLCD2004->println(lcdString); Serial.println(lcdString);
+      // It's printing a, b, c, etc. i.e. successive characters **************************************************************************
+  }
+  msgType = pMessage->available();
 
 }  // End of loop()
 

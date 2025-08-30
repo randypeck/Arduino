@@ -1,8 +1,5 @@
-// TRAIN_FUNCTIONS.CPP Rev: 05/23/24.
+// PINBALL_FUNCTIONS.CPP Rev: 08/18/25.
 // Declares and defines several functions that are global to all (or nearly all) Arduino modules.
-// 05/23/24: Always digitalWrite(pin, LOW) before pinMode(pin, OUTPUT) else will write high briefly.
-// 04/15/24: Increased the False Halt delay from 1ms to 5ms; was getting too many false halts when pressing turnout buttons.
-// 06/30/22: Removed pinMode and digitalWrite for FRAM; we'll do that in Hackscribble_Ferro class.
 
 #include "Pinball_Functions.h"
 
@@ -12,23 +9,6 @@ void initScreamoMasterPins() {
   pinMode(PIN_OUT_LED, OUTPUT);
   digitalWrite(PIN_OUT_RS485_TX_ENABLE, RS485_RECEIVE);  // Put RS485 in receive mode
   pinMode(PIN_OUT_RS485_TX_ENABLE, OUTPUT);              // HIGH = RS485 transmit, LOW = not transmitting (receive)
-  digitalWrite(PIN_OUT_RS485_TX_LED, LOW);               // Turn off the BLUE transmit LED
-  pinMode(PIN_OUT_RS485_TX_LED, OUTPUT);                 // Set HIGH to turn on BLUE LED when RS485 is TRANSMITTING data
-  digitalWrite(PIN_OUT_RS485_RX_LED, LOW);               // Turn off the YELLOW receive LED
-  pinMode(PIN_OUT_RS485_RX_LED, OUTPUT);                 // Set HIGH to turn on YELLOW when RS485 is RECEIVING data
-  return;
-}
-
-void initScreamoSlavePins() {
-  // First we'll set up pins that are appropriate for all modules.
-  digitalWrite(PIN_OUT_LED, LOW);       // Built-in LED LOW=off
-  pinMode(PIN_OUT_LED, OUTPUT);
-  digitalWrite(PIN_OUT_RS485_TX_ENABLE, RS485_RECEIVE);  // Put RS485 in receive mode
-  pinMode(PIN_OUT_RS485_TX_ENABLE, OUTPUT);              // HIGH = RS485 transmit, LOW = not transmitting (receive)
-  digitalWrite(PIN_OUT_RS485_TX_LED, LOW);               // Turn off the BLUE transmit LED
-  pinMode(PIN_OUT_RS485_TX_LED, OUTPUT);                 // Set HIGH to turn on BLUE LED when RS485 is TRANSMITTING data
-  digitalWrite(PIN_OUT_RS485_RX_LED, LOW);               // Turn off the YELLOW receive LED
-  pinMode(PIN_OUT_RS485_RX_LED, OUTPUT);                 // Set HIGH to turn on YELLOW when RS485 is RECEIVING data
   return;
 }
 
@@ -118,44 +98,3 @@ unsigned writeBit(unsigned t_val, byte t_bit, byte t_bitVal) {  // Based on Ardu
   return ((t_bitVal) ? setBit(t_val, t_bit) : clearBit(t_val, t_bit));
 }
 
-unsigned int freeMemory () {  // Excellent little utility that returns the amount of unused SRAM.
-  // Arduino memory:
-  // 0x8FF: Top of SRAM
-  // Stack grows down
-  //                 <- SP
-  // (free memory)
-  //                 <- *__brkval
-  // Heap (relocated)
-  //                 <- &__bss_end
-  // .bss  = not-yet-initialized global variables
-  // .data = initialized global variables
-  // 0x0100: Bottom of SRAM
-  // SP will be replaced with: *((uint16_t volatile *) (0x3D))  // Bottom of stack (grows down)
-  // extern unsigned int __heap_start, __heap_end;
-  extern unsigned int __bss_start, __bss_end;  // __bss_end is lowest available address above globals
-  extern unsigned int __data_start, __data_end;
-  extern void *__brkval;          // Top of heap; should match __bss_end after moving heap.
- 
-  Serial.println(F("======================================================"));
-  Serial.print  (F("__malloc_heap_end             should be 65,535 = ")); Serial.println(uint16_t(__malloc_heap_end));
-  Serial.print  (F("__brkval (top of heap)                         = ")); Serial.println((unsigned int)__brkval);
-  Serial.print  (F("__malloc_heap_start (base of heap shd be 8,704 = ")); Serial.println(uint16_t(__malloc_heap_start));
-  Serial.print  (F("  HEAP SPACE USED -----------------------------> ")); 
-    if (__brkval == 0) {
-      Serial.println(0);
-    } else {
-      Serial.println(((int)__brkval) - uint16_t(__malloc_heap_start));
-    }
-  Serial.print  (F("  HEAP SPACE REMAINING ------------------------> "));
-    Serial.println(uint16_t(__malloc_heap_end) - (unsigned int)__brkval);
-  Serial.print  (F("Stack pointer (bottom of stack)    below 8,700 = ")); Serial.println((int)SP);
-  Serial.print  (F("__bss_end (top of global data)                 = ")); Serial.println((int)&__bss_end);
-  Serial.print  (F("__brkval boundary betw stack & orig heap       = ")); Serial.println((unsigned int)&__brkval);
-  Serial.print  (F("__bss_start                                    = ")); Serial.println((unsigned int)&__bss_start);
-  Serial.print  (F("__data_end                                     = ")); Serial.println((unsigned int)&__data_end);
-  Serial.print  (F("__data_start                                   = ")); Serial.println((unsigned int)&__data_start);
-  Serial.print  (F("  FREE MEMORY ---------------------------------> ")); Serial.println(SP - (int)&__bss_end);
-  Serial.println(F("======================================================"));
-
-  return (unsigned int)(SP - (int)&__bss_end);
-}
