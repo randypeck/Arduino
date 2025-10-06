@@ -1,4 +1,4 @@
-// Screamo_Slave.INO Rev: 08/30/25
+// Screamo_Slave.INO Rev: 10/06/25
 
 // Pin assignments:
 // 		RS-485 Serial 2 Tx: Pin 16 = PIN_OUT_MEGA_TX2
@@ -46,6 +46,13 @@ const byte million_pins[9]  = {30, 17, 29, 18, 28, 19, 27, 20, 26};  // 1M, 2M, 
 const byte GI_pin           = 25;
 const byte TILT_pin         = 21;
 
+const byte POWER_CREDIT_UP   = 120;  // PWM value to energize Credit up coil. 120 confirmed is bare minimum to work reliably.
+const byte POWER_CREDIT_DOWN = 150;  // PWM value to energize Credit down coil. 150 confirmed is bare minimum to work reliably.
+const byte POWER_10K_UP      = 160;  // PWM value to energize 10K up coil.  160 confirmed is bare minimum to work reliably.  140 no good.
+const byte POWER_10K_BELL    = 150;  // PWM value to energize 10K bell coil. 140 confirmed via test plenty loud.
+const byte POWER_100K_BELL   = 150;  // PWM value to energize 100K bell coil.  120 confirmed via test loud enough.
+const byte POWER_SELECT_BELL = 120;  // PWM value to energize Select bell coil
+
 // Helper function prototypes
 void displayScore(int score); // score is 0..999 (i.e. displayed score / 10,000)
 void setScoreLampBrightness(byte brightness); // 0..255
@@ -56,8 +63,8 @@ void setTiltLamp(bool on);
 // Fires the Credit Up coil if Credit Full switch is closed (LOW)
 void addCredit() {
     if (digitalRead(PIN_IN_CREDIT_WHEEL_FULL) == LOW) {
-        analogWrite(PIN_OUT_MOSFET_COIL_CREDIT_UP, 255);
-        delay(50);
+        analogWrite(PIN_OUT_MOSFET_COIL_CREDIT_UP, POWER_CREDIT_UP);
+        delay(30);
         analogWrite(PIN_OUT_MOSFET_COIL_CREDIT_UP, 0);
     }
 }
@@ -65,8 +72,8 @@ void addCredit() {
 // Fires the Credit Down coil if Credit Empty switch is closed (LOW)
 void removeCredit() {
     if (digitalRead(PIN_IN_CREDIT_WHEEL_EMPTY) == LOW) {
-        analogWrite(PIN_OUT_MOSFET_COIL_CREDIT_DOWN, 255);
-        delay(50);
+        analogWrite(PIN_OUT_MOSFET_COIL_CREDIT_DOWN, POWER_CREDIT_DOWN);
+        delay(30);
         analogWrite(PIN_OUT_MOSFET_COIL_CREDIT_DOWN, 0);
     }
 }
@@ -80,7 +87,7 @@ bool hasCredits() {
 #include <Pinball_Consts.h>
 #include <Pinball_Functions.h>
 const byte THIS_MODULE = ARDUINO_SLV;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "SLAVE 08/30/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "SLAVE 10/06/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which effectively makes it a global.
 // No need to pass lcdString[] to any functions that use it!
 
@@ -146,7 +153,7 @@ void setup() {
   analogWrite(PIN_OUT_MOSFET_COIL_10K_BELL, 0);
   analogWrite(PIN_OUT_MOSFET_COIL_100K_BELL, 0);
   analogWrite(PIN_OUT_MOSFET_COIL_SELECT_BELL, 0);
-  setScoreLampBrightness(40);   // Ready to turn on as soon as relay contacts close
+  setScoreLampBrightness(40);   // Ready to turn on as soon as relay contacts close.  40 is actually as bright as they get.
   setGITiltLampBrightness(40);  // Ready to turn on as soon as relay contacts close
 
   // *** INITIALIZE PINBALL_CENTIPDE SHIFT REGISTER ***
@@ -200,10 +207,85 @@ void setup() {
   }
 */
 
+  addCredit();  // Test pulse to credit up coil
+  delay(250);
+  addCredit();  // Test pulse to credit up coil
+  delay(250);
+  addCredit();  // Test pulse to credit up coil
+  delay(2000);
+  removeCredit();  // Test pulse to credit down coil
+  delay(250);
+  removeCredit();  // Test pulse to credit down coil
+  delay(250);
+  removeCredit();  // Test pulse to credit down coil
+  delay(2000);
+  analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, POWER_10K_UP); delay(40); analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 0);  // Test pulse to 10K UP coil
+  delay(250);
+  analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, POWER_10K_UP); delay(40); analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 0);  // Test pulse to 10K UP coil
+  delay(250);
+  analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, POWER_10K_UP); delay(40); analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 0);  // Test pulse to 10K UP coil
+  delay(2000);
+
+
+/*
+  pLCD2004->println("120");
+  analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 120); delay(40); analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 0);  // Test pulse to 10K UP coil
+  delay(1000);
+  pLCD2004->println("130");
+  analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 130); delay(40); analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 0);  // Test pulse to 10K UP coil
+  delay(1000);
+  pLCD2004->println("140");
+  analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 140); delay(40); analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 0);  // Test pulse to 10K UP coil
+  delay(1000);
+  pLCD2004->println("150");
+  analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 150); delay(40); analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 0);  // Test pulse to 10K UP coil
+  delay(1000);
+  pLCD2004->println("160");
+  analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 160); delay(40); analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 0);  // Test pulse to 10K UP coil
+  delay(1000);
+  pLCD2004->println("170");
+  analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 170); delay(40); analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 0);  // Test pulse to 10K UP coil
+  delay(1000);
+  pLCD2004->println("180");
+  analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 180); delay(40); analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 0);  // Test pulse to 10K UP coil
+  delay(1000);
+  pLCD2004->println("250");
+  analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 250); delay(40); analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 0);  // Test pulse to 10K UP coil
+  delay(1000);
+*/
+  analogWrite(PIN_OUT_MOSFET_COIL_10K_BELL, POWER_10K_BELL); delay(30); analogWrite(PIN_OUT_MOSFET_COIL_10K_BELL, 0);  // Test pulse to 10K bell coil
+  delay(2000);
+  analogWrite(PIN_OUT_MOSFET_COIL_100K_BELL, POWER_100K_BELL); delay(30); analogWrite(PIN_OUT_MOSFET_COIL_100K_BELL, 0);  // Test pulse to 100K bell coil
+  delay(2000);
+  analogWrite(PIN_OUT_MOSFET_COIL_SELECT_BELL, POWER_SELECT_BELL); delay(30); analogWrite(PIN_OUT_MOSFET_COIL_SELECT_BELL, 0);  // Test pulse to Select bell coil
+  delay(2000);
+
 
   for (int i = 0; i < 1000; i++) {  // Count score from 0 to 9,990,000
     displayScore(i);
-    delay(1000);
+    if (i <= 100) {
+      analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, POWER_10K_UP);
+      analogWrite(PIN_OUT_MOSFET_COIL_10K_BELL, POWER_10K_BELL);
+      // If the score is a multiple of 100,000, ring the 100K bell
+      if (i % 10 == 0) { // Each increment is 10,000, so every 10 is 100,000
+        analogWrite(PIN_OUT_MOSFET_COIL_100K_BELL, POWER_100K_BELL);
+      }
+    }
+    // If the score is a multiple of 1,000,000, ring the Select bell
+    if (i % 100 == 0) { // Each increment is 10,000, so every 100 is 1,000,000
+      analogWrite(PIN_OUT_MOSFET_COIL_SELECT_BELL, POWER_SELECT_BELL);
+    }
+    delay(40);  // Only need to delay 30 for everything except 10K unit coil; this is just temporary
+    analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 0);  // Test pulse to 10K up coil
+    analogWrite(PIN_OUT_MOSFET_COIL_10K_BELL, 0);  // Test pulse to 10K bell coil
+    analogWrite(PIN_OUT_MOSFET_COIL_100K_BELL, 0);
+    analogWrite(PIN_OUT_MOSFET_COIL_SELECT_BELL, 0);
+
+    delay(100);
+    // If the score is a multipple of 5,000, pause for 500ms
+    if (i % 5 == 0) { // Each increment is 10,000, so every 5 is 50,000
+      delay(500);
+    }
   }
   pShiftRegister->digitalWrite(GI_pin, HIGH); 
 
@@ -222,20 +304,9 @@ void setup() {
   pLCD2004->println("Centipede done.");
   while (true) {}
 */
-/*
-  analogWrite(PIN_OUT_MOSFET_COIL_CREDIT_UP, 255); delay(50); analogWrite(PIN_OUT_MOSFET_COIL_CREDIT_UP, 0);  // Test pulse to credit up coil
-  delay(2000);
-  analogWrite(PIN_OUT_MOSFET_COIL_CREDIT_DOWN, 255); delay(50); analogWrite(PIN_OUT_MOSFET_COIL_CREDIT_DOWN, 0);  // Test pulse to credit down coil
-  delay(2000);
-  analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 255); delay(50); analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 0);  // Test pulse to 10K up coil
-  delay(2000);
-  analogWrite(PIN_OUT_MOSFET_COIL_10K_BELL, 255); delay(50); analogWrite(PIN_OUT_MOSFET_COIL_10K_BELL, 0);  // Test pulse to 10K bell coil
-  delay(2000);
-  analogWrite(PIN_OUT_MOSFET_COIL_100K_BELL, 255); delay(50); analogWrite(PIN_OUT_MOSFET_COIL_100K_BELL, 0);  // Test pulse to 100K bell coil
-  delay(2000);
-  analogWrite(PIN_OUT_MOSFET_COIL_SELECT_BELL, 255); delay(50); analogWrite(PIN_OUT_MOSFET_COIL_SELECT_BELL, 0);  // Test pulse to Select bell coil
-  delay(2000);
- */
+
+
+
   pLCD2004->println("Setup done.");
   Serial.println("Setup done.");
 
