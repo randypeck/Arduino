@@ -1,102 +1,166 @@
-// Screamo_Master.INO Rev: 08/30/25
-
-// Pin assignments:
-// 		RS-485 Serial 2 Tx: Pin 16 = PIN_OUT_MEGA_TX2
-// 		RS-485 Serial 2 Rx: Pin 17 = PIN_IN_MEGA_RX2
-// 		LCD Serial 1 Tx: Pin 18 = PIN_OUT_MEGA_TX1
-// 		LCD Serial 1 Rx: Pin 19 = PIN_IN_MEGA_RX1 (not used)
-// 		Centipede I2C SDA: Pin 20 (also pin 44) = PIN_IO_MEGA_SDA
-// 		Centipede I2C SCL: Pin 21 (also pin 43) = PIN_IO_MEGA_SCL
-//    RS-485 Tx Enable: Pin 22 = PIN_OUT_RS485_TX_ENABLE
-
-// PROBABLY WANT TO SET CONSTS FOR TIME TO PULSE COILS, ETC.  I.e. 50ms is probably long enough for most coils.
-// However, it may vary by coil.
-// Ideally, have an array with both a hold time (in multiples of 10ms) and a strength (0..255) for coils.
-// For Flippers, original Ball Gate, new Ball Release Post, and other coils that may be held after initial activation, include a "hold strength" parm as well.
-// If Hold Strength == 0, then simply release after hold time; else change to Hold Strength until released by software.
-
-// Define Arduino pin numbers unique to this Screamo Master Arduino Mega:
-// For MOSFETs, can do PWM on pins 4-13 and 44-46 = 13 pins.  However, pins 4 and 13 can't have frequency modified; all others can.
-// Use pin numbers 23+ for regular digital pins where PWM is not needed (pin 22 reserved for RS-485 Tx Enable.)
-// If a coil is held on, especially at less than 100%, such as ball tray release, it may hum if using PWM at default frequency.
-// Increase frequency to eliminate hum (pins 5-12 and 44-46, but *not* pins 4 or 13.)
-// Only use pin 4 and 13 for coils that are momentary *and* where PWM may be desired: pop bumper, kickouts, slingshots.
-// Other PWM pins can be used for any coil or motor, but especially those that may be held on *and* where PWM is desired: flippers, ball tray release, ball trough release.
-// Coils that are both momentary and where PWM is not needed, for full-strength momentary MOSFET-on, use any digital output: knocker, selection unit, relay reset unit.
-
-const byte PIN_OUT_MOSFET_COIL_POP_BUMPER          =  5;  // Output: PWM MOSFET to pop bumper coil.
-const byte PIN_OUT_MOSFET_COIL_LEFT_KICKOUT        =  4;  // Output: PWM MOSFET to Left Eject coil (cannot modify PWM freq.)
-const byte PIN_OUT_MOSFET_COIL_RIGHT_KICKOUT       = 13;  // Output: PWM MOSFET to Right Eject coil (cannot modify PWM freq.)
-const byte PIN_OUT_MOSFET_COIL_LEFT_SLINGSHOT      =  6;  // Output: PWM MOSFET to Left Eject coil.
-const byte PIN_OUT_MOSFET_COIL_RIGHT_SLINGSHOT     =  7;  // Output: PWM MOSFET to Right Eject coil.
-const byte PIN_OUT_MOSFET_COIL_LEFT_FLIPPER        =  8;  // Output: PWM MOSFET to coil to add one 10K to the score.  Reduce to low power after initial activation.
-const byte PIN_OUT_MOSFET_COIL_RIGHT_FLIPPER       =  9;  // Output: PWM MOSFET to coil to ring the 10K bell.  Reduce to low power after initial activation.
-const byte PIN_OUT_MOSFET_COIL_BALL_TRAY_RELEASE   = 10;  // Output: PWM MOSFET to (original) Ball Tray Release coil.  Reduce to low power after initial activation.
-
-const byte PIN_OUT_MOSFET_COIL_SELECTION_UNIT      = 23;  // Output: Non-PWM MOSFET to coil that activates Selection Unit (for sound FX only)
-const byte PIN_OUT_MOSFET_COIL_RELAY_RESET         = 24;  // Output: Non-PWM MOSFET to coil that activates Relay Reset Bank (for sound FX only)
-
-const byte PIN_OUT_AC_SSR_MOTOR_SCORE_MOTOR        = 25;  // Output (front of cabinet): AC SSR controls 50vac Score Motor (for sound FX only)
-const byte PIN_OUT_MOSFET_COIL_KNOCKER             = 26;  // Output (front of cabinet): Non-PWM MOSFET to Knocker coil.
-
-const byte PIN_OUT_MOSFET_COIL_BALL_TROUGH_RELEASE = 11;  // Output (front of cabinet): PWM MOSFET to new up/down post to release individual balls from trough.  Reduce to low power after initial activation.
-
-const byte PIN_OUT_MOSFET_MOTOR_SHAKER             = 12;  // Output (front of cabinet): PWM MOSFET to Shaker Motor
-
-// The following switches will be direct inputs to Arduino pins, rather than via Centipede shift register input:
-const byte PIN_IN_BUTTON_FLIPPER_LEFT              = 30;
-const byte PIN_IN_BUTTON_FLIPPER_RIGHT             = 31;
-const byte PIN_IN_SWITCH_POP_BUMPER_SKIRT          = 32;
-const byte PIN_IN_SWITCH_LEFT_SLINGSHOT            = 33;
-const byte PIN_IN_SWITCH_RIGHT_SLINGSHOT           = 34;
-
-// The following are array index numbers that cross reference Centipede Input Pin numbers with front-of-cabinet switches that they are connected to:
-const byte PIN_IN_BUTTON_START                     =  0;
-const byte PIN_IN_BUTTON_DIAG_1                    =  0;
-const byte PIN_IN_BUTTON_DIAG_2                    =  0;
-const byte PIN_IN_BUTTON_DIAG_3                    =  0;
-const byte PIN_IN_BUTTON_DIAG_4                    =  0;
-const byte PIN_IN_BUTTON_KNOCK_OFF                 =  0;
-
-const byte PIN_IN_SWITCH_COIN_MECH                 =  0;  // Input: Add a credit, even if during game play
-const byte PIN_IN_SWITCH_BALL_PRESENT              =  0;  // Input: Is there a ball at the base of the ball lift?
-const byte PIN_IN_SWITCH_TILT                      =  0;  // Input: Tilt
-
-// The following are array index numbers that cross reference Centipede Input Pin numbers with playfield switches that they are connected to:
-
-const byte PIN_IN_SWITCH_DEAD_BUMPER_1             =  0;
-const byte PIN_IN_SWITCH_DEAD_BUMPER_2             =  0;
-const byte PIN_IN_SWITCH_DEAD_BUMPER_3             =  0;
-const byte PIN_IN_SWITCH_DEAD_BUMPER_4             =  0;
-const byte PIN_IN_SWITCH_DEAD_BUMPER_5             =  0;
-const byte PIN_IN_SWITCH_DEAD_BUMPER_6             =  0;
-const byte PIN_IN_SWITCH_LEFT_KICKOUT              =  0;
-const byte PIN_IN_SWITCH_RIGHT_KICKOUT             =  0;
-const byte PIN_IN_SWITCH_HAT_ROLLOVER_1            =  0;
-const byte PIN_IN_SWITCH_HAT_ROLLOVER_2            =  0;
-const byte PIN_IN_SWITCH_HAT_ROLLOVER_3            =  0;
-const byte PIN_IN_SWITCH_HAT_ROLLOVER_4            =  0;
-const byte PIN_IN_SWITCH_TARGET_1                  =  0;
-const byte PIN_IN_SWITCH_TARGET_2                  =  0;
-const byte PIN_IN_SWITCH_TARGET_3                  =  0;
-const byte PIN_IN_SWITCH_TARGET_4                  =  0;
-const byte PIN_IN_SWITCH_TARGET_5                  =  0;
-const byte PIN_IN_SWITCH_TARGET_6                  =  0;
-const byte PIN_IN_SWITCH_TARGET_7                  =  0;
-const byte PIN_IN_SWITCH_TARGET_8                  =  0;
-const byte PIN_IN_SWITCH_TARGET_9                  =  0;
-const byte PIN_IN_SWITCH_TRAP_DOOR                 =  0;
-const byte PIN_IN_SWITCH_ROLLOVER_LEFT             =  0;
-const byte PIN_IN_SWITCH_ROLLOVER_CENTER           =  0;
-const byte PIN_IN_SWITCH_ROLLOVER_RIGHT            =  0;
-
-
+// Screamo_Master.INO Rev: 11/01/25
 
 #include <Arduino.h>
 #include <Pinball_Consts.h>
 #include <Pinball_Functions.h>
+
+// #include <EEPROM.h>               // For saving and recalling score, to persist between power cycles.
+// const int EEPROM_ADDR_SCORE = 0;  // Address to store 16-bit score (uses addr 0 and 1)
+
+#include <Tsunami.h>
+
+// *** CREATE AN ARRAY OF deviceParm STRUCT FOR ALL COILS AND MOTORS ***
+// Define array index constants - this list is rather arbitrary and doesn't relate to device number/pin numbers:
+const byte DEV_IDX_POP_BUMPER           =  0;
+const byte DEV_IDX_KICKOUT_LEFT         =  1;
+const byte DEV_IDX_KICKOUT_RIGHT        =  2;
+const byte DEV_IDX_SLINGSHOT_LEFT       =  3;
+const byte DEV_IDX_SLINGSHOT_RIGHT      =  4;
+const byte DEV_IDX_FLIPPER_LEFT         =  5;
+const byte DEV_IDX_FLIPPER_RIGHT        =  6;
+const byte DEV_IDX_BALL_TRAY_RELEASE    =  7;
+const byte DEV_IDX_SELECTION_UNIT       =  8;
+const byte DEV_IDX_RELAY_RESET          =  9;
+const byte DEV_IDX_BALL_TROUGH_RELEASE  = 10;
+const byte DEV_IDX_MOTOR_SHAKER         = 11;
+const byte DEV_IDX_KNOCKER              = 12;
+const byte DEV_IDX_MOTOR_SCORE          = 13;
+
+const byte NUM_DEVS = 14;
+
+// Define a struct to store coil/motor power and time parameters.  Coils that may be held on include a hold strength parameter.
+// For Flippers, original Ball Gate, new Ball Release Post, and other coils that may be held after initial activation, include a
+// "hold strength" parm as well as initial strength and time on.
+// If Hold Strength == 0, then simply release after hold time; else change to Hold Strength until released by software.
+// Example usage:
+//   analogWrite(deviceParm[DEV_IDX_FLIPPER_LEFT].pinNum, deviceParm[DEV_IDX_FLIPPER_LEFT].powerInitial);
+//   delay(deviceParm[DEV_IDX_FLIPPER_LEFT].timeOn);
+//   analogWrite(deviceParm[DEV_IDX_FLIPPER_LEFT].pinNum, deviceParm[DEV_IDX_FLIPPER_LEFT].powerHold);
+struct deviceParmStruct {
+  byte pinNum;        // Arduino pin number for this coil/motor
+  byte powerInitial;  // 0..255 PWM power level when first energized
+  byte timeOn;        // ms to hold initial power level before changing to hold level or turning off
+  byte powerHold;     // 0..255 PWM power level to hold after initial timeOn; 0 = turn off after timeOn
+};
+
+deviceParmStruct deviceParm[NUM_DEVS] = {
+  {  5, 200,  50,   0 },  // POP_BUMPER; PWM MOSFET
+  {  4, 100,  50,   0 },  // KICKOUT_LEFT; PWM MOSFET (cannot modify PWM freq.)
+  { 13, 100,  50,   0 },  // KICKOUT_RIGHT; PWM MOSFET (cannot modify PWM freq.)
+  {  6, 200,  50,   0 },  // SLINGSHOT_LEFT; PWM MOSFET
+  {  7, 200,  50,   0 },  // SLINGSHOT_RIGHT; PWM MOSFET
+  {  8, 200, 100,  50 },  // FLIPPER_LEFT; PWM MOSFET
+  {  9, 200, 100,  50 },  // FLIPPER_RIGHT; PWM MOSFET
+  { 10, 100, 200,  50 },  // BALL_TRAY_RELEASE (original); PWM MOSFET
+  { 23, 255,  50,   0 },  // SELECTION_UNIT: Non-PWM MOSFET; on/off only.
+  { 24, 255,  50,   0 },  // RELAY_RESET: Non-PWM MOSFET; on/off only.
+  { 11, 200, 200,   0 },  // BALL_TROUGH_RELEASE (new up/down post); PWM MOSFET
+  { 12, 200, 250,   0 },  // MOTOR_SHAKER; PWM MOSFET
+  { 26, 200,  40,   0 },  // KNOCKER: Non-PWM MOSFET; on/off only.
+  { 25, 255, 250,   0 }   // AC_SCORE_MOTOR: A/C SSR; on/off only; NOT PWM.
+};
+
+// *********** NOW WE NEED A FUNCTION WE CAN CALL i.e. fireDevice(deviceIndex); that will use the above info. ***********
+// For final code, we may want to make this non-blocking by using millis() timing instead of delay(), but for now delay() is simpler.
+
+// *** CREATE AN ARRAY OF switchParm STRUCT FOR ALL SWITCHES AND BUTTONS ***
+// Flipper buttons are direct-wired to Arduino pins for faster response, so not included here.
+// Define array index constants - this list is rather arbitrary and doesn't relate to device number/pin numbers:
+// CABINET SWITCHES:
+const byte SWITCH_IDX_START_BUTTON        =  0;
+const byte SWITCH_IDX_DIAG_1              =  1;  // Back
+const byte SWITCH_IDX_DIAG_2              =  2;  // Minus/Left
+const byte SWITCH_IDX_DIAG_3              =  3;  // Plus/Right
+const byte SWITCH_IDX_DIAG_4              =  4;  // Select
+const byte SWITCH_IDX_KNOCK_OFF           =  5;
+const byte SWITCH_IDX_COIN_MECH           =  6;
+const byte SWITCH_IDX_BALL_PRESENT        =  7;  // (New) Ball present at bottom of ball lift
+const byte SWITCH_IDX_TILT_BOB            =  8;
+// PLAYFIELD SWITCHES:
+const byte SWITCH_IDX_BUMPER_S            =  9;  // 'S' bumper switch
+const byte SWITCH_IDX_BUMPER_C            = 10;  // 'C' bumper switch
+const byte SWITCH_IDX_BUMPER_R            = 11;  // 'R' bumper switch
+const byte SWITCH_IDX_BUMPER_E            = 12;  // 'E' bumper switch
+const byte SWITCH_IDX_BUMPER_A            = 13;  // 'A' bumper switch
+const byte SWITCH_IDX_BUMPER_M            = 14;  // 'M' bumper switch
+const byte SWITCH_IDX_BUMPER_O            = 15;  // 'O' bumper switch
+const byte SWITCH_IDX_KICKOUT_LEFT        = 16;
+const byte SWITCH_IDX_KICKOUT_RIGHT       = 17;
+const byte SWITCH_IDX_SLINGSHOT_LEFT      = 18;  // Two switches wired in parallel
+const byte SWITCH_IDX_SLINGSHOT_RIGHT     = 19;  // Two switches wired in parallel
+const byte SWITCH_IDX_HAT_LEFT_TOP        = 20;
+const byte SWITCH_IDX_HAT_LEFT_BOTTOM     = 21;
+const byte SWITCH_IDX_HAT_RIGHT_TOP       = 22;
+const byte SWITCH_IDX_HAT_RIGHT_BOTTOM    = 23;
+// Note that there is no "LEFT_SIDE_TARGET_1" on the playfield; starting left side targets at 2 so they match right-side target numbers.
+const byte SWITCH_IDX_LEFT_SIDE_TARGET_2  = 24;  // Long narrow side target near top left
+const byte SWITCH_IDX_LEFT_SIDE_TARGET_3  = 25;  // Upper switch above left kickout
+const byte SWITCH_IDX_LEFT_SIDE_TARGET_4  = 26;  // Lower switch above left kickout
+const byte SWITCH_IDX_LEFT_SIDE_TARGET_5  = 27;  // Below left kickout
+const byte SWITCH_IDX_RIGHT_SIDE_TARGET_1 = 28;  // Top right just below ball gate
+const byte SWITCH_IDX_RIGHT_SIDE_TARGET_2 = 29;  // Long narrow side target near top right
+const byte SWITCH_IDX_RIGHT_SIDE_TARGET_3 = 30;  // Upper switch above right kickout
+const byte SWITCH_IDX_RIGHT_SIDE_TARGET_4 = 31;  // Lower switch above right kickout
+const byte SWITCH_IDX_RIGHT_SIDE_TARGET_5 = 32;  // Below right kickout
+const byte SWITCH_IDX_GOBBLE              = 33;
+const byte SWITCH_IDX_DRAIN_LEFT          = 34;  // Left drain switch index in Centipede input shift register
+const byte SWITCH_IDX_DRAIN_CENTER        = 35;  // Center drain switch index in Centipede input shift register
+const byte SWITCH_IDX_DRAIN_RIGHT         = 36;  // Right drain switch index in Centipede input shift register
+
+const byte NUM_SWITCHES = 64; // until we identify the pin numbers for each switch 37;  // Total number of switches connected to Centipede input shift register (1 Centipede = 64 inputs)
+
+// Define a struct to store switch parameters.
+// No doubt there will be other uses for this struct in the future, but this is all I can think of now.
+// Example usage:
+//   pShiftRegister->digitalRead(switchParm[SWITCH_IDX_START_BUTTON].pinNum);
+struct switchParmStruct {
+  byte pinNum;        // Centipede pin number for this switch (0..63)
+  byte loopConst;     // Number of 10ms loops to confirm stable state change
+  byte loopCount;     // Current count of 10ms loops with stable state (initialized to zero)
+};
+
+switchParmStruct switchParm[NUM_SWITCHES] = {
+  { 54,  0,  0 },  // SWITCH_IDX_START_BUTTON        =  0;
+  { 51,  0,  0 },  // SWITCH_IDX_DIAG_1              =  1;  // Back
+  { 48,  0,  0 },  // SWITCH_IDX_DIAG_2              =  2;  // Minus/Left
+  { 49,  0,  0 },  // SWITCH_IDX_DIAG_3              =  3;  // Plus/Right
+  { 52,  0,  0 },  // SWITCH_IDX_DIAG_4              =  4;  // Select
+  { 63,  0,  0 },  // SWITCH_IDX_KNOCK_OFF           =  5;
+  { 53,  0,  0 },  // SWITCH_IDX_COIN_MECH           =  6;
+  { 50,  0,  0 },  // SWITCH_IDX_BALL_PRESENT        =  7;  // (New) Ball present at bottom of ball lift
+  { 55,  0,  0 },  // SWITCH_IDX_TILT_BOB            =  8;
+  {  0,  0,  0 },  // SWITCH_IDX_BUMPER_S            =  9;  // 'S' bumper switch
+  {  0,  0,  0 },  // SWITCH_IDX_BUMPER_C            = 10;  // 'C' bumper switch
+  {  0,  0,  0 },  // SWITCH_IDX_BUMPER_R            = 11;  // 'R' bumper switch
+  {  0,  0,  0 },  // SWITCH_IDX_BUMPER_E            = 12;  // 'E' bumper switch
+  {  0,  0,  0 },  // SWITCH_IDX_BUMPER_A            = 13;  // 'A' bumper switch
+  {  0,  0,  0 },  // SWITCH_IDX_BUMPER_M            = 14;  // 'M' bumper switch
+  {  0,  0,  0 },  // SWITCH_IDX_BUMPER_O            = 15;  // 'O' bumper switch
+  {  0,  0,  0 },  // SWITCH_IDX_KICKOUT_LEFT        = 16;
+  {  0,  0,  0 },  // SWITCH_IDX_KICKOUT_RIGHT       = 17;
+  {  0,  0,  0 },  // SWITCH_IDX_SLINGSHOT_LEFT      = 18;  // Two switches wired in parallel
+  {  0,  0,  0 },  // SWITCH_IDX_SLINGSHOT_RIGHT     = 19;  // Two switches wired in parallel
+  {  0,  0,  0 },  // SWITCH_IDX_HAT_LEFT_TOP        = 20;
+  {  0,  0,  0 },  // SWITCH_IDX_HAT_LEFT_BOTTOM     = 21;
+  {  0,  0,  0 },  // SWITCH_IDX_HAT_RIGHT_TOP       = 22;
+  {  0,  0,  0 },  // SWITCH_IDX_HAT_RIGHT_BOTTOM    = 23;
+  {  0,  0,  0 },  // SWITCH_IDX_LEFT_SIDE_TARGET_2  = 24;  // Long narrow side target near top left
+  {  0,  0,  0 },  // SWITCH_IDX_LEFT_SIDE_TARGET_3  = 25;  // Upper switch above left kickout
+  {  0,  0,  0 },  // SWITCH_IDX_LEFT_SIDE_TARGET_4  = 26;  // Lower switch above left kickout
+  {  0,  0,  0 },  // SWITCH_IDX_LEFT_SIDE_TARGET_5  = 27;  // Below left kickout
+  {  0,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_1 = 28;  // Top right just below ball gate
+  {  0,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_2 = 29;  // Long narrow side target near top right
+  {  0,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_3 = 30;  // Upper switch above right kickout
+  {  0,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_4 = 31;  // Lower switch above right kickout
+  {  0,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_5 = 32;  // Below right kickout
+  {  0,  0,  0 },  // SWITCH_IDX_GOBBLE              = 33;
+  {  0,  0,  0 },  // SWITCH_IDX_DRAIN_LEFT          = 34;  // Left drain switch index in Centipede input shift register
+  {  0,  0,  0 },  // SWITCH_IDX_DRAIN_CENTER        = 35;  // Center drain switch index in Centipede input shift register
+  {  0,  0,  0 }   // SWITCH_IDX_DRAIN_RIGHT         = 36;  // Right drain switch index in Centipede input shift register
+};
+
 const byte THIS_MODULE = ARDUINO_MAS;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "MASTER 08/30/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "MASTER 11/01/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which effectively makes it a global.
 // No need to pass lcdString[] to any functions that use it!
 
@@ -112,13 +176,22 @@ Pinball_Message* pMessage = nullptr;
 // #include <Pinball_Centipede.h> is already in <Pinball_Functions.h> so not needed here.
 Pinball_Centipede* pShiftRegister = nullptr;  // Only need ONE object for one or two Centipede boards
 
-// *** MISC CONSTANTS AND GLOBALS ***
+// *** TSUMANI WAV PLAYER CLASS ***
+Tsunami* pTsunami = nullptr;  // Tsunami WAV player object pointer
 
+// *** MISC CONSTANTS AND GLOBALS ***
 byte         modeCurrent      = MODE_UNDEFINED;
 byte         stateCurrent     = STATE_UNDEFINED;
 char         msgType          = ' ';
 
+int currentScore = 0; // Current game score (0..999).
+
 bool debugOn    = false;
+
+// *** SWITCH STATE TABLE: Arrays contain 4 elements (unsigned ints) of 16 bits each = 64 bits = 1 Centipede
+// Although we're using two Centipede boards (one for OUTPUTs, one for INPUTs), we only need one set of switch state arrays.
+unsigned int switchOldState[] = { 65535,65535,65535,65535 };
+unsigned int switchNewState[] = { 65535,65535,65535,65535 };
 
 // *****************************************************************************************
 // **************************************  S E T U P  **************************************
@@ -126,38 +199,177 @@ bool debugOn    = false;
 
 void setup() {
 
-  // *** INITIALIZE ARDUINO I/O PINS ***
-  initScreamoMasterPins();
+  initScreamoMasterArduinoPins();  // Arduino direct I/O pins only.
+
+  // Set initial state for all MOSFET PWM output pins (pins 5-12)
+  for (int i = 0; i < NUM_DEVS; i++) {
+    digitalWrite(deviceParm[i].pinNum, LOW);  // Ensure all MOSFET outputs are off at startup.
+    pinMode(deviceParm[i].pinNum, OUTPUT);
+  }
+  // Increase PWM frequency for pins 11 and 12 (Timer 1) to reduce coil buzz - maybe no needed here in Master?
+  // Pins 11 and 12 are Ball Trough Release coil and Shaker Motor control
+  // Set Timer 1 prescaler to 1 for ~31kHz PWM frequency
+  TCCR1B = (TCCR1B & 0b11111000) | 0x01;
 
   // *** INITIALIZE SERIAL PORTS ***
   Serial.begin(SERIAL0_SPEED);   // PC serial monitor window 115200.  Change if using thermal mini printer.
   // Serial1 LCD2004 instantiated via pLCD2004->begin.
   // Serial2 RS485   instantiated via pMessage->begin.
-
-  // *** INITIALIZE LCD CLASS AND OBJECT *** (Heap uses 98 bytes)
-  // We must pass parms to the constructor (vs begin) because needed by parent DigoleSerialDisp.
-  pLCD2004 = new Pinball_LCD(&Serial1, SERIAL1_SPEED);  // Instantiate the object and assign the global pointer.
-  pLCD2004->begin();  // 20-char x 4-line LCD display via Serial 1.
-  pLCD2004->println(lcdString);  // Display app version, defined above.
-  // Serial.println(lcdString);
+  // Serial3 Tsunami WAV Trigger instantiated via tsunami->begin.
 
   // *** INITIALIZE RS485 MESSAGE CLASS AND OBJECT *** (Heap uses 30 bytes)
   // WARNING: Instantiating Message class hangs the system if hardware is not connected.
   pMessage = new Pinball_Message;  // C++ quirk: no parens in ctor call if no parms; else thinks it's fn decl'n.
   pMessage->begin(&Serial2, SERIAL2_SPEED);
-delay(1000);  // Master-only delay gives the Slave a chance to get ready to receive data.  ????????????????????????????????? NEEDED?
 
-/*
   // *** INITIALIZE PINBALL_CENTIPEDE SHIFT REGISTER ***
-  // WARNING: Instantiating Centipede class hangs the system if hardware is not connected.
-  Wire.begin();                                 // Join the I2C bus as a master for Centipede shift register.
+  // WARNING: Instantiating Pinball_Centipede class hangs the system if hardware is not connected.
+  // We're doing this near the top of the code so we can turn on G.I. as quickly as possible.
+  Wire.begin();                               // Join the I2C bus as a master for Centipede shift register.
   pShiftRegister = new Pinball_Centipede;     // C++ quirk: no parens in ctor call if no parms; else thinks it's fn decl'n.
   pShiftRegister->begin();                    // Set all registers to default.
-  pShiftRegister->initializePinsForMaster();  // Set Centipede #1 pins for OUTPUT, Centipede #2 pins for INPUT
-*/
+  pShiftRegister->initScreamoMasterCentipedePins();
 
- // *** STARTUP HOUSEKEEPING: ***
-  pMessage->sendTurnOnGI();
+  // *** INITIALIZE LCD CLASS AND OBJECT *** (Heap uses 98 bytes)
+  // Insert a delay() in order to give the Digole 2004 LCD time to power up and be ready to receive commands (esp. the 115K speed command).
+  delay(750);  // 500ms was occasionally not enough.
+  // We must pass parms to the constructor (vs begin) because needed by parent DigoleSerialDisp.
+  pLCD2004 = new Pinball_LCD(&Serial1, SERIAL1_SPEED);  // Instantiate the object and assign the global pointer.
+  pLCD2004->begin();  // 20-char x 4-line LCD display via Serial 1.
+  pLCD2004->println(lcdString);  // Display app version, defined above.
+  Serial.println(lcdString);
+  pLCD2004->println("Setup starting.");
+
+  // *** INITIALIZE TSUNAMI WAV PLAYER OBJECT ***
+  // Files must be WAV format, 16-bit PCM, 44.1kHz, Stereo.  Details in Tsunami.h comments.
+  pTsunami = new Tsunami();  // Create Tsunami object on Serial3
+  pTsunami->start();         // Start Tsunami WAV player
+
+
+  // Here is some code to test the Tsunami WAV player by playing a sound...
+  // Call example: playTsunamiSound(1);
+  // 001..016 are spoken numbers
+  // 020 is coaster clicks
+  // 021 is coaster clicks with 10-char filename
+  // 030 is "cock the gun" being spoken
+  // 031 is American Flyer announcement
+  // Track number, output number is always 0, lock T/F
+  pTsunami->trackPlayPoly(21, 0, false);
+  delay(2000);
+  pTsunami->trackPlayPoly(30, 0, false);
+  delay(2000);
+  pTsunami->trackPlayPoly(1, 0, false);
+  delay(2000);
+  pTsunami->trackStop(21);
+
+  /*
+  // Display the status of the flipper buttons on the LCD...
+  while (true) {
+    int left = digitalRead(PIN_IN_BUTTON_FLIPPER_LEFT);
+    int right = digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT);
+    sprintf(lcdString, "L:%s R:%s", (left == HIGH) ? "0  " : "1  ", (right == HIGH) ? "0  " : "1  ");
+    pLCD2004->println(lcdString);
+    Serial.println(lcdString);
+    delay(100);
+  }
+  */
+
+  /*
+  // Here is some code that reads Centipede #2 inputs manually, one at a time, and displays any closed switches.
+  // TESTING RESULTS SHOW IT TAKES 30ms TO READ ALL 64 SWITCHES MANUALLY
+  while (true) {
+    for (int i = 0; i < 64; i++) {  // We'll read Centipede #2, but the function will correct for this
+      if (switchClosed(i)) {
+        sprintf(lcdString, "SW %02d CLOSED", i);
+        pLCD2004->println(lcdString);
+        Serial.println(lcdString);
+      }
+    }
+    long unsigned int endMillis = millis();
+  }
+  */
+
+  /*
+  // Here is some code that reads Centipede #2 inputs 16 bits at a time using portRead(), and displays any closed switches.
+  // TESTING RESULTS SHOW IT ONLY TAKES 2-3ms TO READ ALL 64 SWITCHES USING portRead()!
+  while (true) {
+    // This block of code will read all 64 inputs from Centipede #2, 16 bits at a time, and display any that are closed.
+    // We will use our switchOldState/switchNewState arrays to hold the 64 bits read from Centipede #2.
+    // We will use the shiftRegister->portRead function to read 16 bits at a time.
+    for (int i = 0; i < 4; i++) {  // There are 4 ports of 16 bits each = 64 bits total
+      switchNewState[i] = pShiftRegister->portRead(i + 4);  // "+4" so we'll read from Centipede #2; input ports 4..7
+      // Now check each of the 16 bits read for closed switches
+      for (int bitNum = 0; bitNum < 16; bitNum++) {
+        // Check if this bit is LOW (closed switch)
+        if ((switchNewState[i] & (1 << bitNum)) == 0) {
+          int switchNum = (i * 16) + bitNum;  // Calculate switch number 0..63
+          sprintf(lcdString, "SW %02d CLOSED", switchNum);
+          pLCD2004->println(lcdString);
+          Serial.println(lcdString);
+        }
+      }
+    }
+    // Just some timing code to see how long it takes to read all 64 switches...
+    //    long unsigned int currentMillis = millis();
+    //    long unsigned int endMillis = millis();
+    //    sprintf(lcdString, "Time: %lu ms", endMillis - currentMillis);
+    //    pLCD2004->println(lcdString);
+    //    Serial.println(lcdString);
+    //    delay(1000);
+  }
+  */
+
+  /*
+  // Here is some code that tests Centipede #1 output pins by cycling them on and off...
+  while (true) {
+    // Start with pinNum = 16 since the first 16 pins are unused on Centipede #1 in Screamo Master.
+    for (int pinNum = 16; pinNum < 64; pinNum++) {  // Cycle through all 64 output pins on Centipede #1
+      pShiftRegister->digitalWrite(pinNum, LOW);  // Turn ON
+      sprintf(lcdString, "Pin %02d LOW ", pinNum);
+      pLCD2004->println(lcdString);
+      Serial.println(lcdString);
+      delay(200);
+      pShiftRegister->digitalWrite(pinNum, HIGH);   // Turn OFF
+      sprintf(lcdString, "Pin %02d HIGH", pinNum);
+      pLCD2004->println(lcdString);
+      Serial.println(lcdString);
+      delay(200);
+    }
+  }
+  */
+
+  /*
+  // Here is some code that tests the Mega's PWM outputs by cycling them on and off...
+  while (true) {
+    for (int i = 0; i < NUM_DEVS; i++) {
+      analogWrite(deviceParm[i].pinNum, deviceParm[i].powerInitial);  // Turn ON at initial power level
+      sprintf(lcdString, "Dev %02d ON ", i);
+      pLCD2004->println(lcdString);
+      Serial.println(lcdString);
+      delay(deviceParm[i].timeOn);
+      analogWrite(deviceParm[i].pinNum, LOW);  // Turn OFF
+      sprintf(lcdString, "Dev %02d OFF", i);
+      pLCD2004->println(lcdString);
+      Serial.println(lcdString);
+      delay(500);
+    }
+  }
+  */
+  
+
+
+
+
+
+
+
+  while (true) {}
+
+  // *** STARTUP HOUSEKEEPING: ***
+
+  // Turn on GI lamps so player thinks they're getting instant startup (NOTE: Can't do this until after pShiftRegister is initialized)
+  // setGILamp(true);            // Turn on playfield G.I. lamps
+  // pMessage->setGILamp(true);  // Tell Slave to turn on its G.I. lamps as well
 
 }  // End of setup()
 
@@ -196,6 +408,7 @@ while (true) {
 }
 */
 
+/*
   // Send message asking Slave if we have any credits; will return a message with bool TRUE or FALSE
   sprintf(lcdString, "Sending to Slave"); Serial.println(lcdString);
   pMessage->sendRequestCredit();
@@ -229,12 +442,29 @@ while (true) {
       // It's printing a, b, c, etc. i.e. successive characters **************************************************************************
   }
   msgType = pMessage->available();
+*/
 
 }  // End of loop()
 
 // ********************************************************************************************************************************
 // ********************************************************* FUNCTIONS ************************************************************
 // ********************************************************************************************************************************
+
+bool switchClosed(byte t_switchNum) {
+  // This function will return True or False if a switch is closed for switch numbers 1..52 (NOT 0..51!)
+  // Since we don't call this as a result of a detected change, we don't need to update switchOldState/switchNewState arrays.
+  // Centipede input 0 = switch #1.
+  if ((t_switchNum < 0) || (t_switchNum >= NUM_SWITCHES)) {
+    sprintf(lcdString, "SWITCH NUM BAD!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(6);
+  }
+  t_switchNum = t_switchNum + 64;  // This will convert a pin number to Centipede #2's pin number.
+  if (pShiftRegister->digitalRead(t_switchNum - 1) == LOW) {
+    return true;
+  }
+  // The only other possibility is HIGH...
+  return false;
+}
+
 
 // ********************************************************************************************************************************
 // **************************************************** OPERATE IN MANUAL MODE ****************************************************

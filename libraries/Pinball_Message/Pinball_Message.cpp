@@ -1,4 +1,4 @@
-// PINBALL_MESSAGE.CPP  Rev: 08/18/25
+// PINBALL_MESSAGE.CPP  Rev: 11/01/25
 
 #include "Pinball_Message.h"
 
@@ -32,7 +32,7 @@ Pinball_Message::Pinball_Message() {  // Constructor
 }
 
 void Pinball_Message::begin(HardwareSerial * t_mySerial, long unsigned int t_myBaud) {
-  // Rev: 12/06/20.
+  // Rev: 11/01/25.  Confirm pLCD2004 isn't null before using it.
   m_mySerial = t_mySerial;      // Pointer to the serial port we want to use for RS485.
   m_myBaud = t_myBaud;          // RS485 serial port baud rate.
   m_mySerial->begin(m_myBaud);  // Initialize the RS485 serial port that this object will be using.
@@ -40,7 +40,9 @@ void Pinball_Message::begin(HardwareSerial * t_mySerial, long unsigned int t_myB
   m_RS485Buf[RS485_LEN_OFFSET] = 0;      // Setting message len to zero just for fun.
   digitalWrite(PIN_OUT_RS485_TX_ENABLE, RS485_RECEIVE);  // Put RS485 in receive mode (LOW)
   pinMode(PIN_OUT_RS485_TX_ENABLE, OUTPUT);
-  sprintf(lcdString, "RS485 init ok!"); pLCD2004->println(lcdString);
+  if (pLCD2004) {
+    sprintf(lcdString, "RS485 init ok!"); pLCD2004->println(lcdString);
+  }
 }
 
 char Pinball_Message::available() {
@@ -71,10 +73,11 @@ char Pinball_Message::available() {
 // All of the following public message-get functions assume that pMessage->available() was called, and returned a non-blank message
 // type, and that m_RS485Buf[] a valid message of that type.
 
-void Pinball_Message::sendTurnOnGI() {
-  int recLen = 3;
+void Pinball_Message::setGILamp(bool t_onOrOff) {
+  int recLen = 4;
   m_RS485Buf[RS485_LEN_OFFSET] = recLen;  // Offset 0 = Length
   m_RS485Buf[RS485_TYPE_OFFSET] = 'G';    // Offset 1 = Type
+  m_RS485Buf[2] = t_onOrOff;
   m_RS485Buf[recLen - 1] = calcChecksumCRC8(m_RS485Buf, recLen - 1);
   sendMessageRS485(m_RS485Buf);
   return;

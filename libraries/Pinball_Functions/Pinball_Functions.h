@@ -26,7 +26,8 @@ extern Pinball_Centipede* pShiftRegister;
 
 extern void wdt_disable();  // Used by SWT to release all turnout solenoids in haltIfHaltPinPulledLow()
 
-void initScreamoMasterPins();
+void initScreamoMasterArduinoPins();
+void initScreamoSlaveArduinoPins();
 void haltIfHaltPinPulledLow();
 void endWithFlashingLED(int t_numFlashes);
 void requestEmergencyStop();

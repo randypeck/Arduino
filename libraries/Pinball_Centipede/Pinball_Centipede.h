@@ -1,4 +1,4 @@
-// Rev: 08/17/25.
+// Rev: 10/30/25.
 // Pinball Centipede Shield Library
 // Controls MCP23017 16-bit digital I/O chips
 // This is the newer 8/28/12 version cleaned up by RDP on 10/14/17.
@@ -18,8 +18,8 @@ class Pinball_Centipede
   public:
     Pinball_Centipede();
     void begin();
-    void initializePinsForMaster();
-    void initializePinsForSlave();
+    void initScreamoMasterCentipedePins();
+    void initScreamoSlaveCentipedePins();
     void pinMode(int pin, int mode);
     void pinPullup(int pin, int mode);
     void digitalWrite(int pin, int level);

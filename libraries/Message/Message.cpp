@@ -63,7 +63,7 @@ Message::Message() {  // Constructor
 }
 
 void Message::begin(HardwareSerial * t_mySerial, long unsigned int t_myBaud) {
-  // Rev: 12/06/20.
+  // Rev: 11/01/25.  Confirm pLCD2004 isn't null before using it.
   m_mySerial = t_mySerial;      // Pointer to the serial port we want to use for RS485.
   m_myBaud = t_myBaud;          // RS485 serial port baud rate.
   m_mySerial->begin(m_myBaud);  // Initialize the RS485 serial port that this object will be using.
@@ -75,7 +75,9 @@ void Message::begin(HardwareSerial * t_mySerial, long unsigned int t_myBaud) {
   pinMode(PIN_OUT_RS485_TX_LED, OUTPUT);
   digitalWrite(PIN_OUT_RS485_RX_LED, LOW);       // Turn off the receive LED
   pinMode(PIN_OUT_RS485_RX_LED, OUTPUT);
-  sprintf(lcdString, "RS485 init ok!"); pLCD2004->println(lcdString);
+  if (pLCD2004) {
+    sprintf(lcdString, "RS485 init ok!"); pLCD2004->println(lcdString);
+  }
 }
 
 char Message::available() {

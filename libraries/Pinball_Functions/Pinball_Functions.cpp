@@ -1,14 +1,37 @@
-// PINBALL_FUNCTIONS.CPP Rev: 08/18/25.
+// PINBALL_FUNCTIONS.CPP Rev: 11/02/25.
 // Declares and defines several functions that are global to all (or nearly all) Arduino modules.
 
 #include "Pinball_Functions.h"
 
-void initScreamoMasterPins() {
-  // First we'll set up pins that are appropriate for all modules.
-  digitalWrite(PIN_OUT_LED, LOW);       // Built-in LED LOW=off
+void initScreamoMasterArduinoPins() {
+
+  // Set pin modes for all DIRECT INPUT pins
+  pinMode(PIN_IN_BUTTON_FLIPPER_LEFT, INPUT_PULLUP);           // Direct input into Arduino for faster response
+  pinMode(PIN_IN_BUTTON_FLIPPER_RIGHT, INPUT_PULLUP);          // Direct input into Arduino for faster response
+
+  // Set pin modes for all OUTPUT pins
+  digitalWrite(PIN_OUT_LED, LOW);                              // Built-in LED LOW=off
   pinMode(PIN_OUT_LED, OUTPUT);
-  digitalWrite(PIN_OUT_RS485_TX_ENABLE, RS485_RECEIVE);  // Put RS485 in receive mode
-  pinMode(PIN_OUT_RS485_TX_ENABLE, OUTPUT);              // HIGH = RS485 transmit, LOW = not transmitting (receive)
+
+  digitalWrite(PIN_OUT_RS485_TX_ENABLE, RS485_RECEIVE);        // Put RS485 in receive mode
+  pinMode(PIN_OUT_RS485_TX_ENABLE, OUTPUT);                    // HIGH = RS485 transmit, LOW = not transmitting (receive)
+
+  return;
+}
+
+void initScreamoSlaveArduinoPins() {
+
+  // Set pin modes for all DIRECT INPUT pins
+  pinMode(PIN_IN_SWITCH_CREDIT_EMPTY, INPUT_PULLUP);           // Direct input into Arduino for faster response
+  pinMode(PIN_IN_SWITCH_CREDIT_FULL, INPUT_PULLUP);            // Direct input into Arduino for faster response
+
+  // Set pin modes for all OUTPUT pins
+  digitalWrite(PIN_OUT_LED, LOW);                              // Built-in LED LOW=off
+  pinMode(PIN_OUT_LED, OUTPUT);
+
+  digitalWrite(PIN_OUT_RS485_TX_ENABLE, RS485_RECEIVE);        // Put RS485 in receive mode
+  pinMode(PIN_OUT_RS485_TX_ENABLE, OUTPUT);                    // HIGH = RS485 transmit, LOW = not transmitting (receive)
+
   return;
 }
 
@@ -18,7 +41,7 @@ void haltIfHaltPinPulledLow() {
 }
 
 void endWithFlashingLED(int t_numFlashes) {  // Works for all modules, including SWT and LEG (requires pointer to Pinball_Centipede)
-  pShiftRegister->initializePinsForMaster();  // Works for Master or Slave; Centipede 1 is output to relays and this releases them all
+  pShiftRegister->initScreamoMasterCentipedePins();  // Works for Master or Slave; Centipede 1 is output to relays and this releases them all
   // Infinite loop:
   while (true) {
     for (int i = 1; i <= t_numFlashes; i++) {

@@ -1,93 +1,75 @@
-// Screamo_Slave.INO Rev: 10/06/25
+// Screamo_Slave.INO Rev: 11/02/25
+// Need code to save and recall previous score when machine was turned off or last game ended, so we can display it on power-up.
+//   Maybe automatically save current score every x times through the 10ms loop; i.e. every 15 or 30 seconds.  Or just at game-over.
+//   Maybe save to EEPROM every time the score changes, but that could wear out the EEPROM
+// Need code to realistically reset score from previous score back to zero: advancing the 10K unit and "resetting" the 100K unit.
+// 
+// Messages handled:
+//   'G' - Turn on or off G.I. lamps; pass TRUE to turn on, FALSE to turn off.
+//   'T' - Turn on or off Tilt lamp; pass TRUE to turn on, FALSE to turn off.
+//   'H' - Check if credits are available; return TRUE if so; else FALSE.
+//   'C' - Add credit(s); passed number to add (usually 1) if credit wheel not already full.  Master should also fire Knocker coil.
+//   'D' - Deduct one credit, if available. Return TRUE if there was one to deduct; else return FALSE.
+//   'Z' - Reset score to zero (should display score at end of last game, even upon power-up)
+//   'S' - Adjust score by n points (-999..999); i.e. pass 5 to add 5,000 points; pass -1 to deduct 1,000 points.  Returns new score.
+//   'L' - Ring the 10K bell
+//   'M' - Ring the 100K bell
+//   'X' - Ring the Select bell
+//   'P' - Pulse the 10K Up coil (for testing)
+//   'N' - Start a new game; pass which version (1=Williams, 2=Gottlieb, 3=Advanced)
+//   ' ' - No message waiting for us
 
-// Pin assignments:
-// 		RS-485 Serial 2 Tx: Pin 16 = PIN_OUT_MEGA_TX2
-// 		RS-485 Serial 2 Rx: Pin 17 = PIN_IN_MEGA_RX2
-// 		LCD Serial 1 Tx: Pin 18 = PIN_OUT_MEGA_TX1
-// 		LCD Serial 1 Rx: Pin 19 = PIN_IN_MEGA_RX1 (not used)
-// 		Centipede I2C SDA: Pin 20 (also pin 44) = PIN_IO_MEGA_SDA
-// 		Centipede I2C SCL: Pin 21 (also pin 43) = PIN_IO_MEGA_SCL
-//    RS-485 Tx Enable: Pin 22 = PIN_OUT_RS485_TX_ENABLE
+// Define struct to store coil/motor power and time parameters.  Coils that may be held on include a hold strength parameter.
+struct deviceParmStruct {
+  byte pinNum;        // Arduino pin number for this coil/motor
+  byte powerInitial;  // 0..255 PWM power level when first energized
+  byte timeOn;        // ms to hold initial power level before changing to hold level or turning off
+  byte powerHold;     // 0..255 PWM power level to hold after initial timeOn; 0 = turn off after timeOn
+};
 
-// Define Arduino pin numbers unique to this Screamo Slave Arduino Mega:
-const byte PIN_IN_CREDIT_WHEEL_EMPTY       =  2;  // Input : Credit wheel "Empty" switch.  Pulled LOW when empty.
-const byte PIN_IN_CREDIT_WHEEL_FULL        =  3;  // Input : Credit wheel "Full" switch.  Pulled LOW when full.
-const byte PIN_OUT_MOSFET_COIL_CREDIT_UP   =  5;  // Output: MOSFET to coil to add one credit to the credit wheel.  Active HIGH, pulse 100-500ms.
-const byte PIN_OUT_MOSFET_COIL_CREDIT_DOWN =  6;  // Output: MOSFET to coil to deduct one credit from the credit wheel.  Active HIGH, pulse 100-500ms.
-const byte PIN_OUT_MOSFET_COIL_10K_UP      =  7;  // Output: MOSFET to coil to add one 10K to the score.  Active HIGH, pulse 100-500ms.
-const byte PIN_OUT_MOSFET_COIL_10K_BELL    =  8;  // Output: MOSFET to coil to ring the 10K bell.  Active HIGH, pulse 100-500ms.
-const byte PIN_OUT_MOSFET_COIL_100K_BELL   =  9;  // Output: MOSFET to coil to ring the 100K bell.  Active HIGH, pulse 100-500ms.
-const byte PIN_OUT_MOSFET_COIL_SELECT_BELL = 10;  // Output: MOSFET to coil to ring the Select bell.  Active HIGH, pulse 100-500ms.
-const byte PIN_OUT_MOSFET_LAMP_SCORE       = 11;  // Output: MOSFET to PWM score lamp brightness.  0-255.
-const byte PIN_OUT_MOSFET_LAMP_GI_TILT     = 12;  // Output: MOSFET to PWM G.I. and Tilt lamp brightness.  0-255.
+// *** CREATE AN ARRAY OF DeviceParm STRUCT FOR ALL COILS AND MOTORS ***
+// Start by defining array index constants:
+const byte DEV_IDX_CREDIT_UP         =  0;
+const byte DEV_IDX_CREDIT_DOWN       =  1;
+const byte DEV_IDX_10K_UP            =  2;
+const byte DEV_IDX_10K_BELL          =  3;
+const byte DEV_IDX_100K_BELL         =  4;
+const byte DEV_IDX_SELECT_BELL       =  5;
+const byte DEV_IDX_LAMP_SCORE        =  6;
+const byte DEV_IDX_LAMP_HEAD_GI_TILT =  7;
 
-// Centipede shift register pin-to-lamp mapping (not the relay numbers, but the lamps that they illuminate):
-// Pin  0 =  20K   | Pin 16 = 900K
-// Pin  1 =  40K   | Pin 17 = 2M
-// Pin  2 =  60K   | Pin 18 = 4M
-// Pin  3 =  80K   | Pin 19 = 6M
-// Pin  4 = 100K   | Pin 20 = 8M
-// Pin  5 = 300K   | Pin 21 = TILT
-// Pin  6 = 500K   | Pin 22 = unused
-// Pin  7 = 700K   | Pin 23 = unused
-// Pin  8 = 600K   | Pin 24 = unused
-// Pin  9 = 400K   | Pin 25 = G.I.
-// Pin 10 = 200K   | Pin 26 = 9M
-// Pin 11 =  90K   | Pin 27 = 7M
-// Pin 12 =  70K   | Pin 28 = 5M
-// Pin 13 =  50K   | Pin 29 = 3M
-// Pin 14 =  30K   | Pin 30 = 1M
-// Pin 15 =  10K   | Pin 31 = 800K
+const byte NUM_DEVS = 8;
 
-// Score lamp lookup tables (index 0 is digit '1', index 8 is digit '9')
-const byte tensK_pins[9]    = {15, 0, 14, 1, 13, 2, 12, 3, 11};      // 10K, 20K, ..., 90K
-const byte hundredK_pins[9] = {4, 10, 5, 9, 6, 8, 7, 31, 16};        // 100K, 200K, ..., 900K
-const byte million_pins[9]  = {30, 17, 29, 18, 28, 19, 27, 20, 26};  // 1M, 2M, ..., 9M
-const byte GI_pin           = 25;
-const byte TILT_pin         = 21;
+// DeviceParm table: { pinNum, powerInitial, timeOn(ms), powerHold }
+//   pinNum: Arduino pin number for this coil
+//   Power 0..255 for MOSFET coils and lamps
+//   Example usage:
+//     analogWrite(deviceParm[DEV_IDX_CREDIT_UP].pinNum, deviceParm[DEV_IDX_CREDIT_UP].powerInitial);
+//     delay(deviceParm[DEV_IDX_CREDIT_UP].timeOn);
+//     analogWrite(deviceParm[DEV_IDX_CREDIT_UP].pinNum, deviceParm[DEV_IDX_CREDIT_UP].powerHold);
+deviceParmStruct deviceParm[NUM_DEVS] = {
+  {  5, 120,  40,   0 },  // CREDIT UP. 120 confirmed min power to work reliably; 30ms works but we'll match 40 needed by 10K bell coil.
+  {  6, 150,  30,   0 },  // CREDIT DOWN.  150 confirmed min power to work reliably; 160ms confirmed is bare minimum time to work reliably.  140 no good.
+  {  7, 160,  40,   0 },  // 10K UP.  Tim thinks 40ms sounds like it's happening too fast; try longer hold time to try to match score motor's behavior.
+  {  8, 140,  30,   0 },  // 10K BELL.  140 plenty of power; 30ms confirmed via test okay.
+  {  9, 120,  30,   0 },  // 100K BELL.  120 confirmed via test, loud enough;  30ms okay.
+  { 10, 120,  30,   0 },  // SELECT BELL
+  { 11,  40,   0,   0 },  // LAMP SCORE.  PWM MOSFET.  Initial brightness for LED Score lamps (0..255)  40 is actually as bright as they get @ 12vdc.
+  { 12,  40,   0,   0 }   // LAMP HEAD G.I./TILT.  PWM MOSFET.  Initial brightness for LED G.I. and Tilt lamps (0..255)  40 is actually as bright as they get @ 12vdc.
+};
 
-const byte POWER_CREDIT_UP   = 120;  // PWM value to energize Credit up coil. 120 confirmed is bare minimum to work reliably.
-const byte POWER_CREDIT_DOWN = 150;  // PWM value to energize Credit down coil. 150 confirmed is bare minimum to work reliably.
-const byte POWER_10K_UP      = 160;  // PWM value to energize 10K up coil.  160 confirmed is bare minimum to work reliably.  140 no good.
-const byte POWER_10K_BELL    = 150;  // PWM value to energize 10K bell coil. 140 confirmed via test plenty loud.
-const byte POWER_100K_BELL   = 150;  // PWM value to energize 100K bell coil.  120 confirmed via test loud enough.
-const byte POWER_SELECT_BELL = 120;  // PWM value to energize Select bell coil
-
-// Helper function prototypes
-void displayScore(int score); // score is 0..999 (i.e. displayed score / 10,000)
-void setScoreLampBrightness(byte brightness); // 0..255
-void setGITiltLampBrightness(byte brightness); // 0..255
-void setGILamp(bool on);
-void setTiltLamp(bool on);
-
-// Fires the Credit Up coil if Credit Full switch is closed (LOW)
-void addCredit() {
-    if (digitalRead(PIN_IN_CREDIT_WHEEL_FULL) == LOW) {
-        analogWrite(PIN_OUT_MOSFET_COIL_CREDIT_UP, POWER_CREDIT_UP);
-        delay(30);
-        analogWrite(PIN_OUT_MOSFET_COIL_CREDIT_UP, 0);
-    }
-}
-
-// Fires the Credit Down coil if Credit Empty switch is closed (LOW)
-void removeCredit() {
-    if (digitalRead(PIN_IN_CREDIT_WHEEL_EMPTY) == LOW) {
-        analogWrite(PIN_OUT_MOSFET_COIL_CREDIT_DOWN, POWER_CREDIT_DOWN);
-        delay(30);
-        analogWrite(PIN_OUT_MOSFET_COIL_CREDIT_DOWN, 0);
-    }
-}
-
-// Returns true if credits remain (Credit Empty switch is closed/LOW)
-bool hasCredits() {
-    return digitalRead(PIN_IN_CREDIT_WHEEL_EMPTY) == LOW;
-}
+// *********** NOW WE NEED A FUNCTION WE CAN CALL i.e. fireDevice(deviceIndex); that will use the above info. ***********
+// For final code, we may want to make this non-blocking by using millis() timing instead of delay(), but for now delay() is simpler.
 
 #include <Arduino.h>
 #include <Pinball_Consts.h>
 #include <Pinball_Functions.h>
+
+#include <EEPROM.h>               // For saving and recalling score, to persist between power cycles.
+const int EEPROM_ADDR_SCORE = 0;  // Address to store 16-bit score (uses addr 0 and 1)
+
 const byte THIS_MODULE = ARDUINO_SLV;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "SLAVE 10/06/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "SLAVE 11/01/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which effectively makes it a global.
 // No need to pass lcdString[] to any functions that use it!
 
@@ -99,7 +81,7 @@ Pinball_LCD* pLCD2004 = nullptr;  // pLCD2004 is #included in Pinball_Functions.
 Pinball_Message* pMessage = nullptr;
 
 // *** PINBALL_CENTIPEDE SHIFT REGISTER CLASS ***
-// #include <Wire.h> (required by Centipede) is already in <Pinball_Centipede.h> so not needed here.
+// #include <Wire.h> (required by Pinball_Centipede) is already in <Pinball_Centipede.h> so not needed here.
 // #include <Pinball_Centipede.h> is already in <Pinball_Functions.h> so not needed here.
 Pinball_Centipede* pShiftRegister = nullptr;  // Only need ONE object for one or two Centipede boards (SNS only has ONE Centipede.)
 
@@ -108,12 +90,13 @@ byte         modeCurrent      = MODE_UNDEFINED;
 byte         stateCurrent     = STATE_UNDEFINED;
 char         msgType          = ' ';
 
+int currentScore = 0; // Current game score (0..999).
+
 bool debugOn    = false;
 
-// *** SENSOR STATE TABLE: Arrays contain 4 elements (unsigned ints) of 16 bits each = 64 bits = 1 Centipede
-unsigned int sensorOldState[] = {65535,65535,65535,65535};
-unsigned int sensorNewState[] = {65535,65535,65535,65535};
-
+// *** SWITCH STATE TABLE: Arrays contain 4 elements (unsigned ints) of 16 bits each = 64 bits = 1 Centipede
+unsigned int switchOldState[] = { 65535, 65535, 65535, 65535 };
+unsigned int switchNewState[] = { 65535, 65535, 65535, 65535 };
 
 // *****************************************************************************************
 // **************************************  S E T U P  **************************************
@@ -121,56 +104,43 @@ unsigned int sensorNewState[] = {65535,65535,65535,65535};
 
 void setup() {
 
-  // *** INITIALIZE ARDUINO I/O PINS ***
-  digitalWrite(PIN_OUT_LED, LOW);       // Built-in LED LOW=off
-  pinMode(PIN_OUT_LED, OUTPUT);
-  digitalWrite(PIN_OUT_RS485_TX_ENABLE, RS485_RECEIVE);  // Put RS485 in receive mode
-  pinMode(PIN_OUT_RS485_TX_ENABLE, OUTPUT);              // HIGH = RS485 transmit, LOW = not transmitting (receive)
-
-  // Set pin modes for all input pins
-  pinMode(PIN_IN_CREDIT_WHEEL_EMPTY, INPUT_PULLUP);
-  pinMode(PIN_IN_CREDIT_WHEEL_FULL, INPUT_PULLUP);
-
-  // Set pin modes for all output pins
-  pinMode(PIN_OUT_MOSFET_COIL_CREDIT_UP, OUTPUT);
-  pinMode(PIN_OUT_MOSFET_COIL_CREDIT_DOWN, OUTPUT);
-  pinMode(PIN_OUT_MOSFET_COIL_10K_UP, OUTPUT);
-  pinMode(PIN_OUT_MOSFET_COIL_10K_BELL, OUTPUT);
-  pinMode(PIN_OUT_MOSFET_COIL_100K_BELL, OUTPUT);
-  pinMode(PIN_OUT_MOSFET_COIL_SELECT_BELL, OUTPUT);
-  pinMode(PIN_OUT_MOSFET_LAMP_SCORE, OUTPUT);
-  pinMode(PIN_OUT_MOSFET_LAMP_GI_TILT, OUTPUT);
-
-  // Increase PWM frequency for pins 11 and 12 (Timer 1) to reduce LED flicker
-  // Pins 11 and 12 are Score lamp and G.I./Tilt lamp brightness control
-  // Set Timer 1 prescaler to 1 for ~31kHz PWM frequency
-  TCCR1B = (TCCR1B & 0b11111000) | 0x01;
+  initScreamoSlaveArduinoPins();  // Arduino direct I/O pins only.
 
   // Set initial state for all MOSFET PWM output pins (pins 5-12)
-  analogWrite(PIN_OUT_MOSFET_COIL_CREDIT_UP, 0);
-  analogWrite(PIN_OUT_MOSFET_COIL_CREDIT_DOWN, 0);
-  analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 0);
-  analogWrite(PIN_OUT_MOSFET_COIL_10K_BELL, 0);
-  analogWrite(PIN_OUT_MOSFET_COIL_100K_BELL, 0);
-  analogWrite(PIN_OUT_MOSFET_COIL_SELECT_BELL, 0);
-  setScoreLampBrightness(40);   // Ready to turn on as soon as relay contacts close.  40 is actually as bright as they get.
-  setGITiltLampBrightness(40);  // Ready to turn on as soon as relay contacts close
-
-  // *** INITIALIZE PINBALL_CENTIPDE SHIFT REGISTER ***
-  // WARNING: Instantiating Pinball_Centipede class hangs the system if hardware is not connected.
-  // We're doing this near the top of the code so we can turn on G.I. as quickly as possible.
-  Wire.begin();                               // Join the I2C bus as a master for Centipede shift register.
-  pShiftRegister = new Pinball_Centipede;     // C++ quirk: no parens in ctor call if no parms; else thinks it's fn decl'n.
-  pShiftRegister->begin();                    // Set all registers to default.
-  pShiftRegister->initializePinsForSlave();   // Set all Centipede shift register pins to OUTPUT for Sensors.
-
-  // Turn on GI lamps so player thinks they're getting instant startup (NOTE: Can't do this until after pShiftRegister is initialized)
-  setGILamp(true);
+  for (int i = 0; i < NUM_DEVS; i++) {
+    digitalWrite(deviceParm[i].pinNum, LOW);  // Ensure all MOSFET outputs are off at startup.
+    pinMode(deviceParm[i].pinNum, OUTPUT);
+  }
+  // Increase PWM frequency for pins 11 and 12 (Timer 1) to reduce LED flicker
+  // Pins 11 and 12 are Score lamp and G.I./Tilt lamp brightness control
+  // Set Timer 1 prescaler to 1 for ~31k
+  TCCR1B = (TCCR1B & 0b11111000) | 0x01;
 
   // *** INITIALIZE SERIAL PORTS ***
   Serial.begin(SERIAL0_SPEED);   // PC serial monitor window 115200.  Change if using thermal mini printer.
   // Serial1 LCD2004 instantiated via pLCD2004->begin.
   // Serial2 RS485   instantiated via pMessage->begin.
+
+  // *** INITIALIZE RS485 MESSAGE CLASS AND OBJECT *** (Heap uses 30 bytes)
+  // WARNING: Instantiating Message class hangs the system if hardware is not connected.
+  pMessage = new Pinball_Message;  // C++ quirk: no parens in ctor call if no parms; else thinks it's fn decl'n.
+  pMessage->begin(&Serial2, SERIAL2_SPEED);
+
+  // *** INITIALIZE PINBALL_CENTIPEDE SHIFT REGISTER ***
+  // WARNING: Instantiating Pinball_Centipede class hangs the system if hardware is not connected.
+  // We're doing this near the top of the code so we can turn on G.I. as quickly as possible.
+  Wire.begin();                               // Join the I2C bus as a master for Centipede shift register.
+  pShiftRegister = new Pinball_Centipede;     // C++ quirk: no parens in ctor call if no parms; else thinks it's fn decl'n.
+  pShiftRegister->begin();                    // Set all registers to default.
+  pShiftRegister->initScreamoSlaveCentipedePins();
+
+  // Turn on GI lamps so player thinks they're getting instant startup (NOTE: Can't do this until after pShiftRegister is initialized)
+  setScoreLampBrightness(deviceParm[DEV_IDX_LAMP_SCORE].powerInitial);     // Ready to turn on as soon as relay contacts close.
+  setGILamp(true);
+  setGITiltLampBrightness(deviceParm[DEV_IDX_LAMP_HEAD_GI_TILT].powerInitial);  // Ready to turn on as soon as relay contacts close.
+  setTiltLamp(false);
+  // Display previously saved score from EEPROM
+  displayScore(recallScoreFromEEPROM());
 
   // *** INITIALIZE LCD CLASS AND OBJECT *** (Heap uses 98 bytes)
   // Insert a delay() in order to give the Digole 2004 LCD time to power up and be ready to receive commands (esp. the 115K speed command).
@@ -179,107 +149,52 @@ void setup() {
   pLCD2004 = new Pinball_LCD(&Serial1, SERIAL1_SPEED);  // Instantiate the object and assign the global pointer.
   pLCD2004->begin();  // 20-char x 4-line LCD display via Serial 1.
   pLCD2004->println(lcdString);  // Display app version, defined above.
-  // Serial.println(lcdString);
-
-  // *** INITIALIZE RS485 MESSAGE CLASS AND OBJECT *** (Heap uses 30 bytes)
-  // WARNING: Instantiating Message class hangs the system if hardware is not connected.
-  pMessage = new Pinball_Message;  // C++ quirk: no parens in ctor call if no parms; else thinks it's fn decl'n.
-  pMessage->begin(&Serial2, SERIAL2_SPEED);
-
+  Serial.println(lcdString);
   pLCD2004->println("Setup starting.");
 
-/*
-  while (true) {
-
-    if (digitalRead(PIN_IN_CREDIT_WHEEL_FULL) == LOW) {
-      pLCD2004->println("Credits not maxed");
-    } else {
-      pLCD2004->println("Credit maxed!");
-    }
-
-    if (digitalRead(PIN_IN_CREDIT_WHEEL_EMPTY) == LOW) {
-      pLCD2004->println("Has credits!");
-    } else {
-      pLCD2004->println("No credits!");
-    }
-    pLCD2004->println("...");
-    delay(1000);
+  addCredit();  // Test pulse to credit up coil
+  delay(250);
+  addCredit();  // Test pulse to credit up coil
+  delay(250);
+  addCredit();  // Test pulse to credit up coil
+  delay(1000);
+  removeCredit();  // Test pulse to credit down coil (returns true if successful; else false but we don't care here)
+  delay(250);
+  removeCredit();  // Test pulse to credit down coil
+  delay(250);
+  removeCredit();  // Test pulse to credit down coil
+  delay(1000);
+  for (int i = 0; i < 3; i++) {
+    analogWrite(deviceParm[DEV_IDX_10K_UP].pinNum, deviceParm[DEV_IDX_10K_UP].powerInitial); delay(deviceParm[DEV_IDX_10K_UP].timeOn); analogWrite(deviceParm[DEV_IDX_10K_UP].pinNum, 0);
+    delay(250);
   }
-*/
+  delay(1000);
+  analogWrite(deviceParm[DEV_IDX_10K_BELL].pinNum, deviceParm[DEV_IDX_10K_BELL].powerInitial); delay(deviceParm[DEV_IDX_10K_BELL].timeOn); analogWrite(deviceParm[DEV_IDX_10K_BELL].pinNum, 0);
+  delay(1000);
+  analogWrite(deviceParm[DEV_IDX_100K_BELL].pinNum, deviceParm[DEV_IDX_100K_BELL].powerInitial); delay(deviceParm[DEV_IDX_100K_BELL].timeOn); analogWrite(deviceParm[DEV_IDX_100K_BELL].pinNum, 0);
+  delay(1000);
+  analogWrite(deviceParm[DEV_IDX_SELECT_BELL].pinNum, deviceParm[DEV_IDX_SELECT_BELL].powerInitial); delay(deviceParm[DEV_IDX_SELECT_BELL].timeOn); analogWrite(deviceParm[DEV_IDX_SELECT_BELL].pinNum, 0);
+  delay(1000);
 
-  addCredit();  // Test pulse to credit up coil
-  delay(250);
-  addCredit();  // Test pulse to credit up coil
-  delay(250);
-  addCredit();  // Test pulse to credit up coil
-  delay(2000);
-  removeCredit();  // Test pulse to credit down coil
-  delay(250);
-  removeCredit();  // Test pulse to credit down coil
-  delay(250);
-  removeCredit();  // Test pulse to credit down coil
-  delay(2000);
-  analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, POWER_10K_UP); delay(40); analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 0);  // Test pulse to 10K UP coil
-  delay(250);
-  analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, POWER_10K_UP); delay(40); analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 0);  // Test pulse to 10K UP coil
-  delay(250);
-  analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, POWER_10K_UP); delay(40); analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 0);  // Test pulse to 10K UP coil
-  delay(2000);
-
-
-/*
-  pLCD2004->println("120");
-  analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 120); delay(40); analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 0);  // Test pulse to 10K UP coil
-  delay(1000);
-  pLCD2004->println("130");
-  analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 130); delay(40); analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 0);  // Test pulse to 10K UP coil
-  delay(1000);
-  pLCD2004->println("140");
-  analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 140); delay(40); analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 0);  // Test pulse to 10K UP coil
-  delay(1000);
-  pLCD2004->println("150");
-  analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 150); delay(40); analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 0);  // Test pulse to 10K UP coil
-  delay(1000);
-  pLCD2004->println("160");
-  analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 160); delay(40); analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 0);  // Test pulse to 10K UP coil
-  delay(1000);
-  pLCD2004->println("170");
-  analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 170); delay(40); analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 0);  // Test pulse to 10K UP coil
-  delay(1000);
-  pLCD2004->println("180");
-  analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 180); delay(40); analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 0);  // Test pulse to 10K UP coil
-  delay(1000);
-  pLCD2004->println("250");
-  analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 250); delay(40); analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 0);  // Test pulse to 10K UP coil
-  delay(1000);
-*/
-  analogWrite(PIN_OUT_MOSFET_COIL_10K_BELL, POWER_10K_BELL); delay(30); analogWrite(PIN_OUT_MOSFET_COIL_10K_BELL, 0);  // Test pulse to 10K bell coil
-  delay(2000);
-  analogWrite(PIN_OUT_MOSFET_COIL_100K_BELL, POWER_100K_BELL); delay(30); analogWrite(PIN_OUT_MOSFET_COIL_100K_BELL, 0);  // Test pulse to 100K bell coil
-  delay(2000);
-  analogWrite(PIN_OUT_MOSFET_COIL_SELECT_BELL, POWER_SELECT_BELL); delay(30); analogWrite(PIN_OUT_MOSFET_COIL_SELECT_BELL, 0);  // Test pulse to Select bell coil
-  delay(2000);
-
-
-  for (int i = 0; i < 1000; i++) {  // Count score from 0 to 9,990,000
+  for (int i = 0; i <= 100; i++) {  // Count score from 0 to 9,990,000
     displayScore(i);
     if (i <= 100) {
-      analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, POWER_10K_UP);
-      analogWrite(PIN_OUT_MOSFET_COIL_10K_BELL, POWER_10K_BELL);
+      analogWrite(deviceParm[DEV_IDX_10K_UP].pinNum, deviceParm[DEV_IDX_10K_UP].powerInitial);
+      analogWrite(deviceParm[DEV_IDX_10K_BELL].pinNum, deviceParm[DEV_IDX_10K_BELL].powerInitial);
       // If the score is a multiple of 100,000, ring the 100K bell
       if (i % 10 == 0) { // Each increment is 10,000, so every 10 is 100,000
-        analogWrite(PIN_OUT_MOSFET_COIL_100K_BELL, POWER_100K_BELL);
+        analogWrite(deviceParm[DEV_IDX_100K_BELL].pinNum, deviceParm[DEV_IDX_100K_BELL].powerInitial);
       }
     }
     // If the score is a multiple of 1,000,000, ring the Select bell
     if (i % 100 == 0) { // Each increment is 10,000, so every 100 is 1,000,000
-      analogWrite(PIN_OUT_MOSFET_COIL_SELECT_BELL, POWER_SELECT_BELL);
+      analogWrite(deviceParm[DEV_IDX_SELECT_BELL].pinNum, deviceParm[DEV_IDX_SELECT_BELL].powerInitial);
     }
-    delay(40);  // Only need to delay 30 for everything except 10K unit coil; this is just temporary
-    analogWrite(PIN_OUT_MOSFET_COIL_10K_UP, 0);  // Test pulse to 10K up coil
-    analogWrite(PIN_OUT_MOSFET_COIL_10K_BELL, 0);  // Test pulse to 10K bell coil
-    analogWrite(PIN_OUT_MOSFET_COIL_100K_BELL, 0);
-    analogWrite(PIN_OUT_MOSFET_COIL_SELECT_BELL, 0);
+    delay(deviceParm[DEV_IDX_10K_BELL].timeOn);  // Just use same delay for all for this test
+    analogWrite(deviceParm[DEV_IDX_10K_UP].pinNum,      0);  // Turn off 10K up coil
+    analogWrite(deviceParm[DEV_IDX_10K_BELL].pinNum,    0);  // Turn off 10K bell coil
+    analogWrite(deviceParm[DEV_IDX_100K_BELL].pinNum,   0);  // Turn off 100K bell coil
+    analogWrite(deviceParm[DEV_IDX_SELECT_BELL].pinNum, 0);  // Turn off Select bell coil
 
     delay(100);
     // If the score is a multipple of 5,000, pause for 500ms
@@ -287,28 +202,28 @@ void setup() {
       delay(500);
     }
   }
-  pShiftRegister->digitalWrite(GI_pin, HIGH); 
-
-  while (true) {}  // Stop here for now.
-
-/*
-  for (int i = 0; i < 32; i++) {  // Write each Centipede pin for 200ms then off, then on to the next pin
-
-    pShiftRegister->digitalWrite(i, LOW); 
-    delay(200);
-    if (i==25) delay(5000);
-    pShiftRegister->digitalWrite(i, HIGH);
-    delay(500);
-  }
-
-  pLCD2004->println("Centipede done.");
-  while (true) {}
-*/
-
-
+  setGILamp(false);
+  setTiltLamp(true);
 
   pLCD2004->println("Setup done.");
   Serial.println("Setup done.");
+
+  currentScore = recallScoreFromEEPROM();
+  displayScore(currentScore);
+
+  // Wait for player to start a game and determine which version they want to play...
+  pLCD2004->println("Waiting for Msgs");
+  Serial.println("Waiting for Msgs");
+  // Message will come from Master when it's time to start a new game, and parm will be which version.
+  // We might also get messages to add or remove credits while waiting.
+  // 1) Normal game with Williams impulse flipper action (player presses Start along with left flipper button.)
+  // 2) Normal game but with Gottlieb flipper action (player presses Start and no flipper button.)
+  // 3) Advanced game (with audio, shaker motor, etc.) (player double-presses Start within 1 second.)
+  // Pressing Start again, after at least 1 second, adds a player to the game.
+  // We will set modeCurrent = MODE_WILLIAMS, MODE_GOTTLEIB, or MODE_ADVANCED accordingly.
+
+
+
 
   while (true) {}
 
@@ -374,49 +289,104 @@ void loop() {
 // ************************ F U N C T I O N   D E F I N I T I O N S ************************
 // *****************************************************************************************
 
+void setScoreLampBrightness(byte t_brightness) {  // 0..255
+  analogWrite(deviceParm[DEV_IDX_LAMP_SCORE].pinNum, t_brightness);
+}
+
+void setGITiltLampBrightness(byte t_brightness) {  // 0..255
+  analogWrite(deviceParm[DEV_IDX_LAMP_HEAD_GI_TILT].pinNum, t_brightness);
+}
+
+void setGILamp(bool t_on) {
+  pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_HEAD_GI, t_on ? LOW : HIGH);
+}
+
+void setTiltLamp(bool t_on) {
+  pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_TILT, t_on ? LOW : HIGH);
+}
+
 // Display score using Centipede shift register
-void displayScore(int score) {
-    // Clamp score to 0..999
-    if (score < 0) score = 0;
-    if (score > 999) score = 999;
+void displayScore(int t_score) {
+   // t_score is 0..999 (i.e. displayed t_score / 10,000)
+   // Clamp t_score to 0..999
+    if (t_score < 0) t_score = 0;
+    if (t_score > 999) t_score = 999;
     static int lastScore = -1;
-    int millions = score / 100;         // 1..9
-    int hundredK = (score / 10) % 10;   // 1..9
-    int tensK = score % 10;             // 1..9
+    int millions = t_score / 100;         // 1..9
+    int hundredK = (t_score / 10) % 10;   // 1..9
+    int tensK    = t_score % 10;          // 1..9
 
     int lastMillions = lastScore < 0 ? 0 : lastScore / 100;
     int lastHundredK = lastScore < 0 ? 0 : (lastScore / 10) % 10;
-    int lastTensK = lastScore < 0 ? 0 : lastScore % 10;
+    int lastTensK    = lastScore < 0 ? 0 : lastScore % 10;
 
     // Only update lamps that change
     if (lastMillions != millions) {
-        if (lastMillions > 0) pShiftRegister->digitalWrite(million_pins[lastMillions-1], HIGH); // turn off old
-        if (millions > 0)     pShiftRegister->digitalWrite(million_pins[millions-1], LOW);     // turn on new
+        if (lastMillions > 0) pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_1M[lastMillions - 1], HIGH); // turn off old
+        if (millions > 0)     pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_1M[millions - 1], LOW);     // turn on new
     }
     if (lastHundredK != hundredK) {
-        if (lastHundredK > 0) pShiftRegister->digitalWrite(hundredK_pins[lastHundredK-1], HIGH);
-        if (hundredK > 0)     pShiftRegister->digitalWrite(hundredK_pins[hundredK-1], LOW);
+        if (lastHundredK > 0) pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_100K[lastHundredK - 1], HIGH);
+        if (hundredK > 0)     pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_100K[hundredK - 1], LOW);
     }
     if (lastTensK != tensK) {
-        if (lastTensK > 0) pShiftRegister->digitalWrite(tensK_pins[lastTensK-1], HIGH);
-        if (tensK > 0)     pShiftRegister->digitalWrite(tensK_pins[tensK-1], LOW);
+        if (lastTensK > 0) pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_10K[lastTensK - 1], HIGH);
+        if (tensK > 0)     pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_10K[tensK - 1], LOW);
     }
-    lastScore = score;
+    lastScore = t_score;
 }
 
-void setScoreLampBrightness(byte brightness) {
-    analogWrite(PIN_OUT_MOSFET_LAMP_SCORE, brightness);
+// Fire the Credit Up coil if Credit Full switch is closed (LOW)
+// Master should also fire Knocker coil when adding a credit.
+void addCredit() {
+  if (digitalRead(PIN_IN_SWITCH_CREDIT_FULL) == LOW) {
+    analogWrite(deviceParm[DEV_IDX_CREDIT_UP].pinNum, deviceParm[DEV_IDX_CREDIT_UP].powerInitial);
+    delay(deviceParm[DEV_IDX_CREDIT_UP].timeOn);
+    analogWrite(deviceParm[DEV_IDX_CREDIT_UP].pinNum, 0);
+  }
 }
 
-void setGITiltLampBrightness(byte brightness) {
-    analogWrite(PIN_OUT_MOSFET_LAMP_GI_TILT, brightness);
+// Fire the Credit Down coil if Credit Empty switch is closed (LOW)
+bool removeCredit() {
+  if (hasCredits()) {
+    analogWrite(deviceParm[DEV_IDX_CREDIT_DOWN].pinNum, deviceParm[DEV_IDX_CREDIT_DOWN].powerInitial);
+    delay(deviceParm[DEV_IDX_CREDIT_DOWN].timeOn);
+    analogWrite(deviceParm[DEV_IDX_CREDIT_DOWN].pinNum, 0);
+    return true;  // Successfully removed a credit
+  } else {
+    return false; // No credits to remove
+  }
 }
 
-void setGILamp(bool on) {
-    pShiftRegister->digitalWrite(GI_pin, on ? LOW : HIGH);
+// Returns true if credits remain (Credit Empty switch is closed/LOW)
+bool hasCredits() {
+  return digitalRead(PIN_IN_SWITCH_CREDIT_EMPTY) == LOW;
 }
 
-void setTiltLamp(bool on) {
-    pShiftRegister->digitalWrite(TILT_pin, on ? LOW : HIGH);
+// Persist a score (0..999) to EEPROM.  Writes only when value changes to reduce EEPROM wear.
+void saveScoreToEEPROM(int t_score) {
+  if (t_score < 0)  t_score = 0;
+  if (t_score > 999) t_score = 999;
+  uint16_t s = (uint16_t)t_score;
+
+  // Read existing value and only write if different (minimizes EEPROM writes).
+  uint16_t existing = 0;
+  EEPROM.get(EEPROM_ADDR_SCORE, existing);
+  if (existing != s) {
+    EEPROM.put(EEPROM_ADDR_SCORE, s); // EEPROM.put/update writes only changed bytes on AVR
+    // Small UI/debug feedback
+    sprintf(lcdString, "Saved score %d", currentScore);
+    if (pLCD2004) pLCD2004->println(lcdString);
+    Serial.println(lcdString);
+  }
 }
 
+// Read persisted score from EEPROM. Returns clamped value in 0..999.
+// If EEPROM contains out-of-range data, returns 0 (safe fallback).
+int recallScoreFromEEPROM() {
+  uint16_t s = 0;
+  EEPROM.get(EEPROM_ADDR_SCORE, s);
+  if (s > 999) s = 0;
+  sprintf(lcdString, "Recall score %d", s);
+  return (int)s;
+}

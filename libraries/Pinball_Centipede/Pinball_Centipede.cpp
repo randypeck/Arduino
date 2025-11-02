@@ -1,4 +1,4 @@
-// Rev: 08/17/25.
+// Rev: 10/30/25.
 // Pinball Centipede Shield Library
 // Controls MCP23017 16-bit digital I/O chips
 // This is the newer 8/28/12 version cleaned up by RDP on 10/14/17
@@ -28,7 +28,7 @@ void Pinball_Centipede::begin() {
   }
 }
 
-void Pinball_Centipede::initializePinsForMaster() {  // First board is output, Second board is input
+void Pinball_Centipede::initScreamoMasterCentipedePins() {  // First board is output, Second board is input
   // Sets all pins for two boards; works fine even if only one board is installed.
   // For chips (ports) 0..7, set to input or output per chip as desired
   // MASTER has first 4 ports as OUTPUT (to lamp relays)
@@ -44,7 +44,7 @@ void Pinball_Centipede::initializePinsForMaster() {  // First board is output, S
   }
 }
 
-void Pinball_Centipede::initializePinsForSlave() {  // Just one board on Slave which is output to lamp relays
+void Pinball_Centipede::initScreamoSlaveCentipedePins() {  // Just one board on Slave which is output to lamp relays
   // Sets all pins for two boards; works fine even if only one board is installed.
   for (int i = 0; i < 8; i++) {         // For each of 4 chips per board / 2 boards = 8 chips @ 16 bits/chip
     // Set outputs high before setting pin mode to output, to prevent brief low being sent to Centipede shift register outputs
