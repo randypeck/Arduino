@@ -1,4 +1,5 @@
-// Screamo_Master.INO Rev: 11/01/25
+// Screamo_Master.INO Rev: 11/12/25
+// 11/12/25: Moved Right Kickout from pin 13 to pin 44 to avoid MOSFET firing twice on power-up.  Don't use MOSFET on pin 13.
 
 #include <Arduino.h>
 #include <Pinball_Consts.h>
@@ -44,14 +45,15 @@ struct deviceParmStruct {
 };
 
 deviceParmStruct deviceParm[NUM_DEVS] = {
+  // pinNum, powerInitial, timeOn(ms), powerHold
   {  5, 200,  50,   0 },  // POP_BUMPER; PWM MOSFET
-  {  4, 100,  50,   0 },  // KICKOUT_LEFT; PWM MOSFET (cannot modify PWM freq.)
-  { 13, 100,  50,   0 },  // KICKOUT_RIGHT; PWM MOSFET (cannot modify PWM freq.)
+  {  4, 200, 100,   0 },  // KICKOUT_LEFT; PWM MOSFET (cannot modify PWM freq.)
+  { 44, 190, 100,   0 },  // KICKOUT_RIGHT; PWM MOSFET
   {  6, 200,  50,   0 },  // SLINGSHOT_LEFT; PWM MOSFET
   {  7, 200,  50,   0 },  // SLINGSHOT_RIGHT; PWM MOSFET
-  {  8, 200, 100,  50 },  // FLIPPER_LEFT; PWM MOSFET
-  {  9, 200, 100,  50 },  // FLIPPER_RIGHT; PWM MOSFET
-  { 10, 100, 200,  50 },  // BALL_TRAY_RELEASE (original); PWM MOSFET
+  {  8, 200, 100,  25 },  // FLIPPER_LEFT; PWM MOSFET
+  {  9, 200, 100,  25 },  // FLIPPER_RIGHT; PWM MOSFET
+  { 10, 200, 200,  50 },  // BALL_TRAY_RELEASE (original); PWM MOSFET
   { 23, 255,  50,   0 },  // SELECTION_UNIT: Non-PWM MOSFET; on/off only.
   { 24, 255,  50,   0 },  // RELAY_RESET: Non-PWM MOSFET; on/off only.
   { 11, 200, 200,   0 },  // BALL_TROUGH_RELEASE (new up/down post); PWM MOSFET
@@ -129,34 +131,99 @@ switchParmStruct switchParm[NUM_SWITCHES] = {
   { 53,  0,  0 },  // SWITCH_IDX_COIN_MECH           =  6;
   { 50,  0,  0 },  // SWITCH_IDX_BALL_PRESENT        =  7;  // (New) Ball present at bottom of ball lift
   { 55,  0,  0 },  // SWITCH_IDX_TILT_BOB            =  8;
-  {  0,  0,  0 },  // SWITCH_IDX_BUMPER_S            =  9;  // 'S' bumper switch
-  {  0,  0,  0 },  // SWITCH_IDX_BUMPER_C            = 10;  // 'C' bumper switch
-  {  0,  0,  0 },  // SWITCH_IDX_BUMPER_R            = 11;  // 'R' bumper switch
-  {  0,  0,  0 },  // SWITCH_IDX_BUMPER_E            = 12;  // 'E' bumper switch
-  {  0,  0,  0 },  // SWITCH_IDX_BUMPER_A            = 13;  // 'A' bumper switch
-  {  0,  0,  0 },  // SWITCH_IDX_BUMPER_M            = 14;  // 'M' bumper switch
-  {  0,  0,  0 },  // SWITCH_IDX_BUMPER_O            = 15;  // 'O' bumper switch
-  {  0,  0,  0 },  // SWITCH_IDX_KICKOUT_LEFT        = 16;
-  {  0,  0,  0 },  // SWITCH_IDX_KICKOUT_RIGHT       = 17;
-  {  0,  0,  0 },  // SWITCH_IDX_SLINGSHOT_LEFT      = 18;  // Two switches wired in parallel
-  {  0,  0,  0 },  // SWITCH_IDX_SLINGSHOT_RIGHT     = 19;  // Two switches wired in parallel
-  {  0,  0,  0 },  // SWITCH_IDX_HAT_LEFT_TOP        = 20;
-  {  0,  0,  0 },  // SWITCH_IDX_HAT_LEFT_BOTTOM     = 21;
-  {  0,  0,  0 },  // SWITCH_IDX_HAT_RIGHT_TOP       = 22;
-  {  0,  0,  0 },  // SWITCH_IDX_HAT_RIGHT_BOTTOM    = 23;
-  {  0,  0,  0 },  // SWITCH_IDX_LEFT_SIDE_TARGET_2  = 24;  // Long narrow side target near top left
-  {  0,  0,  0 },  // SWITCH_IDX_LEFT_SIDE_TARGET_3  = 25;  // Upper switch above left kickout
-  {  0,  0,  0 },  // SWITCH_IDX_LEFT_SIDE_TARGET_4  = 26;  // Lower switch above left kickout
-  {  0,  0,  0 },  // SWITCH_IDX_LEFT_SIDE_TARGET_5  = 27;  // Below left kickout
-  {  0,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_1 = 28;  // Top right just below ball gate
-  {  0,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_2 = 29;  // Long narrow side target near top right
-  {  0,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_3 = 30;  // Upper switch above right kickout
-  {  0,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_4 = 31;  // Lower switch above right kickout
-  {  0,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_5 = 32;  // Below right kickout
-  {  0,  0,  0 },  // SWITCH_IDX_GOBBLE              = 33;
-  {  0,  0,  0 },  // SWITCH_IDX_DRAIN_LEFT          = 34;  // Left drain switch index in Centipede input shift register
-  {  0,  0,  0 },  // SWITCH_IDX_DRAIN_CENTER        = 35;  // Center drain switch index in Centipede input shift register
-  {  0,  0,  0 }   // SWITCH_IDX_DRAIN_RIGHT         = 36;  // Right drain switch index in Centipede input shift register
+  { 40,  0,  0 },  // SWITCH_IDX_BUMPER_S            =  9;  // 'S' bumper switch
+  { 26,  0,  0 },  // SWITCH_IDX_BUMPER_C            = 10;  // 'C' bumper switch
+  { 23,  0,  0 },  // SWITCH_IDX_BUMPER_R            = 11;  // 'R' bumper switch
+  { 16,  0,  0 },  // SWITCH_IDX_BUMPER_E            = 12;  // 'E' bumper switch
+  { 46,  0,  0 },  // SWITCH_IDX_BUMPER_A            = 13;  // 'A' bumper switch
+  { 43,  0,  0 },  // SWITCH_IDX_BUMPER_M            = 14;  // 'M' bumper switch
+  { 24,  0,  0 },  // SWITCH_IDX_BUMPER_O            = 15;  // 'O' bumper switch
+  { 41,  0,  0 },  // SWITCH_IDX_KICKOUT_LEFT        = 16;
+  { 19,  0,  0 },  // SWITCH_IDX_KICKOUT_RIGHT       = 17;
+  { 20,  0,  0 },  // SWITCH_IDX_SLINGSHOT_LEFT      = 18;  // Two switches wired in parallel
+  { 34,  0,  0 },  // SWITCH_IDX_SLINGSHOT_RIGHT     = 19;  // Two switches wired in parallel
+  { 35,  0,  0 },  // SWITCH_IDX_HAT_LEFT_TOP        = 20;
+  { 17,  0,  0 },  // SWITCH_IDX_HAT_LEFT_BOTTOM     = 21;
+  { 25,  0,  0 },  // SWITCH_IDX_HAT_RIGHT_TOP       = 22;
+  { 28,  0,  0 },  // SWITCH_IDX_HAT_RIGHT_BOTTOM    = 23;
+  { 22,  0,  0 },  // SWITCH_IDX_LEFT_SIDE_TARGET_2  = 24;  // Long narrow side target near top left
+  { 44,  0,  0 },  // SWITCH_IDX_LEFT_SIDE_TARGET_3  = 25;  // Upper switch above left kickout
+  { 21,  0,  0 },  // SWITCH_IDX_LEFT_SIDE_TARGET_4  = 26;  // Lower switch above left kickout
+  { 32,  0,  0 },  // SWITCH_IDX_LEFT_SIDE_TARGET_5  = 27;  // Below left kickout
+  { 18,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_1 = 28;  // Top right just below ball gate
+  { 47,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_2 = 29;  // Long narrow side target near top right
+  { 30,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_3 = 30;  // Upper switch above right kickout
+  { 31,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_4 = 31;  // Lower switch above right kickout
+  { 27,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_5 = 32;  // Below right kickout
+  { 45,  0,  0 },  // SWITCH_IDX_GOBBLE              = 33;
+  { 42,  0,  0 },  // SWITCH_IDX_DRAIN_LEFT          = 34;  // Left drain switch index in Centipede input shift register
+  { 33,  0,  0 },  // SWITCH_IDX_DRAIN_CENTER        = 35;  // Center drain switch index in Centipede input shift register
+  { 29,  0,  0 }   // SWITCH_IDX_DRAIN_RIGHT         = 36;  // Right drain switch index in Centipede input shift register
+};
+
+// *** CREATE AN ARRAY OF lampParm STRUCT FOR ALL LAMPS ***
+// Define array index constants - this list is rather arbitrary and doesn't relate to device number/pin number/relay numbers.
+
+// ***** 11/12/25: THESE ARE ACTUALLY THE PIN NUMBERS ON THE CENTIPEDE BOARD THAT CONTROL THE RELAYS WHICH POWER THE LAMPS. *****
+// ***** SO MAYBE WE DON'T NEED A STRUCT FOR LAMPS YET, JUST CONSTANTS FOR THE PIN NUMBERS. *****
+// ***** Values range from 16 to 63 because pins 0..15 (and 55) are unused. *****
+const byte LAMP_IDX_GI_LEFT_TOP       = 52;
+const byte LAMP_IDX_GI_LEFT_CENTER_1  = 34;  // Above left kickout
+const byte LAMP_IDX_GI_LEFT_CENTER_2  = 25;  // Below left kickout
+const byte LAMP_IDX_GI_LEFT_BOTTOM    = 20;  // Left slingshot
+const byte LAMP_IDX_GI_RIGHT_TOP      = 17;
+const byte LAMP_IDX_GI_RIGHT_CENTER_1 = 39;  // Above right kickout
+const byte LAMP_IDX_GI_RIGHT_CENTER_2 = 49;  // Below right kickout
+const byte LAMP_IDX_GI_RIGHT_BOTTOM   = 61;  // Right slingshot
+const byte LAMP_IDX_S                 = 51;  // "S" bumper lamp
+const byte LAMP_IDX_C                 = 16;  // "C" bumper lamp
+const byte LAMP_IDX_R                 = 60;  // "R" bumper lamp
+const byte LAMP_IDX_E                 = 28;  // "E" bumper lamp
+const byte LAMP_IDX_A                 = 29;  // "A" bumper lamp
+const byte LAMP_IDX_M                 = 18;  // "M" bumper lamp
+const byte LAMP_IDX_O                 = 50;  // "O" bumper lamp
+const byte LAMP_IDX_WHITE_1           = 21;
+const byte LAMP_IDX_WHITE_2           = 56;
+const byte LAMP_IDX_WHITE_3           = 53;
+const byte LAMP_IDX_WHITE_4           = 33;
+const byte LAMP_IDX_WHITE_5           = 36;
+const byte LAMP_IDX_WHITE_6           = 43;
+const byte LAMP_IDX_WHITE_7           = 24;
+const byte LAMP_IDX_WHITE_8           = 38;
+const byte LAMP_IDX_WHITE_9           = 26;
+const byte LAMP_IDX_RED_1             = 23;
+const byte LAMP_IDX_RED_2             = 22;
+const byte LAMP_IDX_RED_3             = 48;
+const byte LAMP_IDX_RED_4             = 45;
+const byte LAMP_IDX_RED_5             = 35;
+const byte LAMP_IDX_RED_6             = 40;
+const byte LAMP_IDX_RED_7             = 27;
+const byte LAMP_IDX_RED_8             = 32;
+const byte LAMP_IDX_RED_9             = 57;
+const byte LAMP_IDX_HAT_LEFT_TOP      = 30;
+const byte LAMP_IDX_HAT_LEFT_BOTTOM   = 44;
+const byte LAMP_IDX_HAT_RIGHT_TOP     = 54;
+const byte LAMP_IDX_HAT_RIGHT_BOTTOM  = 63;
+const byte LAMP_IDX_KICKOUT_LEFT      = 47;
+const byte LAMP_IDX_KICKOUT_RIGHT     = 41;
+const byte LAMP_IDX_SPECIAL           = 37;  // Special When Lit above gobble hole
+const byte LAMP_IDX_GOBBLE_1          = 19;  // "1" BALL IN HOLE
+const byte LAMP_IDX_GOBBLE_2          = 31;  // "2" BALL IN HOLE
+const byte LAMP_IDX_GOBBLE_3          = 58;  // "3" BALL IN HOLE
+const byte LAMP_IDX_GOBBLE_4          = 62;  // "4" BALL IN HOLE
+const byte LAMP_IDX_GOBBLE_5          = 42;  // "5" BALL IN HOLE
+const byte LAMP_IDX_SPOT_NUMBER_LEFT  = 46;
+const byte LAMP_IDX_SPOT_NUMBER_RIGHT = 59;
+
+const byte NUM_LAMPS = 47;
+
+// Define a struct to store lamp parameters.  Just the pin number for now.
+struct lampParmStruct {
+  byte pinNum;        // Centipede pin number for this lamp (0..63)
+};
+
+lampParmStruct lampParm[NUM_LAMPS] = {
+  // To be defined later
 };
 
 const byte THIS_MODULE = ARDUINO_MAS;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
@@ -176,7 +243,7 @@ Pinball_Message* pMessage = nullptr;
 // #include <Pinball_Centipede.h> is already in <Pinball_Functions.h> so not needed here.
 Pinball_Centipede* pShiftRegister = nullptr;  // Only need ONE object for one or two Centipede boards
 
-// *** TSUMANI WAV PLAYER CLASS ***
+// *** TSUNAMI WAV PLAYER CLASS ***
 Tsunami* pTsunami = nullptr;  // Tsunami WAV player object pointer
 
 // *** MISC CONSTANTS AND GLOBALS ***
@@ -206,10 +273,33 @@ void setup() {
     digitalWrite(deviceParm[i].pinNum, LOW);  // Ensure all MOSFET outputs are off at startup.
     pinMode(deviceParm[i].pinNum, OUTPUT);
   }
-  // Increase PWM frequency for pins 11 and 12 (Timer 1) to reduce coil buzz - maybe no needed here in Master?
+
+  // Initialize I2C and Centipede expander as early as possible to minimize relay-on window at power-up
+  Wire.begin();                               // Join the I2C bus as a master for Centipede shift register.
+  pShiftRegister = new Pinball_Centipede;     // Instantiate Centipede object as early as possible
+  pShiftRegister->begin();                    // Set all registers to default.
+  pShiftRegister->initScreamoMasterCentipedePins();
+
+  // Increase PWM frequency for pins 11 and 12 (Timer 1) to reduce solenoid buzzing.
   // Pins 11 and 12 are Ball Trough Release coil and Shaker Motor control
   // Set Timer 1 prescaler to 1 for ~31kHz PWM frequency
   TCCR1B = (TCCR1B & 0b11111000) | 0x01;
+
+  // Increase PWM frequency for pins 9 and 10 (Timer 2) to reduce solenoid buzzing.
+  // Pins 9 and 10 are Right Flipper and Ball Tray Release (original) coil control
+  // Set Timer 2 prescaler to 1 for ~31kHz PWM frequency
+  TCCR2B = (TCCR2B & 0b11111000) | 0x01;
+
+  // Increase PWM frequency for pin 6..8 (Timer 4) to solenoid buzzing.
+  // Pins 6, 7, 8 are Left and Right Slingshot, and Left Flipper coil control
+  // Set Timer 4 prescaler to 1 for ~31kHz PWM frequency
+  TCCR4B = (TCCR4B & 0b11111000) | 0x01;
+
+  // Increase PWM frequency for pins44..46 (Timer 5) to reduce solenoid buzzing.
+  // Pin 44 is Right Kickout coil control.
+  // Pins44..46 are additional PWM outputs on Timer5 (Mega2560)
+  // Set Timer 5 prescaler to 1 for ~31kHz PWM frequency
+  TCCR5B = (TCCR5B & 0b11111000) | 0x01;
 
   // *** INITIALIZE SERIAL PORTS ***
   Serial.begin(SERIAL0_SPEED);   // PC serial monitor window 115200.  Change if using thermal mini printer.
@@ -221,14 +311,6 @@ void setup() {
   // WARNING: Instantiating Message class hangs the system if hardware is not connected.
   pMessage = new Pinball_Message;  // C++ quirk: no parens in ctor call if no parms; else thinks it's fn decl'n.
   pMessage->begin(&Serial2, SERIAL2_SPEED);
-
-  // *** INITIALIZE PINBALL_CENTIPEDE SHIFT REGISTER ***
-  // WARNING: Instantiating Pinball_Centipede class hangs the system if hardware is not connected.
-  // We're doing this near the top of the code so we can turn on G.I. as quickly as possible.
-  Wire.begin();                               // Join the I2C bus as a master for Centipede shift register.
-  pShiftRegister = new Pinball_Centipede;     // C++ quirk: no parens in ctor call if no parms; else thinks it's fn decl'n.
-  pShiftRegister->begin();                    // Set all registers to default.
-  pShiftRegister->initScreamoMasterCentipedePins();
 
   // *** INITIALIZE LCD CLASS AND OBJECT *** (Heap uses 98 bytes)
   // Insert a delay() in order to give the Digole 2004 LCD time to power up and be ready to receive commands (esp. the 115K speed command).
@@ -254,6 +336,7 @@ void setup() {
   // 030 is "cock the gun" being spoken
   // 031 is American Flyer announcement
   // Track number, output number is always 0, lock T/F
+/*
   pTsunami->trackPlayPoly(21, 0, false);
   delay(2000);
   pTsunami->trackPlayPoly(30, 0, false);
@@ -261,6 +344,7 @@ void setup() {
   pTsunami->trackPlayPoly(1, 0, false);
   delay(2000);
   pTsunami->trackStop(21);
+*/
 
   /*
   // Display the status of the flipper buttons on the LCD...
@@ -289,7 +373,7 @@ void setup() {
   }
   */
 
-  /*
+/*
   // Here is some code that reads Centipede #2 inputs 16 bits at a time using portRead(), and displays any closed switches.
   // TESTING RESULTS SHOW IT ONLY TAKES 2-3ms TO READ ALL 64 SWITCHES USING portRead()!
   while (true) {
@@ -306,6 +390,7 @@ void setup() {
           sprintf(lcdString, "SW %02d CLOSED", switchNum);
           pLCD2004->println(lcdString);
           Serial.println(lcdString);
+          delay(1000);
         }
       }
     }
@@ -317,10 +402,11 @@ void setup() {
     //    Serial.println(lcdString);
     //    delay(1000);
   }
-  */
+*/
 
-  /*
-  // Here is some code that tests Centipede #1 output pins by cycling them on and off...
+
+  // Here is some code that tests Centipede #1 LAMP output pins by cycling them on and off...
+  // 11/12/25: Works fine.
   while (true) {
     // Start with pinNum = 16 since the first 16 pins are unused on Centipede #1 in Screamo Master.
     for (int pinNum = 16; pinNum < 64; pinNum++) {  // Cycle through all 64 output pins on Centipede #1
@@ -328,7 +414,15 @@ void setup() {
       sprintf(lcdString, "Pin %02d LOW ", pinNum);
       pLCD2004->println(lcdString);
       Serial.println(lcdString);
-      delay(200);
+
+      // Wait for a flipper button to be pressed...
+      int left = digitalRead(PIN_IN_BUTTON_FLIPPER_LEFT);
+      int right = digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT);
+      while ((left == HIGH) && (right == HIGH)) { // Both buttons unpressed
+        left = digitalRead(PIN_IN_BUTTON_FLIPPER_LEFT);
+        right = digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT);
+      }
+      
       pShiftRegister->digitalWrite(pinNum, HIGH);   // Turn OFF
       sprintf(lcdString, "Pin %02d HIGH", pinNum);
       pLCD2004->println(lcdString);
@@ -336,25 +430,64 @@ void setup() {
       delay(200);
     }
   }
-  */
+  
 
-  /*
+
   // Here is some code that tests the Mega's PWM outputs by cycling them on and off...
-  while (true) {
-    for (int i = 0; i < NUM_DEVS; i++) {
-      analogWrite(deviceParm[i].pinNum, deviceParm[i].powerInitial);  // Turn ON at initial power level
-      sprintf(lcdString, "Dev %02d ON ", i);
-      pLCD2004->println(lcdString);
-      Serial.println(lcdString);
-      delay(deviceParm[i].timeOn);
-      analogWrite(deviceParm[i].pinNum, LOW);  // Turn OFF
-      sprintf(lcdString, "Dev %02d OFF", i);
-      pLCD2004->println(lcdString);
-      Serial.println(lcdString);
-      delay(500);
-    }
+  
+
+
+  // Wait for a flipper button to be pressed...
+  int left = digitalRead(PIN_IN_BUTTON_FLIPPER_LEFT);
+  int right = digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT);
+  while ((left == HIGH) && (right == HIGH)) { // Both buttons unpressed
+    left = digitalRead(PIN_IN_BUTTON_FLIPPER_LEFT);
+    right = digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT);
   }
-  */
+
+  for (int i = 0; i < NUM_DEVS; i++) {
+    analogWrite(deviceParm[i].pinNum, deviceParm[i].powerInitial);  // Turn ON at initial power level
+    sprintf(lcdString, "Dev %02d ON ", i);
+    pLCD2004->println(lcdString);
+    Serial.println(lcdString);
+    delay(deviceParm[i].timeOn);
+    analogWrite(deviceParm[i].pinNum, LOW);  // Turn OFF
+    sprintf(lcdString, "Dev %02d OFF", i);
+    pLCD2004->println(lcdString);
+    Serial.println(lcdString);
+    delay(500);
+  }
+
+  while (true) {
+    left = digitalRead(PIN_IN_BUTTON_FLIPPER_LEFT);
+    right = digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT);
+    if (left == LOW) {
+      // Fire the left flipper
+      analogWrite(deviceParm[DEV_IDX_FLIPPER_LEFT].pinNum, deviceParm[DEV_IDX_FLIPPER_LEFT].powerInitial);  // Turn ON at initial power level
+      delay(deviceParm[DEV_IDX_FLIPPER_LEFT].timeOn);
+      analogWrite(deviceParm[DEV_IDX_FLIPPER_LEFT].pinNum, deviceParm[DEV_IDX_FLIPPER_LEFT].powerHold);
+      delay(20);
+      while (digitalRead(PIN_IN_BUTTON_FLIPPER_LEFT) == LOW) {
+        // Keep holding the flipper while button is pressed
+        delay(10);
+      }
+      analogWrite(deviceParm[DEV_IDX_FLIPPER_LEFT].pinNum, LOW);  // Turn OFF
+    }
+    if (right == LOW) {
+      // Fire the right flipper
+      analogWrite(deviceParm[DEV_IDX_FLIPPER_RIGHT].pinNum, deviceParm[DEV_IDX_FLIPPER_RIGHT].powerInitial);  // Turn ON at initial power level
+      delay(deviceParm[DEV_IDX_FLIPPER_RIGHT].timeOn);
+
+      analogWrite(deviceParm[DEV_IDX_FLIPPER_RIGHT].pinNum, deviceParm[DEV_IDX_FLIPPER_RIGHT].powerHold);
+      delay(20);
+      while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == LOW) {
+        // Keep holding the flipper while button is pressed
+        delay(10);
+      }
+      analogWrite(deviceParm[DEV_IDX_FLIPPER_RIGHT].pinNum, LOW);  // Turn OFF
+    }
+  }  
+
   
 
 

@@ -164,6 +164,11 @@ void setup() {
   delay(250);
   removeCredit();  // Test pulse to credit down coil
   delay(1000);
+
+  while (true) {}
+
+
+
   for (int i = 0; i < 3; i++) {
     analogWrite(deviceParm[DEV_IDX_10K_UP].pinNum, deviceParm[DEV_IDX_10K_UP].powerInitial); delay(deviceParm[DEV_IDX_10K_UP].timeOn); analogWrite(deviceParm[DEV_IDX_10K_UP].pinNum, 0);
     delay(250);

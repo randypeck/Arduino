@@ -83,13 +83,15 @@ const byte PIN_OUT_RS485_TX_ENABLE     = 22;  // Output: set HIGH when in RS485 
 
 const byte PIN_OUT_LED                 = 13;  // Built-in LED always pin 13
 
+// **************************************
+// ***** MASTER ARDUINO PIN NUMBERS *****
+// **************************************
+
 // MASTER ARDUINO CABINET DIRECT INPUT PIN NUMBERS (Buttons):
 // For minimum latency, flipper buttons will be DIRECT INPUTS to Arduino pins, rather than via CENTIPEDE SHIFT REGISTER (SR) input.
 // In the future, we may choose to also include the Pop Bumper Skirt and Slingshot switches to direct Arduino inputs.
 const byte PIN_IN_BUTTON_FLIPPER_LEFT                 = 30;
 const byte PIN_IN_BUTTON_FLIPPER_RIGHT                = 31;
-
-
 
 // MASTER ARDUINO PLAYFIELD SHIFT REGISTER OUTPUT PIN NUMBERS (Lamps):
 // Note Master Centipede output pins are connected to RELAYS that switch 6.3vac to the actual lamps.
@@ -108,6 +110,10 @@ const byte PIN_OUT_SR_LAMP_WHITE[9]                   = { 0, 0, 0, 0, 0, 0, 0, 0
 const byte PIN_OUT_SR_LAMP_RED[9]                     = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };  // SPOTTED lamps 0..8 = '1'..'9'
 const byte PIN_OUT_SR_LAMP_DRAIN_LEFT                 =  0;  // Spots number when lit
 const byte PIN_OUT_SR_LAMP_DRAIN_RIGHT                =  0;  // Spots number when lit
+
+// *************************************
+// ***** SLAVE ARDUINO PIN NUMBERS *****
+// *************************************
 
 // SLAVE ARDUINO HEAD DIRECT INPUT PIN NUMBERS (Switches):
 const byte PIN_IN_SWITCH_CREDIT_EMPTY       =  2;  // Input : Credit wheel "Empty" switch.  Pulled LOW when empty.
