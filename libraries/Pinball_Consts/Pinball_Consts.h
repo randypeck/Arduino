@@ -1,4 +1,4 @@
-// PINBALL_CONSTS.H Rev: 11/02/25.
+// PINBALL_CONSTS.H Rev: 11/16/25.
 
 #ifndef PINBALL_CONSTS_H
 #define PINBALL_CONSTS_H
@@ -27,9 +27,10 @@ const byte MODE_UNDEFINED  = 0;
 const byte MODE_DIAGNOSTIC = 1;           // Diagnostics (Default mode until a game is started)
 const byte MODE_ORIGINAL   = 2;           // Plays as original but with normal flippers (not impulse.)
 const byte MODE_ENHANCED   = 3;           // Randy's Screamo rules
-const byte MODE_IMPULSE    = 4;           // Impulse flippers: yuk!
+const byte MODE_IMPULSE    = 4;           // Plays as original with impulse flippers
+
 const byte STATE_UNDEFINED = 0;
-const byte STATE_GAME_OVER = 1;
+const byte STATE_GAME_OVER = 1;           // Attract mode
 const byte STATE_PLAYING   = 2;
 const byte STATE_TILT      = 3;
 
@@ -42,16 +43,47 @@ const long unsigned int SERIAL1_SPEED = 115200;  // Serial port 1 is Digole 2004
 const long unsigned int SERIAL2_SPEED = 115200;  // Serial port 2 is the RS485 communications bus
 const long unsigned int SERIAL3_SPEED =  57600;  // Serial port 3 is Tsunami WAV Trigger defaults to 57.6k baud
 
-// Note that the serial input buffer is only 64 bytes, which means that we need to keep emptying it since there
-// will be many commands between Arduinos, even though most may not be for THIS Arduino.  If the buffer overflows,
-// then we will be totally screwed up (but it will be apparent in the checksum.)
+// Note that the serial input buffer is only 64 bytes, which means that we need to keep emptying it since there will be
+// many commands between Arduinos.  If the buffer overflows, then we will be totally screwed up (but it will be
+// apparent in the checksum.)
 const byte RS485_TRANSMIT       = HIGH;      // HIGH = 0x1.  How to set TX_CONTROL pin when we want to transmit RS485
 const byte RS485_RECEIVE        = LOW;       // LOW = 0x0.  How to set TX_CONTROL pin when we want to receive (or NOT transmit) RS485
-const byte RS485_MAX_LEN        = 20;        // buf len to hold the longest possible RS485 msg incl to, from, CRC.  16 as of 3/3/23.
+const byte RS485_MAX_LEN        = 20;        // buf len to hold the longest possible RS485 msg incl to, from, CRC.
 const byte RS485_LEN_OFFSET     =  0;        // first byte of message is always total message length in bytes
-const byte RS485_TYPE_OFFSET    =  1;        // second byte of message is the type of message such as 'C' for Credit
-const byte RS845_PAYLOAD_OFFSET =  2;        // third byte of message is the first byte of the payload, i.e. the data
+const byte RS485_FROM_OFFSET    =  1;        // second byte of message is the ID of the Arduino the message is coming from
+const byte RS485_TO_OFFSET      =  2;        // third byte of message is the ID of the Arduino the message is addressed to
+const byte RS485_TYPE_OFFSET    =  3;        // fourth byte of message is the type of message such as 'C' for Credit
+const byte RS845_PAYLOAD_OFFSET =  4;        // fifth byte of message is the first byte of the payload, i.e. the data
 // Note also that the LAST byte of every message is a CRC8 checksum of all bytes except the last.
+
+// Here is a list of all RS485 message types (the 1-byte TYPE field):
+const byte RS485_TYPE_MAS_TO_SLV_MODE          =  1;  // Mode change; may be irrelevant to Slave
+const byte RS485_TYPE_MAS_TO_SLV_STATE         =  2;  // State change; may be irrelevant to Slave
+const byte RS485_TYPE_MAS_TO_SLV_NEW_GAME      =  3;  // Start a new game (tilt off, GI on, revert score zero; does not deduct credit)
+const byte RS485_TYPE_MAS_TO_SLV_CREDIT_STATUS =  4;  // Request if credits > zero
+const byte RS485_TYPE_SLV_TO_MAS_CREDIT_STATUS =  5;  // Slave response to credit status request: credits zero or > zero
+const byte RS485_TYPE_MAS_TO_SLV_CREDIT_INC    =  6;  // Credit increment
+const byte RS485_TYPE_MAS_TO_SLV_CREDIT_DEC    =  7;  // Credit decrement (will not return error even if credits already zero)
+const byte RS485_TYPE_MAS_TO_SLV_SCORE_RESET   =  8;  // Reset score to zero
+const byte RS485_TYPE_MAS_TO_SLV_SCORE_ABS     =  9;  // Absolute score update (0.999 in 10,000s)
+const byte RS485_TYPE_MAS_TO_SLV_SCORE_INC     = 10;  // Increment score update (1..999in 10,000s)
+const byte RS485_TYPE_MAS_TO_SLV_SCORE_DEC     = 11;  // Decrement score update (-999..-1 in 10,000s) (won't go below zero)
+const byte RS485_TYPE_MAS_TO_SLV_BELL_10K      = 12;  // Ring the 10K bell
+const byte RS485_TYPE_MAS_TO_SLV_BELL_100K     = 13;  // Ring the 100K bell
+const byte RS485_TYPE_MAS_TO_SLV_BELL_SELECT   = 14;  // Ring the Select bell
+const byte RS485_TYPE_MAS_TO_SLV_10K_UNIT      = 15;  // Pulse the 10K Unit coil (for testing)
+const byte RS485_TYPE_MAS_TO_SLV_SCORE_QUERY   = 16;  // Master requesting current score displayed by Slave (in 10,000s)
+const byte RS485_TYPE_SLV_TO_MAS_SCORE_REPORT  = 17;  // Slave reporting current score (in 10,000s)
+const byte RS485_TYPE_MAS_TO_SLV_GI_LAMP       = 18;  // Master command to turn G.I. lamps on or off
+const byte RS485_TYPE_MAS_TO_SLV_TILT_LAMP     = 19;  // Master command to turn Tilt lamp on or off
+
+// NOTE REGARDING DIAGNOSTIC MODE:
+//   For LAMP TEST, in addition to G.I. and Tilt on/off, Master can send SCORE_ABS messages that will cycle through all
+//   27 score lamps on the Slave.
+// NOTE REGARDING MULTI-PLAYER GAMES:
+//   Master will store and recall scores, and send SCORE_ABS commands to Slave to update each players' score as needed.
+//   Along these lines, it might be best for Master to save previous score to EEPROM at game-over, rather than Slave,
+//   and simply transmite SCORE_ABS command to Slave at power-up to display last score.
 
 // *** ARDUINO PIN NUMBERS:
 // *** STANDARD I/O PORT PIN NUMBERS ***

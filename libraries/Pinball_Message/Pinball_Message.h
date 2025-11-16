@@ -23,7 +23,7 @@ class Pinball_Message {
     // Regardless of Mode, messaged may not be sent/received if State == STATE_STOPPED.
 
     // *** MESSAGES THAT MASTER CARES ABOUT ***
-    void setGILamp(bool t_onOrOff);         // Msg type "G"  Later we can add requests for FX such as random dimming etc.
+    void setGILamp(bool t_onOrOff);          // Msg type "G"  Later we can add requests for FX such as random dimming etc.
     void sendRequestCredit();                // Msg type "C"  Asks to deduct a credit if one is available (i.e. to start a game)
     void getCreditSuccess(bool* t_credits);  // Msg type "C"  Response from Slave: TRUE if there was a credit and it was subtracted; FALSE if no credits available
     void sendStartNewGame();                 // Msg type "N"  Tilt off, GI on, Score zero (does not deduct a credit)
