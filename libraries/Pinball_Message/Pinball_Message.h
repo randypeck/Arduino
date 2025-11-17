@@ -1,4 +1,4 @@
-// PINBALL_MESSAGE.H  Rev: 08/17/25
+// PINBALL_MESSAGE.H  Rev: 11/16/25
 
 // This class includes all of the low-level logic to send and receive messages on the RS-485 network
 // FOR NOTES RE: RS485 INCOMING SERIAL BUFFER OVERFLOW "RS485 in buf ovflow." DISPLAYED ON LCD, see comments at bottom of code.
@@ -17,26 +17,50 @@ class Pinball_Message {
 
     void begin(HardwareSerial* t_mySerial, long unsigned int t_myBaud);
 
-    char available();
-    // Returns message type waiting in RS485 incoming buffer, else char = ' ' if there are no messages.
+    byte available();
+    // Returns message type waiting in RS485 incoming buffer, else RS485_TYPE_NO_MESSAGE if there are no messages.
     // Caller MUST call the appropriate Message "get" function to retrieve the data, or the message will be lost.
-    // Regardless of Mode, messaged may not be sent/received if State == STATE_STOPPED.
 
-    // *** MESSAGES THAT MASTER CARES ABOUT ***
-    void setGILamp(bool t_onOrOff);          // Msg type "G"  Later we can add requests for FX such as random dimming etc.
-    void sendRequestCredit();                // Msg type "C"  Asks to deduct a credit if one is available (i.e. to start a game)
-    void getCreditSuccess(bool* t_credits);  // Msg type "C"  Response from Slave: TRUE if there was a credit and it was subtracted; FALSE if no credits available
-    void sendStartNewGame();                 // Msg type "N"  Tilt off, GI on, Score zero (does not deduct a credit)
-    void sendTilt();                         // Msg type "T"  Turns on the tilt light; other lights off
-    void sendUpdateScore(const byte t_10K, const byte t_100K, const byte t_million);  // Msg type "S"  Updates score to indicated value (not +/- current value)
-    void sendRing10KBell();                  // Msg type "1"  Later we can request multiple dings and specify delay between dings in increments of 100ms
-    void sendRing100KBell();                 // Msg type "2"
-    void sendRingSelectBell();               // Msg type "3"
-
-    // *** MESSAGES THAT SLAVE CARES ABOUT ***
+    // *** MESSAGES TO/FROM MASTER AND SLAVE ***
     // NOTE: Messages that don't have any parameters don't need a "get" function; the Message Type is the message
-    void sendCreditSuccess(const bool t_success);  // Sends TRUE if it was able to deduct a credit; else FALSE
-    void getUpdateScore(byte* t_10K, byte* t_100K, byte* t_million);
+    // I.e. when Master sends MAS_TO_SLV_NEW_GAME, Slave just needs to know that message arrived; there are no parms to retrieve.
+    void sendMAStoSLVModeState(const byte t_mode, const byte t_state);  // RS485_TYPE_MAS_TO_SLV_MODE_STATE
+    void getMAStoSLVModeState(byte* t_mode, byte* t_state);             // RS485_TYPE_MAS_TO_SLV_MODE_STATE
+
+    void sendMAStoSLVNewGame();                                         // RS485_TYPE_MAS_TO_SLV_NEW_GAME
+
+    void sendMAStoSLVCreditStatusQuery();                               // RS485_TYPE_MAS_TO_SLV_CREDIT_STATUS
+    void sendSLVtoMASCreditStatus(const bool t_creditsAvailable);       // RS485_TYPE_SLV_TO_MAS_CREDIT_STATUS
+    void getSLVtoMASCreditStatus(bool* t_creditsAvailable);             // RS485_TYPE_SLV_TO_MAS_CREDIT_STATUS
+
+    void sendMAStoSLVCreditInc(const byte t_numCreditsToAdd);           // RS485_TYPE_MAS_TO_SLV_CREDIT_INC
+    void getMAStoSLVCreditInc(byte* t_numCreditsToAdd);                 // RS485_TYPE_MAS_TO_SLV_CREDIT_INC
+
+    void sendMAStoSLVCreditDec();                                       // RS485_TYPE_MAS_TO_SLV_CREDIT_DEC
+
+    void sendMAStoSLVScoreReset();                                      // RS485_TYPE_MAS_TO_SLV_SCORE_RESET
+    void sendMAStoSLVScoreAbs(const byte t_10K, const byte t_100K, const byte t_million);  // RS485_TYPE_MAS_TO_SLV_SCORE_ABS
+    void getMAStoSLVScoreAbs(byte* t_10K, byte* t_100K, byte* t_million);                  // RS485_TYPE_MAS_TO_SLV_SCORE_ABS
+
+    void sendMAStoSLVScoreInc(const int t_incrementIn10Ks);  // RS485_TYPE_MAS_TO_SLV_SCORE_INC (1..999 in 10,000s)
+    void getMAStoSLVScoreInc(int* t_incrementIn10Ks);        // RS485_TYPE_MAS_TO_SLV_SCORE_INC (1..999 in 10,000s)
+
+    void sendMAStoSLVScoreDec(const int t_decrementIn10Ks);  // RS485_TYPE_MAS_TO_SLV_SCORE_DEC (-999..-1 in 10,000s; won't go below zero)
+    void getMAStoSLVScoreDec(int* t_decrementIn10Ks);        // RS485_TYPE_MAS_TO_SLV_SCORE_DEC
+
+    void sendMAStoSLVBell10K();                              // RS485_TYPE_MAS_TO_SLV_BELL_10K
+    void sendMAStoSLVBell100K();                             // RS485_TYPE_MAS_TO_SLV_BELL_100K
+    void sendMAStoSLVBellSelect();                           // RS485_TYPE_MAS_TO_SLV_BELL_SELECT
+    void sendMAStoSLV10KUnitPulse();                         // RS485_TYPE_MAS_TO_SLV_10K_UNIT
+
+    void sendMAStoSLVScoreQuery();                                                            // RS485_TYPE_MAS_TO_SLV_SCORE_QUERY
+    void sendSLVtoMASScoreReport(const byte t_10K, const byte t_100K, const byte t_million);  // RS485_TYPE_SLV_TO_MAS_SCORE_REPORT
+    void getSLVtoMASScoreReport(byte* t_10K, byte* t_100K, byte* t_million);                  // RS485_TYPE_SLV_TO_MAS_SCORE_REPORT
+
+    void sendMAStoSLVGILamp(const bool t_onOrOff);           // RS485_TYPE_MAS_TO_SLV_GI_LAMP
+    void getMAStoSLVGILamp(bool* t_onOrOff);                 // RS485_TYPE_MAS_TO_SLV_GI_LAMP
+    void sendMAStoSLVTiltLamp(const bool t_onOrOff);         // RS485_TYPE_MAS_TO_SLV_TILT_LAMP
+    void getMAStoSLVTiltLamp(bool* t_onOrOff);               // RS485_TYPE_MAS_TO_SLV_TILT_LAMP
 
   private:
 
@@ -47,10 +71,14 @@ class Pinball_Message {
     // tmsg[] is also "returned" (populated, iff there was a complete message) since arrays are passed by reference.
 
     void setLen(byte t_msg[], const byte t_len);    // Inserts message length i.e. 7 into the appropriate byte
-    void setType(byte t_msg[], const char t_type);  // Inserts the message type i.e. 'M'ode into the appropriate byte
+    void setFrom(byte t_msg[], const byte t_from);  // Inserts "from" i.e. ARDUINO_MAS into the appropriate byte
+    void setTo(byte t_msg[], const byte t_to);      // Inserts "to" i.e. ARDUINO_SLV into the appropriate byte
+    void setType(byte t_msg[], const byte t_type);  // Inserts the message type i.e. RS485_TYPE_MAS_TO_SLV_CREDIT_STATUS into the appropriate byte
 
     byte getLen(const byte t_msg[]);                // Returns the 1-byte length of the RS485 message in tMsg[]
-    char getType(const byte t_msg[]);               // Returns the 1-char message type i.e. 'M' for Mode
+    byte getFrom(const byte t_msg[]);               // Returns the 1-byte "from" Arduino ID
+    byte getTo(const byte t_msg[]);                 // Returns the 1-byte "to" Arduino ID
+    byte getType(const byte t_msg[]);               // Returns the 1-byte message type i.e. RS485_TYPE_MAS_TO_SLV_CREDIT_STATUS
 
     byte getChecksum(const byte t_msg[]);  // Just retrieves a byte from an existing message; does not calculate checksum!
     byte calcChecksumCRC8(const byte t_msg[], const byte t_len);  // Calculate checksum of an incoming or outgoing message.

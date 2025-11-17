@@ -1,4 +1,4 @@
-// Screamo_Slave.INO Rev: 11/02/25
+// Screamo_Slave.INO Rev: 11/16/25
 // Need code to save and recall previous score when machine was turned off or last game ended, so we can display it on power-up.
 //   Maybe automatically save current score every x times through the 10ms loop; i.e. every 15 or 30 seconds.  Or just at game-over.
 //   Maybe save to EEPROM every time the score changes, but that could wear out the EEPROM
@@ -48,8 +48,8 @@ const byte NUM_DEVS = 8;
 //     delay(deviceParm[DEV_IDX_CREDIT_UP].timeOn);
 //     analogWrite(deviceParm[DEV_IDX_CREDIT_UP].pinNum, deviceParm[DEV_IDX_CREDIT_UP].powerHold);
 deviceParmStruct deviceParm[NUM_DEVS] = {
-  {  5, 120,  40,   0 },  // CREDIT UP. 120 confirmed min power to work reliably; 30ms works but we'll match 40 needed by 10K bell coil.
-  {  6, 150,  30,   0 },  // CREDIT DOWN.  150 confirmed min power to work reliably; 160ms confirmed is bare minimum time to work reliably.  140 no good.
+  {  5, 170,  40,   0 },  // CREDIT UP. 120 confirmed min power to work reliably; 30ms works but we'll match 40 needed by 10K bell coil.
+  {  6, 200,  30,   0 },  // CREDIT DOWN.  150 confirmed min power to work reliably; 160ms confirmed is bare minimum time to work reliably.  140 no good.
   {  7, 160,  40,   0 },  // 10K UP.  Tim thinks 40ms sounds like it's happening too fast; try longer hold time to try to match score motor's behavior.
   {  8, 140,  30,   0 },  // 10K BELL.  140 plenty of power; 30ms confirmed via test okay.
   {  9, 120,  30,   0 },  // 100K BELL.  120 confirmed via test, loud enough;  30ms okay.
@@ -69,7 +69,7 @@ deviceParmStruct deviceParm[NUM_DEVS] = {
 const int EEPROM_ADDR_SCORE = 0;  // Address to store 16-bit score (uses addr 0 and 1)
 
 const byte THIS_MODULE = ARDUINO_SLV;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "SLAVE 11/01/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "SLAVE 11/16/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which effectively makes it a global.
 // No need to pass lcdString[] to any functions that use it!
 
@@ -136,11 +136,11 @@ void setup() {
 
   // Turn on GI lamps so player thinks they're getting instant startup (NOTE: Can't do this until after pShiftRegister is initialized)
   setScoreLampBrightness(deviceParm[DEV_IDX_LAMP_SCORE].powerInitial);     // Ready to turn on as soon as relay contacts close.
-  setGILamp(true);
+  //setGILamp(true);
   setGITiltLampBrightness(deviceParm[DEV_IDX_LAMP_HEAD_GI_TILT].powerInitial);  // Ready to turn on as soon as relay contacts close.
-  setTiltLamp(false);
+  //setTiltLamp(false);
   // Display previously saved score from EEPROM
-  displayScore(recallScoreFromEEPROM());
+  //displayScore(recallScoreFromEEPROM());
 
   // *** INITIALIZE LCD CLASS AND OBJECT *** (Heap uses 98 bytes)
   // Insert a delay() in order to give the Digole 2004 LCD time to power up and be ready to receive commands (esp. the 115K speed command).
@@ -153,19 +153,11 @@ void setup() {
   pLCD2004->println("Setup starting.");
 
   addCredit();  // Test pulse to credit up coil
-  delay(250);
-  addCredit();  // Test pulse to credit up coil
-  delay(250);
-  addCredit();  // Test pulse to credit up coil
   delay(1000);
-  removeCredit();  // Test pulse to credit down coil (returns true if successful; else false but we don't care here)
-  delay(250);
-  removeCredit();  // Test pulse to credit down coil
-  delay(250);
   removeCredit();  // Test pulse to credit down coil
   delay(1000);
 
-  while (true) {}
+/*
 
 
 
@@ -231,7 +223,7 @@ void setup() {
 
 
   while (true) {}
-
+*/
 }  // End of setup()
 
 // *****************************************************************************************
@@ -241,49 +233,83 @@ void setup() {
 void loop() {
 
   // See if there is an incoming message for us...
-  char msgType = pMessage->available();
+  byte msgType = pMessage->available();
 
-  // msgType ' ' (blank) means there was no message waiting for us.
-  // msgType 'C' means this is a request "are there any credits, and if so please deduct one" message.
-  // For any message, we'll need to call the "pMessage->get" function to retrieve the actual contents of the message.
+  // For any message with parms, we'll need to call the "pMessage->get" function to retrieve the actual contents of the message.
+  // But for messages that don't have parms, we can just act on the message type immediately.
 
-  while (msgType != ' ') {
-    bool t_success = true;
-    switch(msgType) {
-      case 'G' :  // Turn on G.I.
-        sprintf(lcdString, "Turning on G.I."); pLCD2004->println(lcdString);
+  // const byte RS485_TYPE_MAS_TO_SLV_MODE_STATE    =  1;  // Mode and/or State change
+  // const byte RS485_TYPE_MAS_TO_SLV_NEW_GAME      =  2;  // Start a new game (tilt off, GI on, revert score zero; does not deduct credit)
+  // const byte RS485_TYPE_MAS_TO_SLV_CREDIT_STATUS =  3;  // Request if credits > zero
+  // const byte RS485_TYPE_SLV_TO_MAS_CREDIT_STATUS =  4;  // Slave response to credit status request: credits zero or > zero
+  // const byte RS485_TYPE_MAS_TO_SLV_CREDIT_INC    =  5;  // Credit increment
+  // const byte RS485_TYPE_MAS_TO_SLV_CREDIT_DEC    =  6;  // Credit decrement (will not return error even if credits already zero)
+  // const byte RS485_TYPE_MAS_TO_SLV_SCORE_RESET   =  7;  // Reset score to zero
+  // const byte RS485_TYPE_MAS_TO_SLV_SCORE_ABS     =  8;  // Absolute score update (0.999 in 10,000s)
+  // const byte RS485_TYPE_MAS_TO_SLV_SCORE_INC     =  9;  // Increment score update (1..999in 10,000s)
+  // const byte RS485_TYPE_MAS_TO_SLV_SCORE_DEC     = 10;  // Decrement score update (-999..-1 in 10,000s) (won't go below zero)
+  // const byte RS485_TYPE_MAS_TO_SLV_BELL_10K      = 11;  // Ring the 10K bell
+  // const byte RS485_TYPE_MAS_TO_SLV_BELL_100K     = 12;  // Ring the 100K bell
+  // const byte RS485_TYPE_MAS_TO_SLV_BELL_SELECT   = 13;  // Ring the Select bell
+  // const byte RS485_TYPE_MAS_TO_SLV_10K_UNIT      = 14;  // Pulse the 10K Unit coil (for testing)
+  // const byte RS485_TYPE_MAS_TO_SLV_SCORE_QUERY   = 15;  // Master requesting current score displayed by Slave (in 10,000s)
+  // const byte RS485_TYPE_SLV_TO_MAS_SCORE_REPORT  = 16;  // Slave reporting current score (in 10,000s)
+  // const byte RS485_TYPE_MAS_TO_SLV_GI_LAMP       = 17;  // Master command to turn G.I. lamps on or off
+  // const byte RS485_TYPE_MAS_TO_SLV_TILT_LAMP     = 18;  // Master command to turn Tilt lamp on or off
+
+  // Process all available incoming messages (non-blocking)
+  while (msgType != RS485_TYPE_NO_MESSAGE) {
+    switch (msgType) {
+      case RS485_TYPE_MAS_TO_SLV_CREDIT_STATUS:
+        pLCD2004->println("Credit status req.");
+        pMessage->sendSLVtoMASCreditStatus(hasCredits());
         break;
-
-      case 'C' :  // New credit request.  There are no parms being passed to us; we just need to check the Slave's "Credits" switch, and:
-                  //   If there are credits, then deduct one and return TRUE
-                  //   Else if no credits, return FALSE
-        // Here is where we'll add the code to check the switch and possibly deduct a credit on the credit wheel
-        // Now tell Master what we did
-        sprintf(lcdString, "Sending to Master"); pLCD2004->println(lcdString);
-        delay(250);
-        pMessage->sendCreditSuccess(t_success);
-        sprintf(lcdString, "Msg sent to Master"); pLCD2004->println(lcdString);
+      case RS485_TYPE_MAS_TO_SLV_CREDIT_INC:
+        pLCD2004->println("Credit inc.");
+        {
+          byte numCreditsToAdd = 0;
+          pMessage->getMAStoSLVCreditInc(&numCreditsToAdd);
+          for (byte i = 0; i < numCreditsToAdd; i++) {
+            addCredit();
+            delay(250);  // Small delay between credits 
+          }
+        }
         break;
-
-      case 'S' :  // Request from MAS to send the status of a specific sensor.
-        // So, which sensor number does MAS want the status of?  It better be 1..52, and *not* 0..51.
-//        pMessage->getMAStoSNSRequestSensor(&sensorNum);
-        // Look at the Centipede shift register to find the status of the specified sensor in stateOfSensor().
-        // We may immediately transmit that information back to MAS -- permission to xmit was implicit with the message
-//        pMessage->sendSNStoALLSensorStatus(sensorNum, stateOfSensor(sensorNum));
-//        if (stateOfSensor(sensorNum) == SENSOR_STATUS_TRIPPED) {
-//          sprintf(lcdString, "Sensor %i Tripped", sensorNum); pLCD2004->println(lcdString); Serial.println(lcdString);
-//        } else {
-//          sprintf(lcdString, "Sensor %i Cleared", sensorNum); Serial.println(lcdString);  // Not to LCD
-//        }
+      case RS485_TYPE_MAS_TO_SLV_BELL_10K:
+        pLCD2004->println("10K Bell");
+        analogWrite(deviceParm[DEV_IDX_10K_BELL].pinNum, deviceParm[DEV_IDX_10K_BELL].powerInitial);
+        delay(deviceParm[DEV_IDX_10K_BELL].timeOn);
+        analogWrite(deviceParm[DEV_IDX_10K_BELL].pinNum, 0);
         break;
-
+      case RS485_TYPE_MAS_TO_SLV_BELL_100K:
+        pLCD2004->println("100K Bell");
+        analogWrite(deviceParm[DEV_IDX_100K_BELL].pinNum, deviceParm[DEV_IDX_100K_BELL].powerInitial);
+        delay(deviceParm[DEV_IDX_100K_BELL].timeOn);
+        analogWrite(deviceParm[DEV_IDX_100K_BELL].pinNum, 0);
+        break;
+      case RS485_TYPE_MAS_TO_SLV_BELL_SELECT:
+        pLCD2004->println("Select Bell");
+        analogWrite(deviceParm[DEV_IDX_SELECT_BELL].pinNum, deviceParm[DEV_IDX_SELECT_BELL].powerInitial);
+        delay(deviceParm[DEV_IDX_SELECT_BELL].timeOn);
+        analogWrite(deviceParm[DEV_IDX_SELECT_BELL].pinNum, 0);
+        break;
+      case RS485_TYPE_MAS_TO_SLV_GI_LAMP:
+        pLCD2004->println("G.I. ON/OFF");
+        {
+          bool giOn = false;
+          pMessage->getMAStoSLVGILamp(&giOn);
+          setGILamp(giOn);
+        }
+        break;
       default:
         sprintf(lcdString, "MSG TYPE ERROR %c", msgType); pLCD2004->println(lcdString); Serial.println(lcdString);
-        // It's printing a, b, c, etc. i.e. successive characters **************************************************************************
-    }
+      }
+    // Read next message (non-blocking). This lets the loop exit when no more complete messages are available.
     msgType = pMessage->available();
   }
+  delay(100);
+
+//  msgType = pMessage->available();
 
   // We have handled any incoming message.
 

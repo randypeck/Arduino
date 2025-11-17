@@ -407,6 +407,62 @@ void setup() {
   pTsunami->start();         // Start Tsunami WAV player
 
 
+  // Let's send some test messages to the Slave Arduino in the head.
+  delay(2000);
+
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }  // Wait for right flipper button press to continue
+  pLCD2004->println("G.I. On");
+  pMessage->sendMAStoSLVGILamp(true);
+  delay(1000);
+  pLCD2004->println("10K Bell");
+  pMessage->sendMAStoSLVBell10K();
+  delay(1000);
+  pLCD2004->println("Wait 1...");
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pLCD2004->println("100K Bell");
+  pMessage->sendMAStoSLVBell100K();
+  delay(1000);
+  pLCD2004->println("Wait 2...");
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pLCD2004->println("Select Bell");
+  pMessage->sendMAStoSLVBellSelect();
+  delay(1000);
+  pLCD2004->println("Wait 3...");
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pLCD2004->println("Add 3 credits");
+  pMessage->sendMAStoSLVCreditInc(3);
+  delay(1000);
+  pLCD2004->println("Wait 4...");
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLVCreditStatusQuery();
+//  delay(1000);
+
+  while (true) {
+    // See if there is an incoming message for us...
+    byte msgType = pMessage->available();
+
+    while (msgType != RS485_TYPE_NO_MESSAGE) {
+      switch (msgType) {
+        case RS485_TYPE_SLV_TO_MAS_CREDIT_STATUS:
+          {
+            bool creditsAvailable = false;
+            pMessage->getSLVtoMASCreditStatus(&creditsAvailable);
+            sprintf(lcdString, "Credits: %s", creditsAvailable ? "YES" : "NO");
+            pLCD2004->println(lcdString);
+        }
+          break;
+
+        default:
+          sprintf(lcdString, "MSG TYPE ERROR %c", msgType); pLCD2004->println(lcdString); Serial.println(lcdString);
+          // It's printing a, b, c, etc. i.e. successive characters **************************************************************************
+        }
+      msgType = pMessage->available();
+    }
+  }
+  pLCD2004->println("Setup complete.");
+
+
+
   // Here is some code to test the Tsunami WAV player by playing a sound...
   // Call example: playTsunamiSound(1);
   // 001..016 are spoken numbers
