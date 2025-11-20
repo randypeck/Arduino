@@ -1,4 +1,4 @@
-// PINBALL_MESSAGE.CPP  Rev: 11/16/25
+// PINBALL_MESSAGE.CPP  Rev: 11/19/25
 
 #include "Pinball_Message.h"
 
@@ -72,35 +72,101 @@ byte Pinball_Message::available() {
 // All of the following public message-get functions assume that pMessage->available() was called, and returned a non-blank message
 // type, and that m_RS485Buf[] a valid message of that type.
 
-void Pinball_Message::sendMAStoSLVModeState(const byte t_mode, const byte t_state) {
-  int recLen = 7;
-  m_RS485Buf[RS485_LEN_OFFSET] = recLen;  // Length is 7 bytes: Length, From, To, 'M', mode, state, CRC
+void Pinball_Message::sendMAStoSLVMode(const byte t_mode) {
+  int recLen = 6;
+  m_RS485Buf[RS485_LEN_OFFSET] = recLen;  // Length is 6 bytes: Length, From, To, 'M', mode, CRC
   m_RS485Buf[RS485_FROM_OFFSET] = ARDUINO_MAS;
   m_RS485Buf[RS485_TO_OFFSET] = ARDUINO_SLV;
-  m_RS485Buf[RS485_TYPE_OFFSET] = RS485_TYPE_MAS_TO_SLV_MODE_STATE;
+  m_RS485Buf[RS485_TYPE_OFFSET] = RS485_TYPE_MAS_TO_SLV_MODE;
   m_RS485Buf[RS845_PAYLOAD_OFFSET] = t_mode;
-  m_RS485Buf[RS845_PAYLOAD_OFFSET + 1] = t_state;
   m_RS485Buf[recLen - 1] = calcChecksumCRC8(m_RS485Buf, recLen - 1);
   sendMessageRS485(m_RS485Buf);
   return;
 }
 
-void Pinball_Message::getMAStoSLVModeState(byte* t_mode, byte* t_state) {
+void Pinball_Message::getMAStoSLVMode(byte* t_mode) {
   *t_mode = m_RS485Buf[RS845_PAYLOAD_OFFSET];
-  *t_state = m_RS485Buf[RS845_PAYLOAD_OFFSET + 1];
   return;
 }
 
-void Pinball_Message::sendMAStoSLVNewGame() {
+void Pinball_Message::sendMAStoSLVGILamp(const bool t_onOrOff) {
+  int recLen = 6;
+  m_RS485Buf[RS485_LEN_OFFSET] = recLen;
+  m_RS485Buf[RS485_FROM_OFFSET] = ARDUINO_MAS;
+  m_RS485Buf[RS485_TO_OFFSET] = ARDUINO_SLV;
+  m_RS485Buf[RS485_TYPE_OFFSET] = RS485_TYPE_MAS_TO_SLV_GI_LAMP;
+  m_RS485Buf[RS845_PAYLOAD_OFFSET] = t_onOrOff ? 1 : 0;
+  m_RS485Buf[recLen - 1] = calcChecksumCRC8(m_RS485Buf, recLen - 1);
+  sendMessageRS485(m_RS485Buf);
+  return;
+}
+
+void Pinball_Message::getMAStoSLVGILamp(bool* t_onOrOff) {
+  *t_onOrOff = (m_RS485Buf[RS845_PAYLOAD_OFFSET] != 0);
+  return;
+}
+
+void Pinball_Message::sendMAStoSLVTiltLamp(const bool t_onOrOff) {
+  int recLen = 6;
+  m_RS485Buf[RS485_LEN_OFFSET] = recLen;
+  m_RS485Buf[RS485_FROM_OFFSET] = ARDUINO_MAS;
+  m_RS485Buf[RS485_TO_OFFSET] = ARDUINO_SLV;
+  m_RS485Buf[RS485_TYPE_OFFSET] = RS485_TYPE_MAS_TO_SLV_TILT_LAMP;
+  m_RS485Buf[RS845_PAYLOAD_OFFSET] = t_onOrOff ? 1 : 0;
+  m_RS485Buf[recLen - 1] = calcChecksumCRC8(m_RS485Buf, recLen - 1);
+  sendMessageRS485(m_RS485Buf);
+  return;
+}
+
+void Pinball_Message::getMAStoSLVTiltLamp(bool* t_onOrOff) {
+  *t_onOrOff = (m_RS485Buf[RS845_PAYLOAD_OFFSET] != 0);
+  return;
+}
+
+void Pinball_Message::sendMAStoSLVBell10K() {
   int recLen = 5;
   m_RS485Buf[RS485_LEN_OFFSET] = recLen;
   m_RS485Buf[RS485_FROM_OFFSET] = ARDUINO_MAS;
   m_RS485Buf[RS485_TO_OFFSET] = ARDUINO_SLV;
-  m_RS485Buf[RS485_TYPE_OFFSET] = RS485_TYPE_MAS_TO_SLV_NEW_GAME;
+  m_RS485Buf[RS485_TYPE_OFFSET] = RS485_TYPE_MAS_TO_SLV_BELL_10K;
   m_RS485Buf[recLen - 1] = calcChecksumCRC8(m_RS485Buf, recLen - 1);
   sendMessageRS485(m_RS485Buf);
   return;
 }
+
+void Pinball_Message::sendMAStoSLVBell100K() {
+  int recLen = 5;
+  m_RS485Buf[RS485_LEN_OFFSET] = recLen;
+  m_RS485Buf[RS485_FROM_OFFSET] = ARDUINO_MAS;
+  m_RS485Buf[RS485_TO_OFFSET] = ARDUINO_SLV;
+  m_RS485Buf[RS485_TYPE_OFFSET] = RS485_TYPE_MAS_TO_SLV_BELL_100K;
+  m_RS485Buf[recLen - 1] = calcChecksumCRC8(m_RS485Buf, recLen - 1);
+  sendMessageRS485(m_RS485Buf);
+  return;
+}
+
+void Pinball_Message::sendMAStoSLVBellSelect() {
+  int recLen = 5;
+  m_RS485Buf[RS485_LEN_OFFSET] = recLen;
+  m_RS485Buf[RS485_FROM_OFFSET] = ARDUINO_MAS;
+  m_RS485Buf[RS485_TO_OFFSET] = ARDUINO_SLV;
+  m_RS485Buf[RS485_TYPE_OFFSET] = RS485_TYPE_MAS_TO_SLV_BELL_SELECT;
+  m_RS485Buf[recLen - 1] = calcChecksumCRC8(m_RS485Buf, recLen - 1);
+  sendMessageRS485(m_RS485Buf);
+  return;
+}
+
+void Pinball_Message::sendMAStoSLV10KUnitPulse() {
+  int recLen = 5;
+  m_RS485Buf[RS485_LEN_OFFSET] = recLen;
+  m_RS485Buf[RS485_FROM_OFFSET] = ARDUINO_MAS;
+  m_RS485Buf[RS485_TO_OFFSET] = ARDUINO_SLV;
+  m_RS485Buf[RS485_TYPE_OFFSET] = RS485_TYPE_MAS_TO_SLV_10K_UNIT;
+  m_RS485Buf[recLen - 1] = calcChecksumCRC8(m_RS485Buf, recLen - 1);
+  sendMessageRS485(m_RS485Buf);
+  return;
+}
+
 
 void Pinball_Message::sendMAStoSLVCreditStatusQuery() {
   int recLen = 5;
@@ -226,50 +292,6 @@ void Pinball_Message::getMAStoSLVScoreDec(int* t_decrementIn10Ks) {
   return;
 }
 
-void Pinball_Message::sendMAStoSLVBell10K() {
-  int recLen = 5;
-  m_RS485Buf[RS485_LEN_OFFSET] = recLen;
-  m_RS485Buf[RS485_FROM_OFFSET] = ARDUINO_MAS;
-  m_RS485Buf[RS485_TO_OFFSET] = ARDUINO_SLV;
-  m_RS485Buf[RS485_TYPE_OFFSET] = RS485_TYPE_MAS_TO_SLV_BELL_10K;
-  m_RS485Buf[recLen - 1] = calcChecksumCRC8(m_RS485Buf, recLen - 1);
-  sendMessageRS485(m_RS485Buf);
-  return;
-}
-
-void Pinball_Message::sendMAStoSLVBell100K() {
-  int recLen = 5;
-  m_RS485Buf[RS485_LEN_OFFSET] = recLen;
-  m_RS485Buf[RS485_FROM_OFFSET] = ARDUINO_MAS;
-  m_RS485Buf[RS485_TO_OFFSET] = ARDUINO_SLV;
-  m_RS485Buf[RS485_TYPE_OFFSET] = RS485_TYPE_MAS_TO_SLV_BELL_100K;
-  m_RS485Buf[recLen - 1] = calcChecksumCRC8(m_RS485Buf, recLen - 1);
-  sendMessageRS485(m_RS485Buf);
-  return;
-}
-
-void Pinball_Message::sendMAStoSLVBellSelect() {
-  int recLen = 5;
-  m_RS485Buf[RS485_LEN_OFFSET] = recLen;
-  m_RS485Buf[RS485_FROM_OFFSET] = ARDUINO_MAS;
-  m_RS485Buf[RS485_TO_OFFSET] = ARDUINO_SLV;
-  m_RS485Buf[RS485_TYPE_OFFSET] = RS485_TYPE_MAS_TO_SLV_BELL_SELECT;
-  m_RS485Buf[recLen - 1] = calcChecksumCRC8(m_RS485Buf, recLen - 1);
-  sendMessageRS485(m_RS485Buf);
-  return;
-}
-
-void Pinball_Message::sendMAStoSLV10KUnitPulse() {
-  int recLen = 5;
-  m_RS485Buf[RS485_LEN_OFFSET] = recLen;
-  m_RS485Buf[RS485_FROM_OFFSET] = ARDUINO_MAS;
-  m_RS485Buf[RS485_TO_OFFSET] = ARDUINO_SLV;
-  m_RS485Buf[RS485_TYPE_OFFSET] = RS485_TYPE_MAS_TO_SLV_10K_UNIT;
-  m_RS485Buf[recLen - 1] = calcChecksumCRC8(m_RS485Buf, recLen - 1);
-  sendMessageRS485(m_RS485Buf);
-  return;
-}
-
 void Pinball_Message::sendMAStoSLVScoreQuery() {
   int recLen = 5;
   m_RS485Buf[RS485_LEN_OFFSET] = recLen;
@@ -299,40 +321,6 @@ void Pinball_Message::getSLVtoMASScoreReport(byte* t_10K, byte* t_100K, byte* t_
   *t_10K = m_RS485Buf[RS845_PAYLOAD_OFFSET];
   *t_100K = m_RS485Buf[RS845_PAYLOAD_OFFSET + 1];
   *t_million = m_RS485Buf[RS845_PAYLOAD_OFFSET + 2];
-  return;
-}
-
-void Pinball_Message::sendMAStoSLVGILamp(const bool t_onOrOff) {
-  int recLen = 6;
-  m_RS485Buf[RS485_LEN_OFFSET] = recLen;
-  m_RS485Buf[RS485_FROM_OFFSET] = ARDUINO_MAS;
-  m_RS485Buf[RS485_TO_OFFSET] = ARDUINO_SLV;
-  m_RS485Buf[RS485_TYPE_OFFSET] = RS485_TYPE_MAS_TO_SLV_GI_LAMP;
-  m_RS485Buf[RS845_PAYLOAD_OFFSET] = t_onOrOff ? 1 : 0;
-  m_RS485Buf[recLen - 1] = calcChecksumCRC8(m_RS485Buf, recLen - 1);
-  sendMessageRS485(m_RS485Buf);
-  return;
-}
-
-void Pinball_Message::getMAStoSLVGILamp(bool* t_onOrOff) {
-  *t_onOrOff = (m_RS485Buf[RS845_PAYLOAD_OFFSET] != 0);
-  return;
-}
-
-void Pinball_Message::sendMAStoSLVTiltLamp(const bool t_onOrOff) {
-  int recLen = 6;
-  m_RS485Buf[RS485_LEN_OFFSET] = recLen;
-  m_RS485Buf[RS485_FROM_OFFSET] = ARDUINO_MAS;
-  m_RS485Buf[RS485_TO_OFFSET] = ARDUINO_SLV;
-  m_RS485Buf[RS485_TYPE_OFFSET] = RS485_TYPE_MAS_TO_SLV_TILT_LAMP;
-  m_RS485Buf[RS845_PAYLOAD_OFFSET] = t_onOrOff ? 1 : 0;
-  m_RS485Buf[recLen - 1] = calcChecksumCRC8(m_RS485Buf, recLen - 1);
-  sendMessageRS485(m_RS485Buf);
-  return;
-}
-
-void Pinball_Message::getMAStoSLVTiltLamp(bool* t_onOrOff) {
-  *t_onOrOff = (m_RS485Buf[RS845_PAYLOAD_OFFSET] != 0);
   return;
 }
 

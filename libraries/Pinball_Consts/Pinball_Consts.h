@@ -1,4 +1,4 @@
-// PINBALL_CONSTS.H Rev: 11/16/25.
+// PINBALL_CONSTS.H Rev: 11/19/25.
 
 #ifndef PINBALL_CONSTS_H
 #define PINBALL_CONSTS_H
@@ -22,17 +22,14 @@ const byte ARDUINO_MAS =  1;              // Master Arduino (Main controller)
 const byte ARDUINO_SLV =  2;              // Slave Arduino
 const byte ARDUINO_ALL = 99;              // Master broadcasting to all i.e. mode change
 
-// *** OPERATING MODES AND STATES:
+// *** OPERATING MODES:
 const byte MODE_UNDEFINED  = 0;
-const byte MODE_DIAGNOSTIC = 1;           // Diagnostics (Default mode until a game is started)
-const byte MODE_ORIGINAL   = 2;           // Plays as original but with normal flippers (not impulse.)
-const byte MODE_ENHANCED   = 3;           // Randy's Screamo rules
-const byte MODE_IMPULSE    = 4;           // Plays as original with impulse flippers
-
-const byte STATE_UNDEFINED = 0;
-const byte STATE_GAME_OVER = 1;           // Attract mode
-const byte STATE_PLAYING   = 2;
-const byte STATE_TILT      = 3;
+const byte MODE_TILT       = 1;           // Tilt mode (all coils off, GI off, lamps off except tilt lamp)
+const byte MODE_GAME_OVER  = 2;           // Game Over = Attract mode (GI on, lamps on, coils off)
+const byte MODE_DIAGNOSTIC = 3;           // Diagnostics (Default mode until a game is started)
+const byte MODE_ORIGINAL   = 4;           // Playing as original but with normal flippers (not impulse.)
+const byte MODE_ENHANCED   = 5;           // Playing with Randy's Screamo rules
+const byte MODE_IMPULSE    = 6;           // Playing as original with impulse flippers
 
 const byte LCD_WIDTH      = 20;  // 2004 (20 char by 4 lines) LCD display
 
@@ -58,24 +55,24 @@ const byte RS845_PAYLOAD_OFFSET =  4;        // fifth byte of message is the fir
 
 // Here is a list of all RS485 message types (the 1-byte TYPE field):
 const byte RS485_TYPE_NO_MESSAGE               =  0;  // No message
-const byte RS485_TYPE_MAS_TO_SLV_MODE_STATE    =  1;  // Mode and/or State change
-const byte RS485_TYPE_MAS_TO_SLV_NEW_GAME      =  2;  // Start a new game (tilt off, GI on, revert score zero; does not deduct credit)
-const byte RS485_TYPE_MAS_TO_SLV_CREDIT_STATUS =  3;  // Request if credits > zero
-const byte RS485_TYPE_SLV_TO_MAS_CREDIT_STATUS =  4;  // Slave response to credit status request: credits zero or > zero
-const byte RS485_TYPE_MAS_TO_SLV_CREDIT_INC    =  5;  // Credit increment
-const byte RS485_TYPE_MAS_TO_SLV_CREDIT_DEC    =  6;  // Credit decrement (will not return error even if credits already zero)
-const byte RS485_TYPE_MAS_TO_SLV_SCORE_RESET   =  7;  // Reset score to zero
-const byte RS485_TYPE_MAS_TO_SLV_SCORE_ABS     =  8;  // Absolute score update (0.999 in 10,000s)
-const byte RS485_TYPE_MAS_TO_SLV_SCORE_INC     =  9;  // Increment score update (1..999in 10,000s)
-const byte RS485_TYPE_MAS_TO_SLV_SCORE_DEC     = 10;  // Decrement score update (-999..-1 in 10,000s) (won't go below zero)
-const byte RS485_TYPE_MAS_TO_SLV_BELL_10K      = 11;  // Ring the 10K bell
-const byte RS485_TYPE_MAS_TO_SLV_BELL_100K     = 12;  // Ring the 100K bell
-const byte RS485_TYPE_MAS_TO_SLV_BELL_SELECT   = 13;  // Ring the Select bell
-const byte RS485_TYPE_MAS_TO_SLV_10K_UNIT      = 14;  // Pulse the 10K Unit coil (for testing)
-const byte RS485_TYPE_MAS_TO_SLV_SCORE_QUERY   = 15;  // Master requesting current score displayed by Slave (in 10,000s)
-const byte RS485_TYPE_SLV_TO_MAS_SCORE_REPORT  = 16;  // Slave reporting current score (in 10,000s)
-const byte RS485_TYPE_MAS_TO_SLV_GI_LAMP       = 17;  // Master command to turn G.I. lamps on or off
-const byte RS485_TYPE_MAS_TO_SLV_TILT_LAMP     = 18;  // Master command to turn Tilt lamp on or off
+const byte RS485_TYPE_MAS_TO_SLV_MODE          =  1;  // Mode change.
+// MODE_ORIGINAL/ENHANCED/IMPULSE starts new game; tilt off, GI on, revert score, but does not deduct a credit.
+const byte RS485_TYPE_MAS_TO_SLV_CREDIT_STATUS =  2;  // Request if credits > zero
+const byte RS485_TYPE_SLV_TO_MAS_CREDIT_STATUS =  3;  // Slave response to credit status request: credits zero or > zero
+const byte RS485_TYPE_MAS_TO_SLV_CREDIT_INC    =  4;  // Credit increment
+const byte RS485_TYPE_MAS_TO_SLV_CREDIT_DEC    =  5;  // Credit decrement (will not return error even if credits already zero)
+const byte RS485_TYPE_MAS_TO_SLV_SCORE_RESET   =  6;  // Reset score to zero
+const byte RS485_TYPE_MAS_TO_SLV_SCORE_ABS     =  7;  // Absolute score update (0.999 in 10,000s)
+const byte RS485_TYPE_MAS_TO_SLV_SCORE_INC     =  8;  // Increment score update (1..999in 10,000s)
+const byte RS485_TYPE_MAS_TO_SLV_SCORE_DEC     =  9;  // Decrement score update (-999..-1 in 10,000s) (won't go below zero)
+const byte RS485_TYPE_MAS_TO_SLV_BELL_10K      = 10;  // Ring the 10K bell
+const byte RS485_TYPE_MAS_TO_SLV_BELL_100K     = 11;  // Ring the 100K bell
+const byte RS485_TYPE_MAS_TO_SLV_BELL_SELECT   = 12;  // Ring the Select bell
+const byte RS485_TYPE_MAS_TO_SLV_10K_UNIT      = 13;  // Pulse the 10K Unit coil (for testing)
+const byte RS485_TYPE_MAS_TO_SLV_SCORE_QUERY   = 14;  // Master requesting current score displayed by Slave (in 10,000s)
+const byte RS485_TYPE_SLV_TO_MAS_SCORE_REPORT  = 15;  // Slave reporting current score (in 10,000s)
+const byte RS485_TYPE_MAS_TO_SLV_GI_LAMP       = 16;  // Master command to turn G.I. lamps on or off
+const byte RS485_TYPE_MAS_TO_SLV_TILT_LAMP     = 17;  // Master command to turn Tilt lamp on or off
 
 // NOTE REGARDING DIAGNOSTIC MODE:
 //   For LAMP TEST, in addition to G.I. and Tilt on/off, Master can send SCORE_ABS messages that will cycle through all

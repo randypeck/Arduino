@@ -1,4 +1,4 @@
-// Screamo_Master.INO Rev: 11/15/25
+// Screamo_Master.INO Rev: 11/17/25
 // 11/12/25: Moved Right Kickout from pin 13 to pin 44 to avoid MOSFET firing twice on power-up.  Don't use MOSFET on pin 13.
 // Centipede #1 (0..63) is LAMP OUTPUTS
 // Centipede #2 (64..127) is SWITCH INPUTS
@@ -326,7 +326,6 @@ Tsunami* pTsunami = nullptr;  // Tsunami WAV player object pointer
 
 // *** MISC CONSTANTS AND GLOBALS ***
 byte         modeCurrent      = MODE_UNDEFINED;
-byte         stateCurrent     = STATE_UNDEFINED;
 char         msgType          = ' ';
 
 int currentScore = 0; // Current game score (0..999).
@@ -407,6 +406,7 @@ void setup() {
   pTsunami->start();         // Start Tsunami WAV player
 
 
+/*
   // Let's send some test messages to the Slave Arduino in the head.
   delay(2000);
 
@@ -461,7 +461,7 @@ void setup() {
   }
   pLCD2004->println("Setup complete.");
 
-
+*/
 
   // Here is some code to test the Tsunami WAV player by playing a sound...
   // Call example: playTsunamiSound(1);
@@ -584,7 +584,7 @@ while (true) {
     // Fast read all 64 Centipede #2 inputs (16 bits at a time) into switchNewState[] before checking any switches.
     // This is much faster (2-3ms) than calling digitalRead() for each switch individually (~30ms total).
     for (int i = 0; i < 4; i++) {
-      switchNewState[i] = pShiftRegister->portRead(i + 4);  // read ports 4..7 which map to Centipede #2 inputs
+      switchNewState[i] = pShiftRegister->portRead(4 + i);  // read ports 4..7 which map to Centipede #2 inputs
     }
 
     // Check flipper buttons
