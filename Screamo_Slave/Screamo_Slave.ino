@@ -1,4 +1,13 @@
-// Screamo_Slave.INO Rev: 11/19/25
+// Screamo_Slave.INO Rev: 11/20/25
+
+
+
+// NEEDS NEW CODE:
+//   When player scores 100K or 500K, we maybe need a new function for increments of 100K rather than increments of 10K,
+//   because we don't want to increment the 10K unit ten times to get to 100K; just the 100K unit once (or five times.)
+
+// ALSO need to test the final messages: score inquiry from MAS to SLV, and score report from SLV to MAS.
+
 // Need code to save and recall previous score when machine was turned off or last game ended, so we can display it on power-up.
 //   Maybe automatically save current score every x times through the 10ms loop; i.e. every 15 or 30 seconds.  Or just at game-over.
 //   Maybe save to EEPROM every time the score changes, but that could wear out the EEPROM
@@ -7,12 +16,30 @@
 #include <Arduino.h>
 #include <Pinball_Consts.h>
 #include <Pinball_Functions.h>
+#ifndef SCREMO_SLAVE_TICK_MS
+#define SCREMO_SLAVE_TICK_MS 10  // One scheduler tick == 10ms
+#endif
+static_assert(SCREMO_SLAVE_TICK_MS == 10, "Scheduler tick changed: update timeOn semantics.");
 
+// OPTIONAL: helper (leave unused if not needed; remove if size sensitive)
+static inline unsigned ticksToMs(byte ticks) { return (unsigned)ticks * SCREMO_SLAVE_TICK_MS; }
+
+
+
+
+
+// (Optional) When activating a device, you can temporarily log pulse length for verification.
+// Insert inside activateDevice() right after analogWrite(...):
+    /*
+    // DEBUG (uncomment to verify audible pulse duration)
+    snprintf(lcdString, sizeof(lcdString), "DEV %u pulse %ums", (unsigned)t_devIdx, (unsigned)ticksToMs(deviceParm[t_devIdx].timeOn));
+    // if (pLCD2004) pLCD2004->println(lcdString);
+    */
 #include <EEPROM.h>               // For saving and recalling score, to persist between power cycles.
 const int EEPROM_ADDR_SCORE = 0;  // Address to store 16-bit score (uses addr 0 and 1)
 
 const byte THIS_MODULE = ARDUINO_SLV;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "SLAVE 11/19/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "SLAVE 11/20/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which effectively makes it a global.
 // No need to pass lcdString[] to any functions that use it!
 
@@ -32,7 +59,7 @@ Pinball_Centipede* pShiftRegister = nullptr;  // Only need ONE object for one or
 struct deviceParmStruct {
   byte   pinNum;        // Arduino pin number for this coil/motor
   byte   powerInitial;  // 0..255 PWM power level when first energized
-  byte   timeOn;        // Number of 10ms loop ticks to hold initial power before changing to hold level or turning off
+  byte   timeOn;        // Number of 10ms loop ticks (NOT raw ms). 4 => ~40ms.
   byte   powerHold;     // 0..255 PWM power level to hold after initial timeOn; 0 = turn off after timeOn
   int8_t countdown;     // Current countdown in 10ms ticks; -1..-8 = rest period, 0 = idle, >0 = active
   byte   queueCount;    // Number of pending activation requests while coil busy/resting
@@ -60,14 +87,14 @@ const byte NUM_DEVS = 8;
 //   queueCount: number of pending activation requests while coil busy/resting
 //   I.e.: analogWrite(deviceParm[DEV_IDX_CREDIT_UP].pinNum, deviceParm[DEV_IDX_CREDIT_UP].powerInitial);
 deviceParmStruct deviceParm[NUM_DEVS] = {
-  {  5, 170, 4, 0, 0, 0 },  // CREDIT UP. 120 confirmed min power to work reliably; 30ms works but we'll match 40 needed by 10K bell coil.
-  {  6, 200, 3, 0, 0, 0 },  // CREDIT DOWN.  150 confirmed min power to work reliably; 160ms confirmed is bare minimum time to work reliably.  140 no good.
-  {  7, 160, 4, 0, 0, 0 },  // 10K UP  (~40ms)
-  {  8, 140, 3, 0, 0, 0 },  // 10K BELL(~30ms)
-  {  9, 120, 3, 0, 0, 0 },  // 100K BELL(~30ms)
-  { 10, 120, 3, 0, 0, 0 },  // SELECT BELL
-  { 11,  40, 0, 0, 0, 0 },  // LAMP SCORE.  PWM MOSFET.  Initial brightness for LED Score lamps (0..255)  40 is full bright @ 12vdc.
-  { 12,  40, 0, 0, 0, 0 }   // LAMP HEAD G.I./TILT.  PWM MOSFET.  Initial brightness for LED G.I. and Tilt lamps (0..255)
+  {  5, 120, 10, 0, 0, 0 },  // CREDIT UP.
+  {  6, 150, 10, 0, 0, 0 },  // CREDIT DOWN.
+  {  7, 160, 10, 0, 0, 0 },  // 10K UP
+  {  8, 140, 10, 0, 0, 0 },  // 10K BELL
+  {  9, 120, 10, 0, 0, 0 },  // 100K BELL
+  { 10, 120, 10, 0, 0, 0 },  // SELECT BELL
+  { 11,  40,  0, 0, 0, 0 },  // LAMP SCORE.  PWM MOSFET.  Initial brightness for LED Score lamps (0..255)  40 is full bright @ 12vdc.
+  { 12,  40,  0, 0, 0, 0 }   // LAMP HEAD G.I./TILT.  PWM MOSFET.  Initial brightness for LED G.I. and Tilt lamps (0..255)
 };
 
 // *** MISC CONSTANTS AND GLOBALS ***
@@ -88,13 +115,19 @@ const unsigned SCORE_10K_STEP_MS   = 100;  // spacing between single 10K steps w
 const unsigned SCORE_BATCH_GAP_MS  = 500;  // spacing between batches of up to 5x10K
 const unsigned SCORE_100K_STEP_MS  = 120;  // spacing between successive 100K advances
 
-// ---------------- Non-blocking score-adjust state (global) ----------------
-// Phases: 0=idle, 1=single (alignment) 10K steps, 2=bulk 100K jumps, 3=batched 10K (groups of up to 5), 4=batch gap.
-static int scoreAdjustDir              = 0;  // +1 or -1 toward targetScore
-static int scoreAdjustPhase            = 0;  // current phase (see above)
-static int scoreAdjustBatchRemaining   = 0;  // remaining 10K steps in current batch (phase 3)
-static unsigned long scoreAdjustLastMs = 0;  // timestamp of last mechanical action
+// ---------------- Simplified non-blocking score-adjust state (globals) ----------------
+// Phases removed; we now do single-step pacing only.
+static bool scoreAdjustActive    = false;    // true while adjustments in progress
+static unsigned long scoreAdjustLastMs = 0;  // timestamp of last attempted mechanical step
 
+// Add command queue (FIFO) for sequential execution:
+static int  scoreCmdQueue[8];          // up to 8 pending commands
+static byte scoreCmdHead = 0;          // dequeue index
+static byte scoreCmdTail = 0;          // enqueue index
+static int  activeDeltaRemaining = 0;  // steps (10K units) left in current command
+static int  activeDirection      = 0;  // +1 or -1 for current command
+
+/*
 // Forward declarations
 void requestScoreAdjust(int delta10Ks);
 void processScoreAdjust();
@@ -110,6 +143,7 @@ void saveScoreToEEPROM(int t_score);
 bool hasCredits();
 void startNewGame(byte t_mode);
 void displayScore(int t_score);
+*/
 
 // *****************************************************************************************
 // **************************************  S E T U P  **************************************
@@ -146,9 +180,6 @@ void setup() {
   setGILamp(true);
   setGITiltLampBrightness(deviceParm[DEV_IDX_LAMP_HEAD_GI_TILT].powerInitial);  // Ready to turn on as soon as relay contacts close.
   setTiltLamp(false);
-  // Display previously saved score from EEPROM
-  currentScore = recallScoreFromEEPROM();
-  targetScore  = currentScore;  // initialize target
 
   // *** INITIALIZE LCD CLASS AND OBJECT *** (Heap uses 98 bytes)
   // Insert a delay() in order to give the Digole 2004 LCD time to power up and be ready to receive commands (esp. the 115K speed command).
@@ -157,7 +188,12 @@ void setup() {
   pLCD2004 = new Pinball_LCD(&Serial1, SERIAL1_SPEED);  // Instantiate the object and assign the global pointer.
   pLCD2004->begin();  // 20-char x 4-line LCD display via Serial 1.
   pLCD2004->println(lcdString);  // Display app version, defined above.
-  Serial.println(lcdString);
+
+  // Display previously saved score from EEPROM
+  currentScore = recallScoreFromEEPROM();
+  sprintf(lcdString, "Recall score %d", currentScore); pLCD2004->println(lcdString);
+  displayScore(currentScore);
+  targetScore  = currentScore;  // initialize target
 
 }  // End of setup()
 
@@ -211,17 +247,18 @@ void setPWMFrequencies() {
 bool canActivateDeviceNow(byte t_devIdx) {
   // Return true if it's safe to start energizing device t_devIdx right now.
   if (t_devIdx == DEV_IDX_CREDIT_UP) {
-    // Prevent firing if credit wheel is full (protect mechanism)
-    if (digitalRead(PIN_IN_SWITCH_CREDIT_FULL) == LOW) {
-      return false; // full -> cannot activate
+    // Prevent firing if credit full (protect mechanism)
+    if (digitalRead(PIN_IN_SWITCH_CREDIT_FULL) == HIGH) {
+      // Full -> block to protect mechanism
+      return false;
     }
   } else if (t_devIdx == DEV_IDX_CREDIT_DOWN) {
     // Prevent firing if no credits available (protect mechanism)
     if (!hasCredits()) {
-      return false; // no credits -> cannot activate
+      // Empty -> block to protect mechanism
+      return false;
     }
   }
-  // Add other device-specific guards if needed
   return true;
 }
 
@@ -283,6 +320,11 @@ void processMessage(byte t_msgType) {
         snprintf(lcdString, sizeof(lcdString), "Credit inc %u", (unsigned)numCredits);
         pLCD2004->println(lcdString);
         // Queue activations (activateDevice() will handle busy/rest/full logic)
+        int swFull = digitalRead(PIN_IN_SWITCH_CREDIT_FULL);
+        int swEmpty = digitalRead(PIN_IN_SWITCH_CREDIT_EMPTY);
+        // Show switch states once per message for troubleshooting.
+        snprintf(lcdString, sizeof(lcdString), "Sw FULL=%d EMPTY=%d", swFull, swEmpty);
+        pLCD2004->println(lcdString);
         for (unsigned i = 0; i < numCredits; ++i) {
           activateDevice(DEV_IDX_CREDIT_UP);
         }
@@ -297,12 +339,16 @@ void processMessage(byte t_msgType) {
       }
       break;
 
+    // UPDATE Score reset and absolute handlers (inside processMessage switch):
     case RS485_TYPE_MAS_TO_SLV_SCORE_RESET:
       pLCD2004->println("Score reset");
       currentScore = 0;
-      targetScore  = 0;              // NEW: keep target in sync
-      scoreAdjustPhase = 0;
-      scoreAdjustBatchRemaining = 0;
+      targetScore  = 0;
+      // Flush score command queue
+      scoreCmdHead = scoreCmdTail = 0;
+      scoreAdjustActive = false;
+      activeDeltaRemaining = 0;
+      activeDirection = 0;
       displayScore(currentScore);
       saveScoreToEEPROM(currentScore);
       break;
@@ -314,9 +360,12 @@ void processMessage(byte t_msgType) {
         int newScore = (int)millions * 100 + (int)hundredK * 10 + (int)tensK;
         newScore = constrain(newScore, 0, 999);
         currentScore = newScore;
-        targetScore  = newScore;     // NEW: synchronize target with absolute set
-        scoreAdjustPhase = 0;
-        scoreAdjustBatchRemaining = 0;
+        targetScore  = newScore;
+        // Flush any pending commands
+        scoreCmdHead = scoreCmdTail = 0;
+        scoreAdjustActive = false;
+        activeDeltaRemaining = 0;
+        activeDirection = 0;
         snprintf(lcdString, sizeof(lcdString), "Score set %u", (unsigned)currentScore);
         pLCD2004->println(lcdString);
         displayScore(currentScore);
@@ -474,186 +523,94 @@ void updateDeviceTimers() {
 // Existing comments about mechanical behavior elsewhere remain valid.
 void requestScoreAdjust(int delta10Ks) {
   if (delta10Ks == 0) return;
-  targetScore += delta10Ks;              // NEW: accumulate relative to prior target
+  // Clamp individual command magnitude
+  if (delta10Ks > 999)  delta10Ks = 999;
+  if (delta10Ks < -999) delta10Ks = -999;
+
+  // Compute prospective final targetScore (for external reporting if needed)
+  // We keep targetScore as "final after queue drains".
+  targetScore += delta10Ks;
   if (targetScore < 0)   targetScore = 0;
   if (targetScore > 999) targetScore = 999;
 
-  // Start state machine if idle
-  if (scoreAdjustPhase == 0 && targetScore != currentScore) {
-    scoreAdjustDir            = (targetScore > currentScore) ? 1 : -1;
-    scoreAdjustPhase          = 1;   // begin with alignment single steps
-    scoreAdjustBatchRemaining = 0;
-    scoreAdjustLastMs         = millis() - SCORE_10K_STEP_MS; // allow immediate first step
+  // Enqueue (drop if full)
+  byte nextTail = (byte)((scoreCmdTail + 1) % (sizeof(scoreCmdQueue) / sizeof(scoreCmdQueue[0])));
+  if (nextTail == scoreCmdHead) {
+    snprintf(lcdString, sizeof(lcdString), "Score Q FULL drop %d", delta10Ks);
+    pLCD2004->println(lcdString);
+    return;
   }
-  // If already running and direction changed mid-flight, restart alignment phase
-  else if (scoreAdjustPhase != 0) {
-    int dir = (targetScore > currentScore) ? 1 : -1;
-    if (dir != scoreAdjustDir) {
-      scoreAdjustDir            = dir;
-      scoreAdjustPhase          = 1;
-      scoreAdjustBatchRemaining = 0;
-      scoreAdjustLastMs         = millis() - SCORE_10K_STEP_MS;
-    }
+  scoreCmdQueue[scoreCmdTail] = delta10Ks;
+  scoreCmdTail = nextTail;
+
+  // If idle, start immediately
+  if (!scoreAdjustActive) {
+    int cmd = scoreCmdQueue[scoreCmdHead];
+    scoreCmdHead = (byte)((scoreCmdHead + 1) % (sizeof(scoreCmdQueue) / sizeof(scoreCmdQueue[0])));
+    activeDirection      = (cmd > 0) ? 1 : -1;
+    activeDeltaRemaining = abs(cmd);
+    scoreAdjustActive    = true;
+    scoreAdjustLastMs    = millis() - SCORE_10K_STEP_MS; // allow immediate first step
   }
 }
 
-// Persist score when adjust sequence completes; leave bell logic elsewhere untouched.
 static void scoreAdjustFinishIfDone() {
-  if (currentScore == targetScore) {
+  // Called when current command completed
+  if (activeDeltaRemaining == 0) {
+    // Load next command if present
+    if (scoreCmdHead != scoreCmdTail) {
+      int cmd = scoreCmdQueue[scoreCmdHead];
+      scoreCmdHead = (byte)((scoreCmdHead + 1) % (sizeof(scoreCmdQueue) / sizeof(scoreCmdQueue[0])));
+      activeDirection      = (cmd > 0) ? 1 : -1;
+      activeDeltaRemaining = abs(cmd);
+      scoreAdjustLastMs    = millis() - SCORE_10K_STEP_MS;
+      return;
+    }
+    // Queue empty -> finalize
+    scoreAdjustActive = false;
+    activeDirection   = 0;
     saveScoreToEEPROM(currentScore);
     snprintf(lcdString, sizeof(lcdString), "Score now %u", (unsigned)currentScore);
     pLCD2004->println(lcdString);
     Serial.println(lcdString);
-    scoreAdjustPhase = 0;
   }
 }
 
-// Call every 10ms tick after updateDeviceTimers(). Non-blocking mechanical score stepping.
 void processScoreAdjust() {
-  if (scoreAdjustPhase == 0) return;
+  if (!scoreAdjustActive) return;
+  if (activeDeltaRemaining == 0) { scoreAdjustFinishIfDone(); return; }
 
   unsigned long now = millis();
-  int diff = targetScore - currentScore;
-  if (diff == 0) { scoreAdjustFinishIfDone(); return; }
+  if (now - scoreAdjustLastMs < SCORE_10K_STEP_MS) return; // pacing
+  scoreAdjustLastMs = now;
 
-  int remaining = abs(diff);
-  int dir       = (diff > 0) ? 1 : -1;
-  bool aligned100K = (currentScore % 10) == 0;
+  // Require 10K coil idle
+  if (deviceParm[DEV_IDX_10K_UP].countdown != 0) return;
 
-  // Direction change mid-flight (incoming decrements after increments or vice versa)
-  if (dir != scoreAdjustDir) {
-    scoreAdjustDir            = dir;
-    scoreAdjustPhase          = 1;
-    scoreAdjustBatchRemaining = 0;
-    scoreAdjustLastMs         = now - SCORE_10K_STEP_MS;
+  // Determine next logical score step
+  int nextScore = currentScore + activeDirection;
+  if (nextScore < 0) {
+    nextScore = 0;
+    activeDeltaRemaining = 0;  // cannot go further negative
+  } else if (nextScore > 999) {
+    nextScore = 999;
+    activeDeltaRemaining = 0;  // cannot go further positive
   }
 
-  // Auto-promote to 100K jump phase if conditions allow
-  if (aligned100K && remaining >= 10 && scoreAdjustPhase != 2) {
-    scoreAdjustPhase  = 2;
-    scoreAdjustLastMs = now - SCORE_100K_STEP_MS;
+  // Fire hardware only if we still have a step to apply
+  if (currentScore != nextScore) {
+    activateDevice(DEV_IDX_10K_UP);
+    activateDevice(DEV_IDX_10K_BELL);
+    if ((nextScore % 10) == 0) activateDevice(DEV_IDX_100K_BELL);
+    currentScore = nextScore;
+    displayScore(currentScore);
+    if (activeDeltaRemaining > 0) activeDeltaRemaining--;
+  } else {
+    // No movement possible; consume remaining to avoid deadlock
+    activeDeltaRemaining = 0;
   }
 
-  switch (scoreAdjustPhase) {
-
-    case 1: { // alignment single 10K steps until we can do 100K jumps or need batches
-      if (aligned100K && remaining >= 10) {
-        scoreAdjustPhase  = 2;
-        scoreAdjustLastMs = now - SCORE_100K_STEP_MS;
-        break;
-      }
-      if (now - scoreAdjustLastMs >= SCORE_10K_STEP_MS) {
-        int nextScore = currentScore + scoreAdjustDir;
-        if (nextScore < 0) nextScore = 0;
-        if (nextScore > 999) nextScore = 999;
-
-        // Always pulse 10K unit and ring 10K bell; ring 100K bell if crossing boundary.
-        activateDevice(DEV_IDX_10K_UP);
-        bool boundary = (nextScore % 10) == 0;
-        activateDevice(DEV_IDX_10K_BELL);
-        if (boundary) activateDevice(DEV_IDX_100K_BELL);
-
-        currentScore = nextScore;
-        displayScore(currentScore);
-        scoreAdjustLastMs = now;
-
-        int newRem = abs(targetScore - currentScore);
-        if (newRem == 0) {
-          scoreAdjustFinishIfDone();
-        } else if ((currentScore % 10) == 0 && newRem >= 10) {
-          scoreAdjustPhase  = 2;
-          scoreAdjustLastMs = now - SCORE_100K_STEP_MS;
-        } else if (newRem < 10) {
-          scoreAdjustPhase          = 3;
-          scoreAdjustBatchRemaining = 0;
-          scoreAdjustLastMs         = now - SCORE_10K_STEP_MS;
-        }
-      }
-    } break;
-
-    case 2: { // bulk 100K jumps (advance by 10 units of 10K)
-      if (!(aligned100K && remaining >= 10)) {
-        // Conditions changed (new target shrank or lost alignment)
-        scoreAdjustPhase          = (remaining < 10) ? 3 : 1;
-        scoreAdjustBatchRemaining = 0;
-        scoreAdjustLastMs         = now - SCORE_10K_STEP_MS;
-        break;
-      }
-      if (now - scoreAdjustLastMs >= SCORE_100K_STEP_MS) {
-        activateDevice(DEV_IDX_100K_BELL);
-        activateDevice(DEV_IDX_10K_UP); // sound substitute for missing physical 100K unit coil
-        currentScore += (scoreAdjustDir > 0) ? 10 : -10;
-        if (currentScore < 0) currentScore = 0;
-        if (currentScore > 999) currentScore = 999;
-        displayScore(currentScore);
-        scoreAdjustLastMs = now;
-
-        int newRem = abs(targetScore - currentScore);
-        bool aligned2 = (currentScore % 10) == 0;
-        if (newRem == 0) {
-          scoreAdjustFinishIfDone();
-        } else if (!(aligned2 && newRem >= 10)) {
-          scoreAdjustPhase          = (newRem < 10) ? 3 : 1;
-          scoreAdjustBatchRemaining = 0;
-          scoreAdjustLastMs         = now - SCORE_10K_STEP_MS;
-        }
-      }
-    } break;
-
-    case 3: { // batched remaining 10K steps (up to 5 then gap)
-      if (remaining == 0) { scoreAdjustFinishIfDone(); break; }
-      if (aligned100K && remaining >= 10) {
-        scoreAdjustPhase  = 2;
-        scoreAdjustLastMs = now - SCORE_100K_STEP_MS;
-        break;
-      }
-      if (scoreAdjustBatchRemaining == 0) {
-        scoreAdjustBatchRemaining = (remaining > 5) ? 5 : remaining;
-        scoreAdjustLastMs         = now - SCORE_10K_STEP_MS;
-      }
-      if (now - scoreAdjustLastMs >= SCORE_10K_STEP_MS) {
-        int nextScore = currentScore + scoreAdjustDir;
-        if (nextScore < 0) nextScore = 0;
-        if (nextScore > 999) nextScore = 999;
-
-        activateDevice(DEV_IDX_10K_UP);
-        bool boundary = (nextScore % 10) == 0;
-        activateDevice(DEV_IDX_10K_BELL);
-        if (boundary) activateDevice(DEV_IDX_100K_BELL);
-
-        currentScore = nextScore;
-        displayScore(currentScore);
-        scoreAdjustBatchRemaining--;
-        scoreAdjustLastMs = now;
-
-        int newRem = abs(targetScore - currentScore);
-        if (newRem == 0) {
-          scoreAdjustFinishIfDone();
-        } else if (scoreAdjustBatchRemaining == 0) {
-          scoreAdjustPhase  = 4;
-          scoreAdjustLastMs = now;
-        }
-      }
-    } break;
-
-    case 4: { // inter-batch gap
-      if (remaining == 0) { scoreAdjustFinishIfDone(); break; }
-      if (aligned100K && remaining >= 10) {
-        scoreAdjustPhase  = 2;
-        scoreAdjustLastMs = now - SCORE_100K_STEP_MS;
-        break;
-      }
-      if (now - scoreAdjustLastMs >= SCORE_BATCH_GAP_MS) {
-        scoreAdjustPhase          = 3;
-        scoreAdjustBatchRemaining = 0;
-        scoreAdjustLastMs         = now - SCORE_10K_STEP_MS;
-      }
-    } break;
-
-    default:
-      scoreAdjustPhase = 0;
-      break;
-  }
+  if (activeDeltaRemaining == 0) scoreAdjustFinishIfDone();
 }
 // ====== END SCORE ADJUST BLOCK ======
 
@@ -682,7 +639,6 @@ int recallScoreFromEEPROM() {
   uint16_t s = 0;
   EEPROM.get(EEPROM_ADDR_SCORE, s);
   if (s > 999) s = 0;
-  sprintf(lcdString, "Recall score %d", s);  // (Optional: print after LCD init)
   return (int)s;
 }
 
@@ -708,15 +664,15 @@ bool hasCredits() {
 
 void startNewGame(byte t_mode) {  // Start a new game in the specified mode.
   modeCurrent = t_mode;
-  // Turn off Tilt lamp
   setTiltLamp(false);
-  // Turn on G.I. lamps
   setGILamp(true);
-  // Reset score to zero and cancel any pending non-blocking adjustments
   currentScore = 0;
   targetScore  = 0;
-  scoreAdjustPhase = 0;
-  scoreAdjustBatchRemaining = 0;
+  // Flush queue/state
+  scoreCmdHead = scoreCmdTail = 0;
+  scoreAdjustActive = false;
+  activeDeltaRemaining = 0;
+  activeDirection = 0;
   displayScore(currentScore);
   return;
 }

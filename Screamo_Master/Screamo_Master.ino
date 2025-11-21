@@ -1,4 +1,4 @@
-// Screamo_Master.INO Rev: 11/17/25
+// Screamo_Master.INO Rev: 11/20/25
 // 11/12/25: Moved Right Kickout from pin 13 to pin 44 to avoid MOSFET firing twice on power-up.  Don't use MOSFET on pin 13.
 // Centipede #1 (0..63) is LAMP OUTPUTS
 // Centipede #2 (64..127) is SWITCH INPUTS
@@ -12,7 +12,7 @@
 // const int EEPROM_ADDR_SCORE = 0;  // Address to store 16-bit score (uses addr 0 and 1)
 
 const byte THIS_MODULE = ARDUINO_MAS;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "MASTER 11/15/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "MASTER 11/20/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which effectively makes it a global.
 // No need to pass lcdString[] to any functions that use it!
 
@@ -406,41 +406,71 @@ void setup() {
   pTsunami->start();         // Start Tsunami WAV player
 
 
-/*
+
   // Let's send some test messages to the Slave Arduino in the head.
-  delay(2000);
+  // void sendMAStoSLVMode(const byte t_mode);                     // RS485_TYPE_MAS_TO_SLV_MODE
+  // void getMAStoSLVMode(byte* t_mode);                           // RS485_TYPE_MAS_TO_SLV_MODE
+
+  // void sendMAStoSLVScoreQuery();                                                            // RS485_TYPE_MAS_TO_SLV_SCORE_QUERY
+  // void sendSLVtoMASScoreReport(const byte t_10K, const byte t_100K, const byte t_million);  // RS485_TYPE_SLV_TO_MAS_SCORE_REPORT
+  // void getSLVtoMASScoreReport(byte* t_10K, byte* t_100K, byte* t_million);                  // RS485_TYPE_SLV_TO_MAS_SCORE_REPORT
 
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }  // Wait for right flipper button press to continue
-  pLCD2004->println("G.I. On");
-  pMessage->sendMAStoSLVGILamp(true);
-  delay(1000);
-  pLCD2004->println("10K Bell");
+  pMessage->sendMAStoSLVTiltLamp(true);
+  delay(500);
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLVGILamp(false);
+  delay(500);
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
   pMessage->sendMAStoSLVBell10K();
-  delay(1000);
-  pLCD2004->println("Wait 1...");
+  delay(500);
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
-  pLCD2004->println("100K Bell");
   pMessage->sendMAStoSLVBell100K();
-  delay(1000);
-  pLCD2004->println("Wait 2...");
+  delay(500);
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
-  pLCD2004->println("Select Bell");
   pMessage->sendMAStoSLVBellSelect();
-  delay(1000);
-  pLCD2004->println("Wait 3...");
+  delay(500);
+
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
-  pLCD2004->println("Add 3 credits");
+  pMessage->sendMAStoSLVBell10K();
+  pMessage->sendMAStoSLV10KUnitPulse();
+  delay(500);
+
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLVScoreReset();
+  delay(500);
+
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLVScoreAbs(1,2,3);  // 3,210,000
+  delay(500);
+
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLVScoreInc(20);     // 3,410,000
+  pMessage->sendMAStoSLVScoreInc(3);      // 3,440,000
+  pMessage->sendMAStoSLVScoreDec(12);     // 3,320,000
+
+  delay(500);
+
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  delay(500);
+
+
+
+
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
   pMessage->sendMAStoSLVCreditInc(3);
-  delay(1000);
-  pLCD2004->println("Wait 4...");
+  delay(2000);
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLVCreditDec();
+  pMessage->sendMAStoSLVCreditDec();
+  pMessage->sendMAStoSLVCreditDec();
+  pMessage->sendMAStoSLVCreditDec();
+  delay(500);
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
   pMessage->sendMAStoSLVCreditStatusQuery();
-//  delay(1000);
-
   while (true) {
     // See if there is an incoming message for us...
     byte msgType = pMessage->available();
-
     while (msgType != RS485_TYPE_NO_MESSAGE) {
       switch (msgType) {
         case RS485_TYPE_SLV_TO_MAS_CREDIT_STATUS:
@@ -449,7 +479,7 @@ void setup() {
             pMessage->getSLVtoMASCreditStatus(&creditsAvailable);
             sprintf(lcdString, "Credits: %s", creditsAvailable ? "YES" : "NO");
             pLCD2004->println(lcdString);
-        }
+          }
           break;
 
         default:
@@ -459,9 +489,11 @@ void setup() {
       msgType = pMessage->available();
     }
   }
+
+
   pLCD2004->println("Setup complete.");
 
-*/
+
 
   // Here is some code to test the Tsunami WAV player by playing a sound...
   // Call example: playTsunamiSound(1);

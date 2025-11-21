@@ -23,7 +23,7 @@ class Pinball_Message {
 
     // *** MESSAGES TO/FROM MASTER AND SLAVE ***
     // NOTE: Messages that don't have any parameters don't need a "get" function; the Message Type is the message
-    void sendMAStoSLVMode(const byte t_mode);                      // RS485_TYPE_MAS_TO_SLV_MODE
+    void sendMAStoSLVMode(const byte t_mode);                     // RS485_TYPE_MAS_TO_SLV_MODE
     void getMAStoSLVMode(byte* t_mode);                           // RS485_TYPE_MAS_TO_SLV_MODE
 
     void sendMAStoSLVGILamp(const bool t_onOrOff);                 // RS485_TYPE_MAS_TO_SLV_GI_LAMP
