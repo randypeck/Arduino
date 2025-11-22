@@ -1,7 +1,134 @@
-// Screamo_Master.INO Rev: 11/20/25
+// Screamo_Master.INO Rev: 11/21/25
 // 11/12/25: Moved Right Kickout from pin 13 to pin 44 to avoid MOSFET firing twice on power-up.  Don't use MOSFET on pin 13.
 // Centipede #1 (0..63) is LAMP OUTPUTS
 // Centipede #2 (64..127) is SWITCH INPUTS
+
+// EXPLANATION OF BEHAVIOR OF SCREAMO:
+// DEVICES IN HEAD (controlled by Slave Arduino and/or RS-485 messages from Master Arduino):
+//   COILS and LAMP POWER are controlled by Slave Arduino via MOSFETs using Arduino Mega PWM pins for variable power and timing.
+//     CREDIT UNIT STEP-UP COIL MOSFET (DEV_IDX_CREDIT_UP): Each pulse steps up (adds) one credit.
+//     CREDIT UNIT STEP-DOWN COIL MOSFET (DEV_IDX_CREDIT_DOWN): Each pulse steps down (removes) one credit.
+//     10K UNIT STEP-UP COIL MOSFET (DEV_IDX_10K_UP): Each pulse steps one increment (sound effect only).
+//       The 10K unit should fire every time the 10,000 point score (and hence a 10,000 score lamp) changes.
+//     10K BELL COIL MOSFET (DEV_IDX_10K_BELL): Each pulse rings the bell once.
+//       The 10K bell should ring every time the 10,000 point score (and hence a 10,000 score lamp) changes.
+//     100K BELL COIL MOSFET (DEV_IDX_100K_BELL): Each pulse rings the bell once.
+//       The 100K bell should ring every time the 100,000 point score (and hence a 100,000 score lamp) changes.
+//     SELECT BELL COIL MOSFET (DEV_IDX_SELECT_BELL): Each pulse rings the bell once.
+//       The Select bell rings at various points in the game, not specific to a score change.
+//     SCORE LAMP MOSFET (DEV_IDX_LAMP_SCORE): PWM power level controls brightness of all 27 score lamps (10K, 20K, ..., 9M).
+//     GI and TILT LAMP MOSFET (DEV_IDX_LAMP_HEAD_GI_TILT): PWM power level controls brightness of G.I. and TILT lamps.
+//   SWITCHES IN HEAD (read by Slave Arduino via direct Arduino input pins):
+//     CREDIT UNIT EMPTY SWITCH (PIN_IN_SWITCH_CREDIT_EMPTY): Switch opens when there are no more credits to use to start a game.
+//       This is used as a safety interlock to prevent stepping down credits when already at zero, and to inform Master when credits are zero.
+//     CREDIT UNIT FULL SWITCH (PIN_IN_SWITCH_CREDIT_FULL): Switch opens when the credit unit is full and cannot accept more credits.
+//      This is used as a safety interlock to prevent stepping up credits when already full.
+//   LAMPS IN HEAD (controlled by Slave Arduino via CENTIPEDE shift register outputs):
+//     TILT LAMP: 1 lamp controlled by Master via RS-485 message to Slave to turn on or off.
+//     G.I. LAMPS: 1 group of lamps controlled by Master via RS-485 message to Slave to turn on or off.
+//     SCORE LAMPS: 27 lamps (Nine 10K score lamps: 10K, 20K, ..., 90K; Nine 100K score lamps: 100K, 200K, ..., 900K; Nine 1M score lamps: 1M, 2M, ..., 9M).
+//       Score lamps are controlled by Master via RS-485 messages to Slave, although Slave is responsible for "realistically" updating the score lamps.
+//       Slave is responsible for firing the 10K unit coil and ringing the 10K and 100K bells when score changes.
+//       Slave is also responsible for the speed at which score lamps are updated to match the mechanical score motor speed.
+
+// DEVICES ON PLAYFIELD AND IN CABINET (controlled by Master Arduino):
+//   COILS, SCORE MOTOR, and SHAKER MOTOR on playfield and in cabinet are controlled by Master Arduino via MOSFETs using Arduino Mega PWM pins for variable power and timing.
+//     POP BUMPER COIL (DEV_IDX_POP_BUMPER): Each pulse fires the pop bumper once.
+//     KICKOUT LEFT COIL (DEV_IDX_KICKOUT_LEFT): Each pulse fires the left kickout once.
+//     KICKOUT RIGHT COIL (DEV_IDX_KICKOUT_RIGHT): Each pulse fires the right kickout once.
+//     SLINGSHOT LEFT COIL (DEV_IDX_SLINGSHOT_LEFT): Each pulse fires the left slingshot
+//     SLINGSHOT RIGHT COIL (DEV_IDX_SLINGSHOT_RIGHT): Each pulse fires the right slingshot
+//     FLIPPER LEFT COIL (DEV_IDX_FLIPPER_LEFT): Each pulse fires the left flipper; can be held on for extended time.
+//     FLIPPER RIGHT COIL (DEV_IDX_FLIPPER_RIGHT): Each pulse fires the right flipper; can be held on for extended time.
+//     BALL TRAY RELEASE COIL (DEV_IDX_BALL_TRAY_RELEASE): Each pulse opens the ball tray; can be held on for extended time (original design).
+//     SELECTION UNIT COIL (DEV_IDX_SELECTION_UNIT): Each pulse activates the selection unit (sound effect only).
+//     RELAY RESET COIL (DEV_IDX_RELAY_RESET): Each pulse activates the relay reset (sound effect only).
+//     BALL TROUGH RELEASE COIL (DEV_IDX_BALL_TROUGH_RELEASE): Each pulse releases one ball from the new up/down post.
+//     SHAKER MOTOR (DEV_IDX_MOTOR_SHAKER): Each pulse activates the shaker motor, which can be held on for extended time and speed controlled via PWM.
+//     KNOCKER COIL (DEV_IDX_KNOCKER): Each pulse fires the knocker once.
+//     SCORE MOTOR (DEV_IDX_MOTOR_SCORE): Each pulse activates the score motor (sound effect only), which can be held on for extended time.
+//       Score Motor runs at 17 RPM, and measures steps in 1/4 revolutions (i.e. 4 steps per revolution).
+//   SWITCHES IN CABINET (not on playfield) are read by Master Arduino via CENTIPEDE shift register inputs (except flipper buttons, which are direct inputs).
+//     LEFT FLIPPER BUTTON (PIN_IN_BUTTON_FLIPPER_LEFT): Left flipper button to control left flipper.
+//     RIGHT FLIPPER BUTTON (PIN_IN_BUTTON_FLIPPER_RIGHT): Right flipper button to control right flipper.
+//     START BUTTON SWITCH (SWITCH_IDX_START_BUTTON): Start button to start a new game.  Can be double-tapped or multi-tapped for special features.
+//     DIAGNOSTIC SWITCHES (SWITCH_IDX_DIAG_1..4): Four switches to select diagnostic modes (back, left, right, select).
+//     KNOCK OFF SWITCH (SWITCH_IDX_KNOCK_OFF): Hidden switch on bottom of game can be used to add credits without insering coins, or other purposes.
+//     COIN MECH SWITCH (SWITCH_IDX_COIN_MECH): Coin mech switch to add credits when coins are inserted.
+//     BALL PRESENT SWITCH (SWITCH_IDX_BALL_PRESENT): (New) Switch to detect if a ball is present at the bottom of the ball lift.
+//     TILT BOB SWITCH (SWITCH_IDX_TILT_BOB): Tilt bob switch warns player or tilts game when cabinet is shaken too much.
+//   SWITCHES ON PLAYFIELD are read by Master Arduino via CENTIPEDE shift register inputs.
+//     BUMPER SWITCHES (SWITCH_IDX_BUMPER_S, C, R, E, A, M, O): Close when ball strikes corresponding bumper 'S', 'C', 'E', 'A', 'M', or 'O'.
+//     KICKOUT SWITCHES (SWITCH_IDX_KICKOUT_LEFT, RIGHT): Close when ball is in corresponding kickout hole.
+//     SLINGSHOT SWITCHES (SWITCH_IDX_SLINGSHOT_LEFT, RIGHT): Close when ball strikes corresponding slingshot.
+//     HAT SWITCHES (SWITCH_IDX_HAT_LEFT_TOP, LEFT_BOTTOM, RIGHT_TOP, RIGHT_BOTTOM): Close when ball rolls over corresponding switch on playfield.
+//     SIDE TARGET SWITCHES (SWITCH_IDX_LEFT_SIDE_TARGET_2..5, RIGHT_SIDE_TARGET_1..5): Close when ball strikes corresponding side target.  There is no LEFT_SIDE_TARGET_1.
+//     GOBBLE SWITCH (SWITCH_IDX_GOBBLE): Close when ball enters gobble hole and drains from playfield.
+//     DRAIN SWITCHES (SWITCH_IDX_DRAIN_LEFT, CENTER, RIGHT): Close when ball rolls over corresponding switch and drains from playfield.
+//   LAMPS ON PLAYFIELD are controlled by Master Arduino via CENTIPEDE shift register outputs and relays that switch 6.3vac to the actual lamps.
+//     GI LAMPS (LAMP_IDX_GI_LEFT_TOP, etc.): LAMP_GROUP_GI.  Eight lamps can be individually controlled.
+//     BUMPER LAMPS (LAMP_IDX_S, C, R, E): LAMP_GROUP_BUMPER.  Seven lamps can be individually controlled.
+//     WHITE AWARDED SCORE LAMPS (LAMP_IDX_WHITE_1..9): LAMP_GROUP_WHITE.  Nine lamps can be individually controlled.
+//     RED SPOTTED SCORE LAMPS (LAMP_IDX_RED_1..9): LAMP_GROUP_RED.  Nine lamps can be individually controlled.
+//     HAT LAMPS (LAMP_IDX_HAT_LEFT_TOP, etc.): LAMP_GROUP_HAT.  Four lamps can be individually controlled.
+//     KICKOUT LAMPS (LAMP_IDX_KICKOUT_LEFT, RIGHT): LAMP_GROUP_KICKOUT.  Two lamps associated with kickout switches, indicate "spot number when lit."
+//       Player is awarded the spotted number when ball enters corresponding lit kickout hole.
+//     SPECIAL WHEN LIT LAMP (LAMP_IDX_SPECIAL): One lamp.
+//       Player is awarded special when ball enters gobble hole while this lamp is lit.
+//     GOBBLE SCORE LAMPS (LAMP_IDX_GOBBLE_1..5): LAMP_GROUP_GOBBLE.  Five lamps can be individually controlled; number of balls in hole.
+//     SPOT NUMBER LAMPS (LAMP_IDX_SPOT_NUMBER_LEFT, RIGHT): Two lamps associated with side drain rollover switches, indicate "spot number when lit."
+//       Player is awarded the spotted number when ball drains while corresponding lamp is lit.
+//   OTHER DEVICES:
+//     There is a 20-character x 4-line Digole 2004 LCD display connected to the Master, and another connected to the Slave, for displaying game status and diagnostics.
+//     There is a Tsunami WAV Trigger sound module, with an amplifier and speaker, connected to the Master, for playing voice, music, and sound effects in ENHANCED mode.
+
+// Upon power-up, both Master and Slave Arduinos default to GAME_OVER mode until a game is started.
+// At the end of each game, both Master and Slave Arduinos revert to GAME_OVER mode.
+// In GAME_OVER mode, GI lamps are on, all other lamps are off, and all coils are off.
+//   Master waits for player to either start a new game (START button) or insert a coin (simply adds a credit) or press a diagnostic button.
+//   If a diagnostic button is pressed, Master switches to DIAGNOSTIC mode until exited, at which time it reverts to GAME_OVER mode.
+//   If a coin is inserted, Master increments credits (if not already full) and remains in GAME_OVER mode.
+//   If START button is pressed and credits > zero, Master switches to selected game mode:
+//     MODE_ORIGINAL: Single press starts a new game with original Screamo rules but normal flippers (not impulse). Single player only.
+//     MODE_ENHANCED: Double press starts a new game with Randy's Screamo rules.
+//                    Once Enhanced mode is selected, and before any points have been scored, subsequent single presses
+//                    of START button will add additional players up to four players.
+//     MODE_IMPULSE : Triple press starts a new game with original Screamo rules including impulse flippers. Single player only.
+// If the player tilts the game during ORIGINAL or IMPULSE mode play, Slave will display TILT mode and Master will revert to GAME_OVER mode.
+// If the player tilts the game during ENHANCED mode play, player will lose current ball (playfield goes dead until ball drains); game resumes
+//   with next ball or game over if last ball.
+
+// For any game mode, we will have a timed 10ms loop in which we will check inputs, update outputs, and handle timing of coils and motors.
+// While we "wait" for the start of each 10ms loop, we will continuously check for flipper button presses (direct inputs) for lowest possible latency.
+// Our framework should make it easy to add new features and modify existing features, and share as much code as practical between different modes.
+// For multi-player games, Master will indicate which player is up by flashing the 1, 2, 3, or 4 Million point lamps in the head (with no other score lamps on).
+//   As soon as a point is scored, flashing lamp goes off and normal score lamps will re-light to show that player's score.
+
+// ORIGINAL MODE RULES SUMMARY:
+// - Single player only
+// - Normal flippers (not impulse)
+// - Standard scoring, lamps, and sounds
+// - Five balls per game; no extra balls.  Game ends after 5 balls or when player tilts (no tilt warnings.)
+
+
+
+
+
+// IMPULSE MODE RULES SUMMARY:
+// - Identical to ORIGINAL mode except:
+//     Impulse flippers.  This means that when either flipper button is pressed, both flippers fire briefly and immediately release; flippers can't be held on.
+
+
+// ENHANCED MODE RULES SUMMARY:
+// - Up to four players
+// - Roller coaster theme with Screamo sound effects
+// - Ball save for first 10 seconds of each ball
+// - Various voice, music, and sound effects via Tsunami WAV Trigger
+// - Shaker motor can cause the cabinet to vibrate during certain events
+
+
+
+
 
 #include <Arduino.h>
 #include <Pinball_Consts.h>
@@ -12,7 +139,7 @@
 // const int EEPROM_ADDR_SCORE = 0;  // Address to store 16-bit score (uses addr 0 and 1)
 
 const byte THIS_MODULE = ARDUINO_MAS;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "MASTER 11/20/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "MASTER 11/21/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which effectively makes it a global.
 // No need to pass lcdString[] to any functions that use it!
 
@@ -415,6 +542,7 @@ void setup() {
   // void sendSLVtoMASScoreReport(const byte t_10K, const byte t_100K, const byte t_million);  // RS485_TYPE_SLV_TO_MAS_SCORE_REPORT
   // void getSLVtoMASScoreReport(byte* t_10K, byte* t_100K, byte* t_million);                  // RS485_TYPE_SLV_TO_MAS_SCORE_REPORT
 
+/*
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }  // Wait for right flipper button press to continue
   pMessage->sendMAStoSLVTiltLamp(true);
   delay(500);
@@ -432,6 +560,10 @@ void setup() {
   delay(500);
 
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLV10KUnitPulse();
+  delay(500);
+
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
   pMessage->sendMAStoSLVBell10K();
   pMessage->sendMAStoSLV10KUnitPulse();
   delay(500);
@@ -441,17 +573,19 @@ void setup() {
   delay(500);
 
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
-  pMessage->sendMAStoSLVScoreAbs(1,2,3);  // 3,210,000
+  // Was sendMAStoSLVScoreAbs(1,2,3) => 321; now single int payload
+  pMessage->sendMAStoSLVScoreAbs(321);  // 3,210,000
   delay(500);
 
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
-  pMessage->sendMAStoSLVScoreInc(20);     // 3,410,000
-  pMessage->sendMAStoSLVScoreInc(3);      // 3,440,000
-  pMessage->sendMAStoSLVScoreDec(12);     // 3,320,000
+  pMessage->sendMAStoSLVScoreInc10K(20);     // 3,410,000
+  pMessage->sendMAStoSLVScoreInc10K(3);      // 3,440,000
+  pMessage->sendMAStoSLVScoreDec10K(12);     // 3,320,000
 
   delay(500);
 
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLVScoreInc100K(5);      // 3,820,000
   delay(500);
 
 
@@ -462,12 +596,11 @@ void setup() {
   delay(2000);
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
   pMessage->sendMAStoSLVCreditDec();
-  pMessage->sendMAStoSLVCreditDec();
-  pMessage->sendMAStoSLVCreditDec();
-  pMessage->sendMAStoSLVCreditDec();
   delay(500);
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
-  pMessage->sendMAStoSLVCreditStatusQuery();
+
+  pMessage->sendMAStoSLVScoreQuery();
+//  pMessage->sendMAStoSLVCreditStatusQuery();
   while (true) {
     // See if there is an incoming message for us...
     byte msgType = pMessage->available();
@@ -481,7 +614,14 @@ void setup() {
             pLCD2004->println(lcdString);
           }
           break;
-
+        case RS485_TYPE_SLV_TO_MAS_SCORE_REPORT:
+          {
+            int t_score = 0;
+            pMessage->getSLVtoMASScoreReport(&t_score);
+            sprintf(lcdString, "Score Rpt: %d", t_score);
+            pLCD2004->println(lcdString); Serial.println(lcdString);
+          }
+          break;
         default:
           sprintf(lcdString, "MSG TYPE ERROR %c", msgType); pLCD2004->println(lcdString); Serial.println(lcdString);
           // It's printing a, b, c, etc. i.e. successive characters **************************************************************************
@@ -489,7 +629,7 @@ void setup() {
       msgType = pMessage->available();
     }
   }
-
+*/
 
   pLCD2004->println("Setup complete.");
 
@@ -856,7 +996,12 @@ while (true) {
       delay(2000);
       pShiftRegister->digitalWrite(lampParm[LAMP_IDX_WHITE_5].pinNum, HIGH);
     }
+
+
     if (switchClosed(SWITCH_IDX_DIAG_1)) {
+      analogWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, 255); // energize score motor
+      delay(30000);
+      analogWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, HIGH); // turn off score motor
       pShiftRegister->digitalWrite(lampParm[LAMP_IDX_WHITE_1].pinNum, LOW);
       delay(200);
       pShiftRegister->digitalWrite(lampParm[LAMP_IDX_WHITE_1].pinNum, HIGH);

@@ -1,4 +1,4 @@
-// PINBALL_MESSAGE.CPP  Rev: 11/19/25
+// PINBALL_MESSAGE.CPP  Rev: 11/21/25  (score abs / report now use single int payload)
 
 #include "Pinball_Message.h"
 
@@ -43,6 +43,7 @@ void Pinball_Message::begin(HardwareSerial * t_mySerial, long unsigned int t_myB
   if (pLCD2004) {
     sprintf(lcdString, "RS485 init ok!"); pLCD2004->println(lcdString);
   }
+  return;
 }
 
 byte Pinball_Message::available() {
@@ -235,33 +236,34 @@ void Pinball_Message::sendMAStoSLVScoreReset() {
   return;
 }
 
-void Pinball_Message::sendMAStoSLVScoreAbs(const byte t_10K, const byte t_100K, const byte t_million) {
-  int recLen = 8;
+// NEW: absolute score single int (0..999)
+void Pinball_Message::sendMAStoSLVScoreAbs(const int t_score) {
+  int recLen = 7; // Len, From, To, Type, 2 payload bytes, CRC
+  int clamped = (t_score < 0) ? 0 : (t_score > 999 ? 999 : t_score);
   m_RS485Buf[RS485_LEN_OFFSET] = recLen;
   m_RS485Buf[RS485_FROM_OFFSET] = ARDUINO_MAS;
   m_RS485Buf[RS485_TO_OFFSET] = ARDUINO_SLV;
   m_RS485Buf[RS485_TYPE_OFFSET] = RS485_TYPE_MAS_TO_SLV_SCORE_ABS;
-  m_RS485Buf[RS845_PAYLOAD_OFFSET] = t_10K;
-  m_RS485Buf[RS845_PAYLOAD_OFFSET + 1] = t_100K;
-  m_RS485Buf[RS845_PAYLOAD_OFFSET + 2] = t_million;
+  m_RS485Buf[RS845_PAYLOAD_OFFSET]     = (byte)((clamped >> 8) & 0xFF);
+  m_RS485Buf[RS845_PAYLOAD_OFFSET + 1] = (byte)(clamped & 0xFF);
   m_RS485Buf[recLen - 1] = calcChecksumCRC8(m_RS485Buf, recLen - 1);
   sendMessageRS485(m_RS485Buf);
   return;
 }
 
-void Pinball_Message::getMAStoSLVScoreAbs(byte* t_10K, byte* t_100K, byte* t_million) {
-  *t_10K = m_RS485Buf[RS845_PAYLOAD_OFFSET];
-  *t_100K = m_RS485Buf[RS845_PAYLOAD_OFFSET + 1];
-  *t_million = m_RS485Buf[RS845_PAYLOAD_OFFSET + 2];
+void Pinball_Message::getMAStoSLVScoreAbs(int* t_score) {
+  *t_score = ((int)m_RS485Buf[RS845_PAYLOAD_OFFSET] << 8) | (int)m_RS485Buf[RS845_PAYLOAD_OFFSET + 1];
+  if (*t_score < 0) *t_score = 0;
+  if (*t_score > 999) *t_score = 999;
   return;
 }
 
-void Pinball_Message::sendMAStoSLVScoreInc(const int t_incrementIn10Ks) {  // Increase score by 1..999 in 10,000s
+void Pinball_Message::sendMAStoSLVScoreInc10K(const int t_incrementIn10Ks) {  // Increase score by 1..999 in 10,000s
   int recLen = 7;
   m_RS485Buf[RS485_LEN_OFFSET] = recLen;
   m_RS485Buf[RS485_FROM_OFFSET] = ARDUINO_MAS;
   m_RS485Buf[RS485_TO_OFFSET] = ARDUINO_SLV;
-  m_RS485Buf[RS485_TYPE_OFFSET] = RS485_TYPE_MAS_TO_SLV_SCORE_INC;
+  m_RS485Buf[RS485_TYPE_OFFSET] = RS485_TYPE_MAS_TO_SLV_SCORE_INC_10K;
   m_RS485Buf[RS845_PAYLOAD_OFFSET] = (byte)((t_incrementIn10Ks >> 8) & 0xFF);    // High byte
   m_RS485Buf[RS845_PAYLOAD_OFFSET + 1] = (byte)(t_incrementIn10Ks & 0xFF);       // Low byte
   m_RS485Buf[recLen - 1] = calcChecksumCRC8(m_RS485Buf, recLen - 1);
@@ -269,17 +271,36 @@ void Pinball_Message::sendMAStoSLVScoreInc(const int t_incrementIn10Ks) {  // In
   return;
 }
 
-void Pinball_Message::getMAStoSLVScoreInc(int* t_incrementIn10Ks) {
+void Pinball_Message::getMAStoSLVScoreInc10K(int* t_incrementIn10Ks) {
   *t_incrementIn10Ks = ((int)m_RS485Buf[RS845_PAYLOAD_OFFSET] << 8) | (int)m_RS485Buf[RS845_PAYLOAD_OFFSET + 1];
   return;
 }
 
-void Pinball_Message::sendMAStoSLVScoreDec(const int t_decrementIn10Ks) {  // Decrease score -999..-1 in 10,000s; won't go below zero
+
+void Pinball_Message::sendMAStoSLVScoreInc100K(const int t_incrementIn100Ks) {  // Increase score by 1..999 in 100,000s
   int recLen = 7;
   m_RS485Buf[RS485_LEN_OFFSET] = recLen;
   m_RS485Buf[RS485_FROM_OFFSET] = ARDUINO_MAS;
   m_RS485Buf[RS485_TO_OFFSET] = ARDUINO_SLV;
-  m_RS485Buf[RS485_TYPE_OFFSET] = RS485_TYPE_MAS_TO_SLV_SCORE_DEC;
+  m_RS485Buf[RS485_TYPE_OFFSET] = RS485_TYPE_MAS_TO_SLV_SCORE_INC_100K;
+  m_RS485Buf[RS845_PAYLOAD_OFFSET] = (byte)((t_incrementIn100Ks >> 8) & 0xFF);    // High byte
+  m_RS485Buf[RS845_PAYLOAD_OFFSET + 1] = (byte)(t_incrementIn100Ks & 0xFF);       // Low byte
+  m_RS485Buf[recLen - 1] = calcChecksumCRC8(m_RS485Buf, recLen - 1);
+  sendMessageRS485(m_RS485Buf);
+  return;
+}
+
+void Pinball_Message::getMAStoSLVScoreInc100K(int* t_incrementIn100Ks) {
+  *t_incrementIn100Ks = ((int)m_RS485Buf[RS845_PAYLOAD_OFFSET] << 8) | (int)m_RS485Buf[RS845_PAYLOAD_OFFSET + 1];
+  return;
+}
+
+void Pinball_Message::sendMAStoSLVScoreDec10K(const int t_decrementIn10Ks) {  // Decrease score -999..-1 in 10,000s; won't go below zero
+  int recLen = 7;
+  m_RS485Buf[RS485_LEN_OFFSET] = recLen;
+  m_RS485Buf[RS485_FROM_OFFSET] = ARDUINO_MAS;
+  m_RS485Buf[RS485_TO_OFFSET] = ARDUINO_SLV;
+  m_RS485Buf[RS485_TYPE_OFFSET] = RS485_TYPE_MAS_TO_SLV_SCORE_DEC_10K;
   m_RS485Buf[RS845_PAYLOAD_OFFSET] = (byte)((t_decrementIn10Ks >> 8) & 0xFF);    // High byte
   m_RS485Buf[RS845_PAYLOAD_OFFSET + 1] = (byte)(t_decrementIn10Ks & 0xFF);       // Low byte
   m_RS485Buf[recLen - 1] = calcChecksumCRC8(m_RS485Buf, recLen - 1);
@@ -287,7 +308,7 @@ void Pinball_Message::sendMAStoSLVScoreDec(const int t_decrementIn10Ks) {  // De
   return;
 }
 
-void Pinball_Message::getMAStoSLVScoreDec(int* t_decrementIn10Ks) {
+void Pinball_Message::getMAStoSLVScoreDec10K(int* t_decrementIn10Ks) {
   *t_decrementIn10Ks = ((int)m_RS485Buf[RS845_PAYLOAD_OFFSET] << 8) | (int)m_RS485Buf[RS845_PAYLOAD_OFFSET + 1];
   return;
 }
@@ -303,24 +324,25 @@ void Pinball_Message::sendMAStoSLVScoreQuery() {
   return;
 }
 
-void Pinball_Message::sendSLVtoMASScoreReport(const byte t_10K, const byte t_100K, const byte t_million) {
-  int recLen = 8;
+// NEW: score report single int 0..999
+void Pinball_Message::sendSLVtoMASScoreReport(const int t_score) {
+  int recLen = 7;
+  int clamped = (t_score < 0) ? 0 : (t_score > 999 ? 999 : t_score);
   m_RS485Buf[RS485_LEN_OFFSET] = recLen;
   m_RS485Buf[RS485_FROM_OFFSET] = ARDUINO_SLV;
   m_RS485Buf[RS485_TO_OFFSET] = ARDUINO_MAS;
   m_RS485Buf[RS485_TYPE_OFFSET] = RS485_TYPE_SLV_TO_MAS_SCORE_REPORT;
-  m_RS485Buf[RS845_PAYLOAD_OFFSET] = t_10K;
-  m_RS485Buf[RS845_PAYLOAD_OFFSET + 1] = t_100K;
-  m_RS485Buf[RS845_PAYLOAD_OFFSET + 2] = t_million;
+  m_RS485Buf[RS845_PAYLOAD_OFFSET]     = (byte)((clamped >> 8) & 0xFF);
+  m_RS485Buf[RS845_PAYLOAD_OFFSET + 1] = (byte)(clamped & 0xFF);
   m_RS485Buf[recLen - 1] = calcChecksumCRC8(m_RS485Buf, recLen - 1);
   sendMessageRS485(m_RS485Buf);
   return;
 }
 
-void Pinball_Message::getSLVtoMASScoreReport(byte* t_10K, byte* t_100K, byte* t_million) {
-  *t_10K = m_RS485Buf[RS845_PAYLOAD_OFFSET];
-  *t_100K = m_RS485Buf[RS845_PAYLOAD_OFFSET + 1];
-  *t_million = m_RS485Buf[RS845_PAYLOAD_OFFSET + 2];
+void Pinball_Message::getSLVtoMASScoreReport(int* t_score) {
+  *t_score = ((int)m_RS485Buf[RS845_PAYLOAD_OFFSET] << 8) | (int)m_RS485Buf[RS845_PAYLOAD_OFFSET + 1];
+  if (*t_score < 0) *t_score = 0;
+  if (*t_score > 999) *t_score = 999;
   return;
 }
 

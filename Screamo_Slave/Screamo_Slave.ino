@@ -1,45 +1,41 @@
-// Screamo_Slave.INO Rev: 11/20/25
+// Screamo_Slave.INO Rev: 11/21/25
+
+// Score Motor in cabinet runs at 17 RPM, and measures steps in 1/4 revolutions (i.e. 4 steps per revolution).
+// Each 1/4 revolution takes 882ms (0.882 seconds).
+// Each 1/4 revolution is divided into 6 steps: up to 5 advances of score lamps, plus a "rest" step.
+// Whenever the score is advanced by one 10K unit or one 100K unit, the score motor is NOT activated; the score is just
+//   "pulsed" by firing the 10K or 100K coil (and associated bell) once (for effect only; this is handled in code.)
+// Whenever the score is advanced by 50K or 500K, the score motor is activated for one full 1/4 revolution (6 steps, 882ms).
+// Firing the Relay Reset bank requires another activation of the score motor for one full 1/4 revolution (6 steps, 882ms).
+// Starting a new game requires advancing the 10K unit by up to 9 times, thus two 1/4 revolutions, plus another 1/4 revolution to fire the Relay Reset bank.
+// These devices are all only used for sound effects; the actual score changes are handled in code and via RS-485 messages from Master to Slave.
+// But Slave is responsible for timing the score changes to match realistic score motor activation.
+// Thus, when the score is advanced by five 10K or 100K units, Slave must do so with five advances of 1/6 of 1/4 rev,
+// spaced 147ms apart (882ms / 6 steps = 147ms per step) plus a "rest" period of 147ms.  It can then repeat this for an
+// additional five advances (plus one rest) if needed.
 
 
-
-// NEEDS NEW CODE:
-//   When player scores 100K or 500K, we maybe need a new function for increments of 100K rather than increments of 10K,
-//   because we don't want to increment the 10K unit ten times to get to 100K; just the 100K unit once (or five times.)
-
-// ALSO need to test the final messages: score inquiry from MAS to SLV, and score report from SLV to MAS.
 
 // Need code to save and recall previous score when machine was turned off or last game ended, so we can display it on power-up.
 //   Maybe automatically save current score every x times through the 10ms loop; i.e. every 15 or 30 seconds.  Or just at game-over.
-//   Maybe save to EEPROM every time the score changes, but that could wear out the EEPROM
+
 // Need code to realistically reset score from previous score back to zero: advancing the 10K unit and "resetting" the 100K unit.
+//   startNewGame() should do this automatically.
+
+// Need to update 10K and 100K scoring for realistic timing and to match score motor.
+//   SCORE_BATCH_GAP_MS not being used.
+//   Write Master code to activate score motor when score update commands are sent from Master.
+//   May need function(s) to estimate time needed to update score, so Master can time score motor activation appropriately.
 
 #include <Arduino.h>
 #include <Pinball_Consts.h>
 #include <Pinball_Functions.h>
-#ifndef SCREMO_SLAVE_TICK_MS
-#define SCREMO_SLAVE_TICK_MS 10  // One scheduler tick == 10ms
-#endif
-static_assert(SCREMO_SLAVE_TICK_MS == 10, "Scheduler tick changed: update timeOn semantics.");
 
-// OPTIONAL: helper (leave unused if not needed; remove if size sensitive)
-static inline unsigned ticksToMs(byte ticks) { return (unsigned)ticks * SCREMO_SLAVE_TICK_MS; }
-
-
-
-
-
-// (Optional) When activating a device, you can temporarily log pulse length for verification.
-// Insert inside activateDevice() right after analogWrite(...):
-    /*
-    // DEBUG (uncomment to verify audible pulse duration)
-    snprintf(lcdString, sizeof(lcdString), "DEV %u pulse %ums", (unsigned)t_devIdx, (unsigned)ticksToMs(deviceParm[t_devIdx].timeOn));
-    // if (pLCD2004) pLCD2004->println(lcdString);
-    */
 #include <EEPROM.h>               // For saving and recalling score, to persist between power cycles.
 const int EEPROM_ADDR_SCORE = 0;  // Address to store 16-bit score (uses addr 0 and 1)
 
 const byte THIS_MODULE = ARDUINO_SLV;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "SLAVE 11/20/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "SLAVE 11/21/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which effectively makes it a global.
 // No need to pass lcdString[] to any functions that use it!
 
@@ -101,11 +97,13 @@ deviceParmStruct deviceParm[NUM_DEVS] = {
 byte modeCurrent               = MODE_UNDEFINED;
 byte msgType                   = RS485_TYPE_NO_MESSAGE;  // Current RS485 message type being processed.
 
-int currentScore               =  0;  // Current game score (0..999).
-int targetScore                =  0;  // NEW: merged desired final score (0..999) updated by incoming RS485 score deltas.
+const byte SCREAMO_SLAVE_TICK_MS = 10;  // One scheduler tick == 10ms
 
-unsigned long lastLoopTime     =  0;  // Used to track 10ms loop timing.
-const int8_t REST_PERIOD_TICKS = -8;  // Number of 10ms ticks for coil rest period (i.e. 80ms)
+int currentScore               =  0;    // Current game score (0..999).
+int targetScore                =  0;    // NEW: merged desired final score (0..999) updated by incoming RS485 score deltas.
+
+unsigned long lastLoopTime     =  0;    // Used to track 10ms loop timing.
+const int8_t REST_PERIOD_TICKS = -8;    // Number of 10ms ticks for coil rest period (i.e. 80ms)
 
 bool debugOn    = false;
 
@@ -113,12 +111,12 @@ bool debugOn    = false;
 // Tune these to match the real mechanism timings (mechanical measurements can refine these).
 const unsigned SCORE_10K_STEP_MS   = 100;  // spacing between single 10K steps within a batch
 const unsigned SCORE_BATCH_GAP_MS  = 500;  // spacing between batches of up to 5x10K
-const unsigned SCORE_100K_STEP_MS  = 120;  // spacing between successive 100K advances
+const unsigned SCORE_100K_STEP_MS  = 250;  // spacing between successive 100K advances
 
 // ---------------- Simplified non-blocking score-adjust state (globals) ----------------
 // Phases removed; we now do single-step pacing only.
-static bool scoreAdjustActive    = false;    // true while adjustments in progress
-static unsigned long scoreAdjustLastMs = 0;  // timestamp of last attempted mechanical step
+static bool scoreAdjustActive          = false;  // true while adjustments in progress
+static unsigned long scoreAdjustLastMs =     0;  // timestamp of last attempted mechanical step
 
 // Add command queue (FIFO) for sequential execution:
 static int  scoreCmdQueue[8];          // up to 8 pending commands
@@ -127,23 +125,12 @@ static byte scoreCmdTail = 0;          // enqueue index
 static int  activeDeltaRemaining = 0;  // steps (10K units) left in current command
 static int  activeDirection      = 0;  // +1 or -1 for current command
 
-/*
-// Forward declarations
-void requestScoreAdjust(int delta10Ks);
-void processScoreAdjust();
-static void scoreAdjustFinishIfDone();
-
-// ---- Forward declarations for lamp / EEPROM helpers (restore) ----
-void setScoreLampBrightness(byte t_brightness);      // 0..255
-void setGITiltLampBrightness(byte t_brightness);     // 0..255
-void setGILamp(bool t_on);
-void setTiltLamp(bool t_on);
-int  recallScoreFromEEPROM();
-void saveScoreToEEPROM(int t_score);
-bool hasCredits();
-void startNewGame(byte t_mode);
-void displayScore(int t_score);
-*/
+// --- 100K bulk adjust state ---
+static bool hundredKActive          = false;
+static int  hundredKStepsRemaining  = 0;
+static int  hundredKDirection       = 0;
+static unsigned long hundredKLastMs = 0;
+static byte hundredKQueuedSteps     = 0;
 
 // *****************************************************************************************
 // **************************************  S E T U P  **************************************
@@ -205,7 +192,7 @@ void loop() {
 
   // Enforce 10ms tick (optional but recommended for deterministic timing)
   unsigned long now = millis();
-  if (now - lastLoopTime < 10) return;  // Still within this 10ms window
+  if (now - lastLoopTime < SCREAMO_SLAVE_TICK_MS) return;  // Still within this 10ms window
   lastLoopTime = now;
 
   // Handle all pending RS-485 messages (non-blocking drain)
@@ -220,7 +207,7 @@ void loop() {
   processScoreAdjust();
 
   // Other housekeeping (score lamp updates, switch reads, etc.)
-
+  processHundredKAdjust();    // bulk 100K jumps
 
 }  // End of loop()
 
@@ -355,38 +342,47 @@ void processMessage(byte t_msgType) {
 
     case RS485_TYPE_MAS_TO_SLV_SCORE_ABS:
       {
-        byte tensK = 0, hundredK = 0, millions = 0;
-        pMessage->getMAStoSLVScoreAbs(&tensK, &hundredK, &millions);
-        int newScore = (int)millions * 100 + (int)hundredK * 10 + (int)tensK;
-        newScore = constrain(newScore, 0, 999);
-        currentScore = newScore;
-        targetScore  = newScore;
-        // Flush any pending commands
-        scoreCmdHead = scoreCmdTail = 0;
-        scoreAdjustActive = false;
-        activeDeltaRemaining = 0;
-        activeDirection = 0;
-        snprintf(lcdString, sizeof(lcdString), "Score set %u", (unsigned)currentScore);
-        pLCD2004->println(lcdString);
-        displayScore(currentScore);
-        saveScoreToEEPROM(currentScore);
-      }
+      int absScore = 0;
+      pMessage->getMAStoSLVScoreAbs(&absScore);
+      int newScore = constrain(absScore, 0, 999);
+      currentScore = newScore;
+      targetScore  = newScore;
+      scoreCmdHead = scoreCmdTail = 0;
+      scoreAdjustActive = false;
+      activeDeltaRemaining = 0;
+      activeDirection = 0;
+      snprintf(lcdString, sizeof(lcdString), "Score set %u", (unsigned)currentScore);
+      pLCD2004->println(lcdString);
+      displayScore(currentScore);
+      saveScoreToEEPROM(currentScore);
+    }
       break;
 
-    case RS485_TYPE_MAS_TO_SLV_SCORE_INC:  // Increment score update (1..999 in 10,000s)
+    case RS485_TYPE_MAS_TO_SLV_SCORE_INC_10K:  // Increment score update (1..999 in 10,000s)
       {
         int incAmount = 0;
-        pMessage->getMAStoSLVScoreInc(&incAmount);
+        pMessage->getMAStoSLVScoreInc10K(&incAmount);
         snprintf(lcdString, sizeof(lcdString), "Score inc %u", (unsigned)incAmount);
         pLCD2004->println(lcdString);
         requestScoreAdjust(incAmount);   // NEW: non-blocking mechanical update
       }
       break;
 
-    case RS485_TYPE_MAS_TO_SLV_SCORE_DEC:  // Decrement score update (-999..-1 in 10,000s) (won't go below zero)
+    case RS485_TYPE_MAS_TO_SLV_SCORE_INC_100K:
+      {
+        int incHundredKs = 0;
+        pMessage->getMAStoSLVScoreInc100K(&incHundredKs); // each unit == one 100K jump
+        if (incHundredKs < 1) incHundredKs = 1;
+        snprintf(lcdString, sizeof(lcdString), "+%u00K req", (unsigned)incHundredKs);
+        pLCD2004->println(lcdString);
+        requestScoreAdjust100K(incHundredKs);
+      }
+    break;
+
+    case RS485_TYPE_MAS_TO_SLV_SCORE_DEC_10K:  // Decrement score update (-999..-1 in 10,000s) (won't go below zero)
       {
         int decAmount = 0;
-        pMessage->getMAStoSLVScoreDec(&decAmount);
+        pMessage->getMAStoSLVScoreDec10K(&decAmount);
         snprintf(lcdString, sizeof(lcdString), "Score dec %u", (unsigned)decAmount);
         pLCD2004->println(lcdString);
         requestScoreAdjust(-decAmount);  // NEW: non-blocking mechanical update
@@ -416,12 +412,7 @@ void processMessage(byte t_msgType) {
       {
         snprintf(lcdString, sizeof(lcdString), "Score rpt %u", (unsigned)currentScore);
         pLCD2004->println(lcdString);
-        // currentScore is 0..999 where each unit == 10,000
-        byte tensK    = (byte)(currentScore % 10);          // 10K units (0..9)
-        byte hundredK = (byte)((currentScore / 10) % 10);   // 100K units (0..9)
-        byte millions = (byte)(currentScore / 100);         // 1M units (0..9)
-        // Send three separate bytes: 10K, 100K, 1M (same ordering as getMAStoSLVScoreAbs)
-        pMessage->sendSLVtoMASScoreReport(tensK, hundredK, millions);
+        pMessage->sendSLVtoMASScoreReport(currentScore);
       }
       break;
 
@@ -663,6 +654,7 @@ bool hasCredits() {
 }
 
 void startNewGame(byte t_mode) {  // Start a new game in the specified mode.
+  // 1: Tilt, 2: Game Over, 3: Diagnostic, 4: Original, 5: Enhanced, 6: Impulse
   modeCurrent = t_mode;
   setTiltLamp(false);
   setGILamp(true);
@@ -711,4 +703,65 @@ void displayScore(int t_score) {
   }
 
   lastScore = t_score;
+}
+
+void requestScoreAdjust100K(int numHundredKs) {
+  if (numHundredKs <= 0) return;
+  if (numHundredKs > 50) numHundredKs = 50; // Safety clamp
+  if (scoreAdjustActive) { hundredKQueuedSteps += (byte)numHundredKs; return; }
+  if (hundredKActive)    { hundredKQueuedSteps += (byte)numHundredKs; return; }
+  hundredKActive         = true;
+  hundredKDirection      = 1;
+  hundredKStepsRemaining = numHundredKs;
+  hundredKLastMs         = millis() - SCORE_100K_STEP_MS;
+}
+
+void processHundredKAdjust() {
+  if (!hundredKActive) {
+    if (!scoreAdjustActive && hundredKQueuedSteps > 0) {
+      hundredKActive         = true;
+      hundredKDirection      = 1;
+      hundredKStepsRemaining = hundredKQueuedSteps;
+      hundredKQueuedSteps    = 0;
+      hundredKLastMs         = millis() - SCORE_100K_STEP_MS;
+    }
+    return;
+  }
+
+  unsigned long now = millis();
+  if (now - hundredKLastMs < SCORE_100K_STEP_MS) return;
+
+  // Ensure 10K unit coil is idle before firing (sound effect)
+  if (deviceParm[DEV_IDX_10K_UP].countdown != 0) return;
+
+  hundredKLastMs = now;
+
+  if (hundredKStepsRemaining <= 0) {
+    hundredKActive = false;
+    if (!scoreAdjustActive && hundredKQueuedSteps > 0) {
+      hundredKActive         = true;
+      hundredKStepsRemaining = hundredKQueuedSteps;
+      hundredKQueuedSteps    = 0;
+      hundredKLastMs         = millis() - SCORE_100K_STEP_MS;
+    } else {
+      saveScoreToEEPROM(currentScore);
+      snprintf(lcdString, sizeof(lcdString), "Score now %u", (unsigned)currentScore);
+      pLCD2004->println(lcdString);
+      Serial.println(lcdString);
+    }
+    return;
+  }
+
+  // Apply one 100K jump (+10 internal units)
+  int newScore = currentScore + (hundredKDirection * 10);
+  if (newScore > 999) newScore = 999;
+
+  // Fire 10K unit (sound) and 100K bell only (NO 10K bell)
+  activateDevice(DEV_IDX_10K_UP);
+  activateDevice(DEV_IDX_100K_BELL);
+
+  currentScore = newScore;
+  displayScore(currentScore);
+
+  hundredKStepsRemaining--;
 }
