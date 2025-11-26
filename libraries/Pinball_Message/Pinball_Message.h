@@ -51,8 +51,6 @@ class Pinball_Message {
     void getMAStoSLVScoreInc10K(int* t_incrementIn10Ks);           // RS485_TYPE_MAS_TO_SLV_SCORE_INC_10K
     void sendMAStoSLVScoreInc100K(const int t_incrementIn100Ks);   // RS485_TYPE_MAS_TO_SLV_SCORE_INC_100K (1..999 in 100,000s)
     void getMAStoSLVScoreInc100K(int* t_incrementIn100Ks);         // RS485_TYPE_MAS_TO_SLV_SCORE_INC_100K
-    void sendMAStoSLVScoreDec10K(const int t_decrementIn10Ks);     // RS485_TYPE_MAS_TO_SLV_SCORE_DEC_10K (-999..-1 in 10,000s)
-    void getMAStoSLVScoreDec10K(int* t_decrementIn10Ks);           // RS485_TYPE_MAS_TO_SLV_SCORE_DEC_10K
     void sendMAStoSLVScoreQuery();                                 // RS485_TYPE_MAS_TO_SLV_SCORE_QUERY
     void sendSLVtoMASScoreReport(const int t_score);               // RS485_TYPE_SLV_TO_MAS_SCORE_REPORT (score 0..999 in 10Ks)
     void getSLVtoMASScoreReport(int* t_score);                     // RS485_TYPE_SLV_TO_MAS_SCORE_REPORT

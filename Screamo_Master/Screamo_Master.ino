@@ -1,4 +1,4 @@
-// Screamo_Master.INO Rev: 11/21/25
+// Screamo_Master.INO Rev: 11/26/25
 // 11/12/25: Moved Right Kickout from pin 13 to pin 44 to avoid MOSFET firing twice on power-up.  Don't use MOSFET on pin 13.
 // Centipede #1 (0..63) is LAMP OUTPUTS
 // Centipede #2 (64..127) is SWITCH INPUTS
@@ -139,7 +139,7 @@
 // const int EEPROM_ADDR_SCORE = 0;  // Address to store 16-bit score (uses addr 0 and 1)
 
 const byte THIS_MODULE = ARDUINO_MAS;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "MASTER 11/21/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "MASTER 11/26/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which effectively makes it a global.
 // No need to pass lcdString[] to any functions that use it!
 
@@ -542,12 +542,12 @@ void setup() {
   // void sendSLVtoMASScoreReport(const byte t_10K, const byte t_100K, const byte t_million);  // RS485_TYPE_SLV_TO_MAS_SCORE_REPORT
   // void getSLVtoMASScoreReport(byte* t_10K, byte* t_100K, byte* t_million);                  // RS485_TYPE_SLV_TO_MAS_SCORE_REPORT
 
-/*
+
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }  // Wait for right flipper button press to continue
-  pMessage->sendMAStoSLVTiltLamp(true);
+  pMessage->sendMAStoSLVTiltLamp(false);
   delay(500);
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
-  pMessage->sendMAStoSLVGILamp(false);
+  pMessage->sendMAStoSLVGILamp(true);
   delay(500);
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
   pMessage->sendMAStoSLVBell10K();
@@ -558,38 +558,147 @@ void setup() {
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
   pMessage->sendMAStoSLVBellSelect();
   delay(500);
-
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
   pMessage->sendMAStoSLV10KUnitPulse();
   delay(500);
-
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
   pMessage->sendMAStoSLVBell10K();
   pMessage->sendMAStoSLV10KUnitPulse();
   delay(500);
-
+/*
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLVScoreAbs(121);
+  delay(500);
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLVScoreReset();
+  delay(500);
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLVScoreAbs(999);
+  delay(500);
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
   pMessage->sendMAStoSLVScoreReset();
   delay(500);
 
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
-  // Was sendMAStoSLVScoreAbs(1,2,3) => 321; now single int payload
-  pMessage->sendMAStoSLVScoreAbs(321);  // 3,210,000
+  pMessage->sendMAStoSLVScoreAbs(998);  // 9,980,000
+  delay(500);
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLVScoreInc10K(4);  // 9,990,000
+  delay(500);
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLVScoreAbs(989);   // 9,890,000
+  delay(500);
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLVScoreInc10K(4);  // 9,990,000
+  delay(500);
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLVScoreAbs(199);
+  delay(500);
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLVScoreInc10K(4);
+  delay(500);
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLVScoreAbs(199);
+  delay(500);
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLVScoreInc10K(4);
+  delay(500);
+*/
+
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLVScoreAbs(288);
   delay(500);
 
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
-  pMessage->sendMAStoSLVScoreInc10K(20);     // 3,410,000
-  pMessage->sendMAStoSLVScoreInc10K(3);      // 3,440,000
-  pMessage->sendMAStoSLVScoreDec10K(12);     // 3,320,000
+  pMessage->sendMAStoSLVScoreInc10K(1);
+  pMessage->sendMAStoSLVScoreInc10K(1);
+  pMessage->sendMAStoSLVScoreInc10K(1);
+  pMessage->sendMAStoSLVScoreInc10K(1);
+  pMessage->sendMAStoSLVScoreInc10K(1);
+  pMessage->sendMAStoSLVScoreInc10K(1);
+  delay(500);
+
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLVScoreInc10K(6);
+  pMessage->sendMAStoSLVScoreInc10K(1);
+  delay(500);
+
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLVScoreInc10K(-1);
+  pMessage->sendMAStoSLVScoreInc10K(-1);
+  pMessage->sendMAStoSLVScoreInc10K(-1);
+  pMessage->sendMAStoSLVScoreInc10K(-1);
+  pMessage->sendMAStoSLVScoreInc10K(-1);
+  pMessage->sendMAStoSLVScoreInc10K(-1);
+  delay(500);
+
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLVScoreInc10K(-6);
+  pMessage->sendMAStoSLVScoreInc10K(-1);
+  delay(500);
+
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLVScoreInc10K(10);
+  pMessage->sendMAStoSLVScoreInc10K(10);
+  pMessage->sendMAStoSLVScoreInc10K(10);
+  pMessage->sendMAStoSLVScoreInc10K(10);
+  pMessage->sendMAStoSLVScoreInc10K(10);
+  pMessage->sendMAStoSLVScoreInc10K(10);
+  delay(500);
+
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLVScoreInc10K(60);
+  pMessage->sendMAStoSLVScoreInc10K(10);
+  delay(500);
+
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLVScoreInc10K(-10);
+  pMessage->sendMAStoSLVScoreInc10K(-10);
+  pMessage->sendMAStoSLVScoreInc10K(-10);
+  pMessage->sendMAStoSLVScoreInc10K(-10);
+  pMessage->sendMAStoSLVScoreInc10K(-10);
+  pMessage->sendMAStoSLVScoreInc10K(-10);
+  delay(500);
+
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLVScoreInc10K(-60);
+  pMessage->sendMAStoSLVScoreInc10K(-10);
+  delay(500);
+
+
+
+
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }  // Gives 14 single advances
+  pMessage->sendMAStoSLVScoreInc10K(2);
+  pMessage->sendMAStoSLVScoreInc10K(3);
+  pMessage->sendMAStoSLVScoreInc10K(4);
+  pMessage->sendMAStoSLVScoreInc10K(5);
+  pMessage->sendMAStoSLVScoreInc10K(6);
+  delay(500);
+
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }  // 5-5-4 as expected
+  pMessage->sendMAStoSLVScoreInc10K(11);
+  pMessage->sendMAStoSLVScoreInc10K(1);
+  delay(500);
+
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }  // Gives 14 single advances
+  pMessage->sendMAStoSLVScoreInc10K(20);
+  pMessage->sendMAStoSLVScoreInc10K(30);
+  pMessage->sendMAStoSLVScoreInc10K(40);
+  pMessage->sendMAStoSLVScoreInc10K(50);
+  pMessage->sendMAStoSLVScoreInc10K(60);
+  delay(500);
+
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }  // Works perfectly!
+  pMessage->sendMAStoSLVScoreInc10K(20);
+  pMessage->sendMAStoSLVScoreInc10K(3);
+  pMessage->sendMAStoSLVScoreInc10K(-12);
 
   delay(500);
 
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
-  pMessage->sendMAStoSLVScoreInc100K(5);      // 3,820,000
+  pMessage->sendMAStoSLVScoreInc10K(5);      // 3,820,000
   delay(500);
-
-
-
 
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
   pMessage->sendMAStoSLVCreditInc(3);
@@ -629,7 +738,7 @@ void setup() {
       msgType = pMessage->available();
     }
   }
-*/
+
 
   pLCD2004->println("Setup complete.");
 

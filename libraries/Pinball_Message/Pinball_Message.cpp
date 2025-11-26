@@ -295,24 +295,6 @@ void Pinball_Message::getMAStoSLVScoreInc100K(int* t_incrementIn100Ks) {
   return;
 }
 
-void Pinball_Message::sendMAStoSLVScoreDec10K(const int t_decrementIn10Ks) {  // Decrease score -999..-1 in 10,000s; won't go below zero
-  int recLen = 7;
-  m_RS485Buf[RS485_LEN_OFFSET] = recLen;
-  m_RS485Buf[RS485_FROM_OFFSET] = ARDUINO_MAS;
-  m_RS485Buf[RS485_TO_OFFSET] = ARDUINO_SLV;
-  m_RS485Buf[RS485_TYPE_OFFSET] = RS485_TYPE_MAS_TO_SLV_SCORE_DEC_10K;
-  m_RS485Buf[RS845_PAYLOAD_OFFSET] = (byte)((t_decrementIn10Ks >> 8) & 0xFF);    // High byte
-  m_RS485Buf[RS845_PAYLOAD_OFFSET + 1] = (byte)(t_decrementIn10Ks & 0xFF);       // Low byte
-  m_RS485Buf[recLen - 1] = calcChecksumCRC8(m_RS485Buf, recLen - 1);
-  sendMessageRS485(m_RS485Buf);
-  return;
-}
-
-void Pinball_Message::getMAStoSLVScoreDec10K(int* t_decrementIn10Ks) {
-  *t_decrementIn10Ks = ((int)m_RS485Buf[RS845_PAYLOAD_OFFSET] << 8) | (int)m_RS485Buf[RS845_PAYLOAD_OFFSET + 1];
-  return;
-}
-
 void Pinball_Message::sendMAStoSLVScoreQuery() {
   int recLen = 5;
   m_RS485Buf[RS485_LEN_OFFSET] = recLen;

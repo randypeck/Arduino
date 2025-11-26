@@ -1,20 +1,29 @@
-// Screamo_Slave.INO Rev: 11/21/25
+// Screamo_Slave.INO Rev: 11/26/25
 
 // Score Motor in cabinet runs at 17 RPM, and measures steps in 1/4 revolutions (i.e. 4 steps per revolution).
 // Each 1/4 revolution takes 882ms (0.882 seconds).
-// Each 1/4 revolution is divided into 6 steps: up to 5 advances of score lamps, plus a "rest" step.
-// Whenever the score is advanced by one 10K unit or one 100K unit, the score motor is NOT activated; the score is just
-//   "pulsed" by firing the 10K or 100K coil (and associated bell) once (for effect only; this is handled in code.)
-// Whenever the score is advanced by 50K or 500K, the score motor is activated for one full 1/4 revolution (6 steps, 882ms).
-// Firing the Relay Reset bank requires another activation of the score motor for one full 1/4 revolution (6 steps, 882ms).
-// Starting a new game requires advancing the 10K unit by up to 9 times, thus two 1/4 revolutions, plus another 1/4 revolution to fire the Relay Reset bank.
+// Each 1/4 revolution is divided into 6 timed slots: up to 5 score advances, followed by 1 rest slot.
+// Thus every 147ms (882ms / 6 slots) the score motor timing window allows either an advance or a rest.
+// Single-score advances:
+//   - A single 10K unit (exactly one 10K increment) is handled as a non-motor pulse: fire 10K unit coil + 10K bell once.
+//   - A single 100K unit (exactly one 100K increment) is handled similarly: 10K unit coil + 10K bell + 100K bell once.
+// Motor-paced cycles:
+//   - Any batch requiring more than one 10K (2..5 tens) runs one full motor cycle: up to 5 advances spaced 147ms apart, then one 147ms rest.
+//   - Any batch requiring more than one 100K (2..5 hundreds) likewise runs one full motor cycle with hundred advances (each advance = +100K) then the rest.
+//   - Larger batches (>5 tens or >5 hundreds) repeat full cycles until remaining units <= 1.
+//   - A remaining single 10K or single 100K after all full cycles is finished as a non-motor single pulse.
+// Summary:
+//   - Motor runs for any multi-unit batch (not only exactly 50K or 500K); thresholds are “>1 and up to 5” per cycle.
+//   - Each cycle = 5 advance slots max + 1 rest slot = 882ms total.
+//   - Sounds (bells, unit coil) are fired on each advance; rest slot is silent.
+// Relay Reset and game start:
+//   - Firing the relay reset bank (under p/f; controlled by Master) consumes its own full 1/4 revolution (6 slots, 882ms).
+//   - Starting a new game requires 1/4 revolution to fire the Relay Reset bank, followed by up to 9 10K advances, thus up to two more 1/4 revolutions.
 // These devices are all only used for sound effects; the actual score changes are handled in code and via RS-485 messages from Master to Slave.
 // But Slave is responsible for timing the score changes to match realistic score motor activation.
 // Thus, when the score is advanced by five 10K or 100K units, Slave must do so with five advances of 1/6 of 1/4 rev,
 // spaced 147ms apart (882ms / 6 steps = 147ms per step) plus a "rest" period of 147ms.  It can then repeat this for an
 // additional five advances (plus one rest) if needed.
-
-
 
 // Need code to save and recall previous score when machine was turned off or last game ended, so we can display it on power-up.
 //   Maybe automatically save current score every x times through the 10ms loop; i.e. every 15 or 30 seconds.  Or just at game-over.
@@ -35,7 +44,7 @@
 const int EEPROM_ADDR_SCORE = 0;  // Address to store 16-bit score (uses addr 0 and 1)
 
 const byte THIS_MODULE = ARDUINO_SLV;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "SLAVE 11/21/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "SLAVE 11/26/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which effectively makes it a global.
 // No need to pass lcdString[] to any functions that use it!
 
@@ -62,7 +71,6 @@ struct deviceParmStruct {
 };
 
 // *** CREATE AN ARRAY OF DeviceParm STRUCT FOR ALL COILS AND MOTORS ***
-// Start by defining array index constants:
 const byte DEV_IDX_CREDIT_UP         =  0;
 const byte DEV_IDX_CREDIT_DOWN       =  1;
 const byte DEV_IDX_10K_UP            =  2;
@@ -82,15 +90,16 @@ const byte NUM_DEVS = 8;
 //   countdown: current countdown in 10ms ticks; -1..-8 = rest period, 0 = idle, >0 = active
 //   queueCount: number of pending activation requests while coil busy/resting
 //   I.e.: analogWrite(deviceParm[DEV_IDX_CREDIT_UP].pinNum, deviceParm[DEV_IDX_CREDIT_UP].powerInitial);
+// --- UPDATE deviceParm[] (adjust comments to reflect rapid-fire constraints) ---
 deviceParmStruct deviceParm[NUM_DEVS] = {
-  {  5, 120, 10, 0, 0, 0 },  // CREDIT UP.
-  {  6, 150, 10, 0, 0, 0 },  // CREDIT DOWN.
-  {  7, 160, 10, 0, 0, 0 },  // 10K UP
-  {  8, 140, 10, 0, 0, 0 },  // 10K BELL
-  {  9, 120, 10, 0, 0, 0 },  // 100K BELL
-  { 10, 120, 10, 0, 0, 0 },  // SELECT BELL
-  { 11,  40,  0, 0, 0, 0 },  // LAMP SCORE.  PWM MOSFET.  Initial brightness for LED Score lamps (0..255)  40 is full bright @ 12vdc.
-  { 12,  40,  0, 0, 0, 0 }   // LAMP HEAD G.I./TILT.  PWM MOSFET.  Initial brightness for LED G.I. and Tilt lamps (0..255)
+  {  5, 120, 10, 0, 0, 0 },  // CREDIT UP.   timeOn 10 (=100ms); not score-motor paced.
+  {  6, 150, 10, 0, 0, 0 },  // CREDIT DOWN. timeOn 10 (=100ms); not score-motor paced.
+  {  7, 200,  6, 0, 0, 0 },  // 10K UP. 6 ticks ON (60ms) + 8 ticks rest (80ms) = 140ms cycle (<147ms).
+  {  8, 150,  5, 0, 0, 0 },  // 10K BELL. 5 ticks ON (50ms) + 8 ticks rest (80ms) = 130ms cycle (<147ms).
+  {  9, 150,  5, 0, 0, 0 },  // 100K BELL. 5 ticks ON (50ms) + 8 ticks rest (80ms) = 130ms cycle (<147ms).
+  { 10, 150,  5, 0, 0, 0 },  // SELECT BELL. Not required to meet 147ms; uses default rest.
+  { 11,  40,  0, 0, 0, 0 },  // LAMP SCORE (timeOn=0 -> no pulse timing).
+  { 12,  40,  0, 0, 0, 0 }   // LAMP HEAD G.I./TILT (timeOn=0).
 };
 
 // *** MISC CONSTANTS AND GLOBALS ***
@@ -103,34 +112,66 @@ int currentScore               =  0;    // Current game score (0..999).
 int targetScore                =  0;    // NEW: merged desired final score (0..999) updated by incoming RS485 score deltas.
 
 unsigned long lastLoopTime     =  0;    // Used to track 10ms loop timing.
-const int8_t REST_PERIOD_TICKS = -8;    // Number of 10ms ticks for coil rest period (i.e. 80ms)
 
 bool debugOn    = false;
 
-// ---------------- Score adjust timing constants (ms) ----------------
-// Tune these to match the real mechanism timings (mechanical measurements can refine these).
-const unsigned SCORE_10K_STEP_MS   = 100;  // spacing between single 10K steps within a batch
-const unsigned SCORE_BATCH_GAP_MS  = 500;  // spacing between batches of up to 5x10K
-const unsigned SCORE_100K_STEP_MS  = 250;  // spacing between successive 100K advances
+// --- ADD RAPID-FIRE REST CONSTANTS (place near other globals) ---
+// Rapid-fire devices (10K Unit, 10K Bell, 100K Bell) may have timeOn up to 6 ticks (60ms).
+// They must be able to re-fire every 147ms score motor sub-step.
+// Fixed rest for those = 8 ticks (80ms) so: 60ms ON + 80ms REST = 140ms < 147ms.
+const int8_t RAPID_REST_TICKS   = -8;  // 80ms rest for rapid-fire scoring coils
+const int8_t DEFAULT_REST_TICKS = -8;  // Existing rest for other pulse coils (credits, select bell, etc.)
 
-// ---------------- Simplified non-blocking score-adjust state (globals) ----------------
-// Phases removed; we now do single-step pacing only.
-static bool scoreAdjustActive          = false;  // true while adjustments in progress
-static unsigned long scoreAdjustLastMs =     0;  // timestamp of last attempted mechanical step
+// Helper to identify rapid-fire scoring coils
+static inline bool isRapidFireDevice(byte idx) {
+  return (idx == DEV_IDX_10K_UP) || (idx == DEV_IDX_10K_BELL) || (idx == DEV_IDX_100K_BELL);
+}
 
 // Add command queue (FIFO) for sequential execution:
 static int  scoreCmdQueue[8];          // up to 8 pending commands
 static byte scoreCmdHead = 0;          // dequeue index
 static byte scoreCmdTail = 0;          // enqueue index
-static int  activeDeltaRemaining = 0;  // steps (10K units) left in current command
 static int  activeDirection      = 0;  // +1 or -1 for current command
 
-// --- 100K bulk adjust state ---
-static bool hundredKActive          = false;
-static int  hundredKStepsRemaining  = 0;
-static int  hundredKDirection       = 0;
-static unsigned long hundredKLastMs = 0;
-static byte hundredKQueuedSteps     = 0;
+// Score motor timing (modifiable)
+const unsigned SCORE_MOTOR_CYCLE_MS = 882;                 // one 1/4 revolution of score motor (ms)
+const unsigned SCORE_MOTOR_STEPS    = 6;                   // sub-steps per 1/4 rev (up to 5 advances + 1 rest)
+const unsigned SCORE_MOTOR_STEP_MS  = SCORE_MOTOR_CYCLE_MS / SCORE_MOTOR_STEPS; // spacing per sub-step (ms)
+
+const byte SCORE_RESET_PHASE_REV_HIGH   = 0;
+const byte SCORE_RESET_PHASE_10K_CYCLE1 = 1;
+const byte SCORE_RESET_PHASE_10K_CYCLE2 = 2;
+const byte SCORE_RESET_PHASE_DONE       = 3;
+
+// State used when executing batched (multi-step) 10K adjustments
+static bool       scoreAdjustActive  = false;   // true while a batch is executing
+static bool   scoreAdjustMotorMode   = false;  // true when current 10K command uses motor pacing
+static bool scoreCycleHundred      = false; // true if current motor cycle is hundredK-type
+static byte   scoreAdjustCycleIndex  = 0;      // 0..(SCORE_MOTOR_STEPS-1) index into sub-step
+static byte cycleActionLimit       = 0;   // planned advances in this cycle (1..5)
+static unsigned long scoreAdjustLastMs = 0;       // last timestamp (ms) a slot or single pulse was attempted
+static unsigned long motorCycleStartMs = 0;  // Timestamp when current motor cycle began
+static bool lastCommandWasMotor = false;      // True if current command uses motor cycle timing
+static bool motorPersistent     = false;      // True if command started as multi-unit (>1) and must remain motor-paced even for final single
+
+static bool  resetActive            = false;
+static byte  resetPhase             = SCORE_RESET_PHASE_DONE;
+static byte  resetCycleIndex        = 0;        // 0..(SCORE_MOTOR_STEPS-1) within current motor cycle
+static unsigned long resetLastMs    = 0;        // pacing timestamp
+static int   reset10KStepsRemaining = 0;        // total 10K increments still to perform (6..10 or 1..5)
+
+// High reversal pacing
+static int  resetHighCurrent      = 0;   // current high (millions*10 + hundredK) value during reversal (0..99)
+static int  resetTensKStart       = 0;   // tensK digit to hold constant during high reversal
+static int  resetHighUnitsRemaining   = 0;     // number of 100K units (millions*10 + hundredK)
+static unsigned long resetHighLastMs  = 0;     // timestamp of last high decrement
+static unsigned resetHighIntervalMs   = 0;     // ms between high decrements during reversal
+static unsigned long resetHighCycleStartMs = 0;
+const unsigned RESET_HIGH_FIXED_INTERVAL_MS = 8;  // ms between rapid high (100K) reversal decrements
+
+// ---------------- Unified batch decomposition state ----------------
+static int  batchHundredsRemaining = 0;   // number of 100K steps left in current batch (each == 10 units)
+static int  batchTensRemaining     = 0;   // number of 10K steps left in current batch
 
 // *****************************************************************************************
 // **************************************  S E T U P  **************************************
@@ -172,7 +213,7 @@ void setup() {
   // Insert a delay() in order to give the Digole 2004 LCD time to power up and be ready to receive commands (esp. the 115K speed command).
   delay(750);  // 500ms was occasionally not enough.
   // We must pass parms to the constructor (vs begin) because needed by parent DigoleSerialDisp.
-  pLCD2004 = new Pinball_LCD(&Serial1, SERIAL1_SPEED);  // Instantiate the object and assign the global pointer.
+  pLCD2004 = new Pinball_LCD(&Serial1, SERIAL1_SPEED);  // C++ quirk: no parens in ctor call if no parms; else thinks it's fn decl'n.
   pLCD2004->begin();  // 20-char x 4-line LCD display via Serial 1.
   pLCD2004->println(lcdString);  // Display app version, defined above.
 
@@ -205,9 +246,9 @@ void loop() {
 
   // Run non-blocking score adjustment state machine
   processScoreAdjust();
+  processScoreReset();  // handle active score reset sequence
 
   // Other housekeeping (score lamp updates, switch reads, etc.)
-  processHundredKAdjust();    // bulk 100K jumps
 
 }  // End of loop()
 
@@ -326,22 +367,42 @@ void processMessage(byte t_msgType) {
       }
       break;
 
-    // UPDATE Score reset and absolute handlers (inside processMessage switch):
+      // PATCH 2: Remove extra 10K Unit coil pulse at start of reset (RS485_TYPE_MAS_TO_SLV_SCORE_RESET)
+      //          so only the planned reset sequence drives 1–10 pulses.
+      // In processMessage() switch, replace the reset case body with:
     case RS485_TYPE_MAS_TO_SLV_SCORE_RESET:
-      pLCD2004->println("Score reset");
-      currentScore = 0;
-      targetScore  = 0;
-      // Flush score command queue
-      scoreCmdHead = scoreCmdTail = 0;
-      scoreAdjustActive = false;
-      activeDeltaRemaining = 0;
-      activeDirection = 0;
-      displayScore(currentScore);
-      saveScoreToEEPROM(currentScore);
+      if (!resetActive) {
+        scoreCmdHead = scoreCmdTail = 0;
+        scoreAdjustActive = false;
+
+        int startScore = currentScore;
+        int tensK    = startScore % 10;
+        int hundredK = (startScore / 10) % 10;
+        int millions = (startScore / 100) % 10;
+
+        resetHighCurrent        = millions * 10 + hundredK;
+        resetHighUnitsRemaining = millions * 10 + hundredK;
+        resetTensKStart         = tensK;
+
+        resetHighIntervalMs     = (resetHighUnitsRemaining > 0) ? RESET_HIGH_FIXED_INTERVAL_MS : 0;
+        resetHighLastMs         = millis();
+        resetHighCycleStartMs   = resetHighLastMs;
+
+        int rawSteps = (10 - tensK) % 10;
+        if (tensK == 0) rawSteps = 10;
+        reset10KStepsRemaining = rawSteps;
+
+        resetPhase      = SCORE_RESET_PHASE_REV_HIGH;
+        resetCycleIndex = 0;
+        resetLastMs     = millis() - SCORE_MOTOR_STEP_MS;
+        resetActive     = true;
+
+        pLCD2004->println("Reset begin");
+      }
       break;
 
     case RS485_TYPE_MAS_TO_SLV_SCORE_ABS:
-      {
+     {
       int absScore = 0;
       pMessage->getMAStoSLVScoreAbs(&absScore);
       int newScore = constrain(absScore, 0, 999);
@@ -349,45 +410,57 @@ void processMessage(byte t_msgType) {
       targetScore  = newScore;
       scoreCmdHead = scoreCmdTail = 0;
       scoreAdjustActive = false;
-      activeDeltaRemaining = 0;
       activeDirection = 0;
       snprintf(lcdString, sizeof(lcdString), "Score set %u", (unsigned)currentScore);
       pLCD2004->println(lcdString);
       displayScore(currentScore);
       saveScoreToEEPROM(currentScore);
     }
-      break;
-
-    case RS485_TYPE_MAS_TO_SLV_SCORE_INC_10K:  // Increment score update (1..999 in 10,000s)
-      {
-        int incAmount = 0;
-        pMessage->getMAStoSLVScoreInc10K(&incAmount);
-        snprintf(lcdString, sizeof(lcdString), "Score inc %u", (unsigned)incAmount);
-        pLCD2004->println(lcdString);
-        requestScoreAdjust(incAmount);   // NEW: non-blocking mechanical update
-      }
-      break;
-
-    case RS485_TYPE_MAS_TO_SLV_SCORE_INC_100K:
-      {
-        int incHundredKs = 0;
-        pMessage->getMAStoSLVScoreInc100K(&incHundredKs); // each unit == one 100K jump
-        if (incHundredKs < 1) incHundredKs = 1;
-        snprintf(lcdString, sizeof(lcdString), "+%u00K req", (unsigned)incHundredKs);
-        pLCD2004->println(lcdString);
-        requestScoreAdjust100K(incHundredKs);
-      }
     break;
 
-    case RS485_TYPE_MAS_TO_SLV_SCORE_DEC_10K:  // Decrement score update (-999..-1 in 10,000s) (won't go below zero)
-      {
-        int decAmount = 0;
-        pMessage->getMAStoSLVScoreDec10K(&decAmount);
-        snprintf(lcdString, sizeof(lcdString), "Score dec %u", (unsigned)decAmount);
+      // MODIFY: processMessage() case RS485_TYPE_MAS_TO_SLV_SCORE_INC_10K to accept signed (-999..999) and clamp/queue prune
+    case RS485_TYPE_MAS_TO_SLV_SCORE_INC_10K:  // Increment (or decrement if negative) score update (-999..999 in 10Ks)
+    {
+      int incAmount = 0;
+      pMessage->getMAStoSLVScoreInc10K(&incAmount);  // now treated as signed
+      // Hard clamp incoming parameter range
+      if (incAmount > 999) incAmount = 999;
+      else if (incAmount < -999) incAmount = -999;
+
+      // If already at boundary and trying to go further, ignore
+      if ((incAmount > 0 && targetScore >= 999) || (incAmount < 0 && targetScore <= 0)) {
+        // Prune any already queued same-direction commands (saturation)
+        pruneQueuedAtBoundary(incAmount > 0 ? 1 : -1);
+        snprintf(lcdString, sizeof(lcdString), "Sat ignore %d", incAmount);
         pLCD2004->println(lcdString);
-        requestScoreAdjust(-decAmount);  // NEW: non-blocking mechanical update
+        break;
       }
-      break;
+
+      // Adjust incAmount so targetScore stays within 0..999 considering existing queued work
+      long prospective = (long)targetScore + incAmount;
+      if (prospective > 999) {
+        incAmount = 999 - targetScore;
+      }
+      else if (prospective < 0) {
+        incAmount = -targetScore;
+      }
+
+      if (incAmount == 0) {
+        // Nothing effective to do (already saturated after adjustment)
+        pruneQueuedAtBoundary((targetScore == 999) ? 1 : (targetScore == 0 ? -1 : 0));
+        break;
+      }
+
+      snprintf(lcdString, sizeof(lcdString), "Score adj %d", incAmount);
+      pLCD2004->println(lcdString);
+
+      requestScoreAdjust(incAmount);
+
+      // If we just saturated the target after enqueue, prune future same-direction commands
+      if (targetScore == 999) pruneQueuedAtBoundary(1);
+      else if (targetScore == 0) pruneQueuedAtBoundary(-1);
+    }
+    break;
 
     case RS485_TYPE_MAS_TO_SLV_BELL_10K:  // Ring the 10K bell
       pLCD2004->println("10K Bell");
@@ -441,168 +514,413 @@ void processMessage(byte t_msgType) {
   }
 }
 
+// --- MODIFY updateDeviceTimers(): assign rest based on rapid-fire classification ---
 void updateDeviceTimers() {
-  // Call this once per 10ms tick to update timers and start queued activations safely.
   for (byte i = 0; i < NUM_DEVS; ++i) {
     int8_t& ct = deviceParm[i].countdown;
-    if (ct > 0) {
-      // Active phase
+
+    if (ct > 0) {              // Active phase
       ct--;
       if (ct == 0) {
-        // Turn off or set hold level
+        // End active: either go to hold (unused here) or turn off then rest.
         if (deviceParm[i].powerHold > 0) {
           analogWrite(deviceParm[i].pinNum, deviceParm[i].powerHold);
-          // If you want a held state, decide how to represent it (here we treat hold as staying on)
-        } else {
-          analogWrite(deviceParm[i].pinNum, LOW);
+          // Hold coils (none on Slave) would stay with countdown==0.
         }
-        // Enter rest period
-        ct = REST_PERIOD_TICKS;  // i.e. -8 = 80ms rest
-      }
-      continue;
-    }
-    if (ct < 0) {
-      // Rest phase: increment toward 0
-      ct++;
-      if (ct == 0) {
-        // Rest finished, see if there is a queued request to start
-        if (deviceParm[i].queueCount > 0) {
-          // Safety check before starting
-          if (canActivateDeviceNow(i)) {
-            deviceParm[i].queueCount--;
-            analogWrite(deviceParm[i].pinNum, deviceParm[i].powerInitial);
-            ct = deviceParm[i].timeOn; // start active countdown
+        else {
+          analogWrite(deviceParm[i].pinNum, LOW);
+          if (deviceParm[i].timeOn > 0) {
+            // Enter rest: rapid-fire coils use RAPID_REST_TICKS, others DEFAULT_REST_TICKS.
+            ct = isRapidFireDevice(i) ? RAPID_REST_TICKS : DEFAULT_REST_TICKS;
           }
           else {
-            // Unsafe to start (e.g. credit wheel full). Discard queued credit requests.
-            if (i == DEV_IDX_CREDIT_UP) {
-              // Notify / log and discard queue
-              snprintf(lcdString, sizeof(lcdString), "Credit FULL, discarding %u", deviceParm[i].queueCount);
-              pLCD2004->println(lcdString);
-              deviceParm[i].queueCount = 0;
-              // Optional: inform Master explicitly
-              pMessage->sendSLVtoMASCreditStatus(hasCredits());
-            }
-            // For other devices you may choose to keep queueCount or drop it.
+            ct = 0; // Non-pulse devices (lamps)
           }
         }
       }
       continue;
     }
-    // ct == 0 (idle) - if there is queued activation and we are idle, try to start immediately
+
+    if (ct < 0) {              // Rest phase
+      ct++;
+      if (ct == 0 && deviceParm[i].queueCount > 0) {
+        if (canActivateDeviceNow(i)) {
+          deviceParm[i].queueCount--;
+          analogWrite(deviceParm[i].pinNum, deviceParm[i].powerInitial);
+          deviceParm[i].countdown = deviceParm[i].timeOn;
+        }
+        else if (i == DEV_IDX_CREDIT_UP) {
+          snprintf(lcdString, sizeof(lcdString), "Credit FULL discard %u", deviceParm[i].queueCount);
+          pLCD2004->println(lcdString);
+          deviceParm[i].queueCount = 0;
+          pMessage->sendSLVtoMASCreditStatus(hasCredits());
+        }
+      }
+      continue;
+    }
+
+    // Idle (ct == 0)
     if (deviceParm[i].queueCount > 0) {
       if (canActivateDeviceNow(i)) {
         deviceParm[i].queueCount--;
         analogWrite(deviceParm[i].pinNum, deviceParm[i].powerInitial);
         deviceParm[i].countdown = deviceParm[i].timeOn;
       }
-      else {
-        if (i == DEV_IDX_CREDIT_UP) {
-          // Same handling as above
-          snprintf(lcdString, sizeof(lcdString), "Credit FULL, discarding %u", deviceParm[i].queueCount);
-          pLCD2004->println(lcdString);
-          deviceParm[i].queueCount = 0;
-          pMessage->sendSLVtoMASCreditStatus(hasCredits());
-        }
+      else if (i == DEV_IDX_CREDIT_UP) {
+        snprintf(lcdString, sizeof(lcdString), "Credit FULL discard %u", deviceParm[i].queueCount);
+        pLCD2004->println(lcdString);
+        deviceParm[i].queueCount = 0;
+        pMessage->sendSLVtoMASCreditStatus(hasCredits());
       }
     }
   }
 }
 
-// ====== ADD (OR REPLACE OLD VERSION OF) requestScoreAdjust() AND HELPERS ======
-// Queue a requested delta (in 10K units). Merged into targetScore so bursts accumulate.
-// Existing comments about mechanical behavior elsewhere remain valid.
+// REPLACE entire requestScoreAdjust() with:
 void requestScoreAdjust(int delta10Ks) {
   if (delta10Ks == 0) return;
-  // Clamp individual command magnitude
+  if ((delta10Ks > 0 && targetScore >= 999) || (delta10Ks < 0 && targetScore <= 0)) return;
+
   if (delta10Ks > 999)  delta10Ks = 999;
   if (delta10Ks < -999) delta10Ks = -999;
 
-  // Compute prospective final targetScore (for external reporting if needed)
-  // We keep targetScore as "final after queue drains".
-  targetScore += delta10Ks;
-  if (targetScore < 0)   targetScore = 0;
-  if (targetScore > 999) targetScore = 999;
+  if (delta10Ks > 0 && targetScore + delta10Ks > 999) delta10Ks = 999 - targetScore;
+  if (delta10Ks < 0 && targetScore + delta10Ks < 0)   delta10Ks = -targetScore;
+  if (delta10Ks == 0) return;
 
-  // Enqueue (drop if full)
   byte nextTail = (byte)((scoreCmdTail + 1) % (sizeof(scoreCmdQueue) / sizeof(scoreCmdQueue[0])));
   if (nextTail == scoreCmdHead) {
-    snprintf(lcdString, sizeof(lcdString), "Score Q FULL drop %d", delta10Ks);
+    snprintf(lcdString, sizeof(lcdString), "Score Q OVERFLOW %d", delta10Ks);
     pLCD2004->println(lcdString);
-    return;
+    while (true) { }
   }
   scoreCmdQueue[scoreCmdTail] = delta10Ks;
   scoreCmdTail = nextTail;
 
-  // If idle, start immediately
+  targetScore += delta10Ks;
+  if (targetScore < 0) targetScore = 0;
+  if (targetScore > 999) targetScore = 999;
+
   if (!scoreAdjustActive) {
     int cmd = scoreCmdQueue[scoreCmdHead];
     scoreCmdHead = (byte)((scoreCmdHead + 1) % (sizeof(scoreCmdQueue) / sizeof(scoreCmdQueue[0])));
-    activeDirection      = (cmd > 0) ? 1 : -1;
-    activeDeltaRemaining = abs(cmd);
-    scoreAdjustActive    = true;
-    scoreAdjustLastMs    = millis() - SCORE_10K_STEP_MS; // allow immediate first step
-  }
-}
+    activeDirection = (cmd > 0) ? 1 : -1;
+    int magnitude = abs(cmd);
 
-static void scoreAdjustFinishIfDone() {
-  // Called when current command completed
-  if (activeDeltaRemaining == 0) {
-    // Load next command if present
-    if (scoreCmdHead != scoreCmdTail) {
-      int cmd = scoreCmdQueue[scoreCmdHead];
-      scoreCmdHead = (byte)((scoreCmdHead + 1) % (sizeof(scoreCmdQueue) / sizeof(scoreCmdQueue[0])));
-      activeDirection      = (cmd > 0) ? 1 : -1;
-      activeDeltaRemaining = abs(cmd);
-      scoreAdjustLastMs    = millis() - SCORE_10K_STEP_MS;
-      return;
+    if (magnitude % 10 == 0) {
+      batchHundredsRemaining = magnitude / 10;
+      batchTensRemaining     = 0;
     }
-    // Queue empty -> finalize
-    scoreAdjustActive = false;
-    activeDirection   = 0;
-    saveScoreToEEPROM(currentScore);
-    snprintf(lcdString, sizeof(lcdString), "Score now %u", (unsigned)currentScore);
-    pLCD2004->println(lcdString);
-    Serial.println(lcdString);
+    else {
+      batchHundredsRemaining = 0;
+      batchTensRemaining     = magnitude;
+    }
+
+    scoreAdjustMotorMode  = false;
+    scoreCycleHundred     = false;
+    cycleActionLimit      = 0;
+    scoreAdjustCycleIndex = 0;
+
+    // Decide initial mode and persistence
+    motorPersistent = false;
+    if (batchHundredsRemaining > 1) {
+      scoreAdjustMotorMode = true;
+      scoreCycleHundred    = true;
+      cycleActionLimit     = (byte)min(batchHundredsRemaining, 5);
+      motorPersistent      = true;
+      lastCommandWasMotor  = true;
+      motorCycleStartMs    = millis();
+    }
+    else if (batchHundredsRemaining == 1) {
+      // single 100K (non-motor)
+      lastCommandWasMotor  = false;
+      motorCycleStartMs    = millis();
+    }
+    else if (batchTensRemaining > 1) {
+      scoreAdjustMotorMode = true;
+      scoreCycleHundred    = false;
+      cycleActionLimit     = (byte)min(batchTensRemaining, 5);
+      motorPersistent      = true;
+      lastCommandWasMotor  = true;
+      motorCycleStartMs    = millis();
+    }
+    else { // single 10K
+      lastCommandWasMotor  = false;
+      motorCycleStartMs    = millis();
+    }
+
+    scoreAdjustActive = true;
+    scoreAdjustLastMs = millis() - SCORE_MOTOR_STEP_MS;
   }
 }
 
-void processScoreAdjust() {
-  if (!scoreAdjustActive) return;
-  if (activeDeltaRemaining == 0) { scoreAdjustFinishIfDone(); return; }
+// -------- FINISH / MERGE NEXT BATCH (FIXED) --------
+// REPLACE scoreAdjustFinishIfDone() with this version:
+static void scoreAdjustFinishIfDone() {
+  // Batch not done yet
+  if (batchHundredsRemaining != 0 || batchTensRemaining != 0) return;
+  // Should never finish while still flagged motor mode
+  if (scoreAdjustMotorMode) return;
 
   unsigned long now = millis();
-  if (now - scoreAdjustLastMs < SCORE_10K_STEP_MS) return; // pacing
-  scoreAdjustLastMs = now;
+  // Motor-based command: full cycle rest; single pulse: one step rest
+  unsigned requiredMs = lastCommandWasMotor ? SCORE_MOTOR_CYCLE_MS : SCORE_MOTOR_STEP_MS;
+  if (now - motorCycleStartMs < requiredMs) {
+    return;  // Still resting
+  }
 
-  // Require 10K coil idle
+  // Start next queued command if any
+  if (scoreCmdHead != scoreCmdTail) {
+    int cmd = scoreCmdQueue[scoreCmdHead];
+    scoreCmdHead = (byte)((scoreCmdHead + 1) % (sizeof(scoreCmdQueue) / sizeof(scoreCmdQueue[0])));
+    activeDirection = (cmd > 0) ? 1 : -1;
+    int magnitude = abs(cmd);
+
+    if (magnitude % 10 == 0) {
+      batchHundredsRemaining = magnitude / 10;
+      batchTensRemaining     = 0;
+    }
+    else {
+      batchHundredsRemaining = 0;
+      batchTensRemaining     = magnitude;
+    }
+
+    scoreAdjustMotorMode  = false;
+    scoreCycleHundred     = false;
+    cycleActionLimit      = 0;
+    scoreAdjustCycleIndex = 0;
+
+    motorPersistent       = false;
+    if (batchHundredsRemaining > 1) {
+      scoreAdjustMotorMode = true;
+      scoreCycleHundred    = true;
+      cycleActionLimit     = (byte)min(batchHundredsRemaining, 5);
+      motorPersistent      = true;
+      lastCommandWasMotor  = true;
+      motorCycleStartMs    = millis();
+    }
+    else if (batchHundredsRemaining == 1) {
+      lastCommandWasMotor  = false;
+      motorCycleStartMs    = millis();
+    }
+    else if (batchTensRemaining > 1) {
+      scoreAdjustMotorMode = true;
+      scoreCycleHundred    = false;
+      cycleActionLimit     = (byte)min(batchTensRemaining, 5);
+      motorPersistent      = true;
+      lastCommandWasMotor  = true;
+      motorCycleStartMs    = millis();
+    }
+    else { // single 10K
+      lastCommandWasMotor  = false;
+      motorCycleStartMs    = millis();
+    }
+
+    scoreAdjustActive = true;
+    scoreAdjustLastMs = millis() - SCORE_MOTOR_STEP_MS; // allow immediate first advance
+    return;
+  }
+
+  // Queue empty: finalize
+  scoreAdjustActive     = false;
+  scoreAdjustMotorMode  = false;
+  scoreCycleHundred     = false;
+  activeDirection       = 0;
+  scoreAdjustCycleIndex = 0;
+  saveScoreToEEPROM(currentScore);
+  snprintf(lcdString, sizeof(lcdString), "Score now %u", (unsigned)currentScore);
+  pLCD2004->println(lcdString);
+  Serial.println(lcdString);
+}
+
+// -------- PROCESS SCORE ADJUST (UPDATED) --------
+void processScoreAdjust() {
+  if (!scoreAdjustActive || resetActive) return;
+
+  if (batchHundredsRemaining == 0 && batchTensRemaining == 0 && !scoreAdjustMotorMode) {
+    scoreAdjustFinishIfDone();
+    return;
+  }
+
+  unsigned long now = millis();
+  if (now - scoreAdjustLastMs < SCORE_MOTOR_STEP_MS) return;
   if (deviceParm[DEV_IDX_10K_UP].countdown != 0) return;
 
-  // Determine next logical score step
-  int nextScore = currentScore + activeDirection;
-  if (nextScore < 0) {
-    nextScore = 0;
-    activeDeltaRemaining = 0;  // cannot go further negative
-  } else if (nextScore > 999) {
-    nextScore = 999;
-    activeDeltaRemaining = 0;  // cannot go further positive
+  scoreAdjustLastMs = now;
+
+  // Non-motor singles
+  if (!scoreAdjustMotorMode) {
+    if (batchHundredsRemaining == 1) {
+      int nextScore = constrain(currentScore + activeDirection * 10, 0, 999);
+      if (nextScore != currentScore) {
+        activateDevice(DEV_IDX_10K_UP);
+        activateDevice(DEV_IDX_10K_BELL);
+        activateDevice(DEV_IDX_100K_BELL);
+        currentScore = nextScore;
+        displayScore(currentScore);
+      }
+      batchHundredsRemaining = 0;
+      lastCommandWasMotor = false;
+      motorCycleStartMs   = millis();  // START rest window for single 100K
+    }
+    else if (batchHundredsRemaining == 0 && batchTensRemaining == 1) {
+      int nextScore = constrain(currentScore + activeDirection, 0, 999);
+      if (nextScore != currentScore) {
+        activateDevice(DEV_IDX_10K_UP);
+        activateDevice(DEV_IDX_10K_BELL);
+        if ((nextScore % 10) == 0 || (activeDirection < 0 && (currentScore % 10) == 0)) {
+          activateDevice(DEV_IDX_100K_BELL);
+        }
+        currentScore = nextScore;
+        displayScore(currentScore);
+      }
+      batchTensRemaining = 0;
+      lastCommandWasMotor = false;
+      motorCycleStartMs   = millis();  // START rest window for single 10K
+    }
+    // Transition to motor cycles if more work
+    if (batchHundredsRemaining > 1) {
+      scoreAdjustMotorMode = true;
+      scoreCycleHundred    = true;
+      cycleActionLimit     = (byte)min(batchHundredsRemaining, 5);
+      scoreAdjustCycleIndex = 0;
+    }
+    else if (batchHundredsRemaining == 0 && batchTensRemaining > 1) {
+      scoreAdjustMotorMode = true;
+      scoreCycleHundred    = false;
+      cycleActionLimit     = (byte)min(batchTensRemaining, 5);
+      scoreAdjustCycleIndex = 0;
+    }
+    else if (batchHundredsRemaining == 0 && batchTensRemaining == 0) {
+      scoreAdjustFinishIfDone();
+    }
+    return;
   }
 
-  // Fire hardware only if we still have a step to apply
-  if (currentScore != nextScore) {
-    activateDevice(DEV_IDX_10K_UP);
-    activateDevice(DEV_IDX_10K_BELL);
-    if ((nextScore % 10) == 0) activateDevice(DEV_IDX_100K_BELL);
-    currentScore = nextScore;
-    displayScore(currentScore);
-    if (activeDeltaRemaining > 0) activeDeltaRemaining--;
-  } else {
-    // No movement possible; consume remaining to avoid deadlock
-    activeDeltaRemaining = 0;
+  // Motor cycle: 6 sub-steps (0..5): first 'cycleActionLimit' are advances; remainder are rests.
+  if (scoreAdjustCycleIndex < 6) {
+    if (scoreAdjustCycleIndex < cycleActionLimit) {
+      int stepUnits = scoreCycleHundred ? 10 : 1;
+      int nextScore = constrain(currentScore + activeDirection * stepUnits, 0, 999);
+
+      if (nextScore != currentScore) {
+        activateDevice(DEV_IDX_10K_UP);
+        activateDevice(DEV_IDX_10K_BELL);
+        if (scoreCycleHundred ||
+          (nextScore % 10) == 0 ||
+          (activeDirection < 0 && (currentScore % 10) == 0)) {
+          activateDevice(DEV_IDX_100K_BELL);
+        }
+        currentScore = nextScore;
+        displayScore(currentScore);
+
+        if (scoreCycleHundred) batchHundredsRemaining--;
+        else batchTensRemaining--;
+      }
+      else {
+        // Saturated mid-category
+        if (scoreCycleHundred) batchHundredsRemaining = 0;
+        else batchTensRemaining = 0;
+      }
+    }
   }
 
-  if (activeDeltaRemaining == 0) scoreAdjustFinishIfDone();
+  // In processScoreAdjust(), REPLACE the cycle completion block (inside motor mode) with:
+    // At end of a sub-step
+  scoreAdjustCycleIndex++;
+  if (scoreAdjustCycleIndex >= 6) {
+    // Full cycle elapsed (advances + rests)
+    scoreAdjustCycleIndex = 0;
+
+    if (scoreCycleHundred) {
+      if (batchHundredsRemaining > 0) { // still work
+        if (batchHundredsRemaining > 5) {
+          cycleActionLimit = 5;
+        }
+        else {
+          cycleActionLimit = (byte)batchHundredsRemaining; // may be 1
+        }
+        // Stay motor mode even if remainder == 1 if motorPersistent set
+        if (batchHundredsRemaining == 1 && !motorPersistent) {
+          // drop to single non-motor
+          scoreAdjustMotorMode = false;
+          lastCommandWasMotor  = false;
+          motorCycleStartMs    = millis();
+        }
+        else {
+          // continue motor cycle
+          scoreAdjustMotorMode = true;
+          lastCommandWasMotor  = true;
+          motorCycleStartMs    = millis();
+        }
+      }
+      else { // hundreds done
+        if (batchTensRemaining > 0) {
+          scoreCycleHundred = false;
+          if (batchTensRemaining > 5) {
+            cycleActionLimit = 5;
+          }
+          else {
+            cycleActionLimit = (byte)batchTensRemaining;
+          }
+          if (batchTensRemaining == 1 && !motorPersistent) {
+            // single tens, non-motor
+            scoreAdjustMotorMode = false;
+            lastCommandWasMotor  = false;
+            motorCycleStartMs    = millis();
+          }
+          else {
+            // If command originated as tens multi-unit (motorPersistent) keep motor mode even for final single
+            if (batchTensRemaining > 0) {
+              scoreAdjustMotorMode = true;
+              lastCommandWasMotor  = true;
+              motorCycleStartMs    = millis();
+            }
+            else {
+              scoreAdjustMotorMode = false;
+              lastCommandWasMotor  = motorPersistent; // finishing last motor cycle
+            }
+          }
+        }
+        else {
+          // No tens; command complete after this cycle
+          scoreAdjustMotorMode = false;
+        }
+      }
+    }
+    else { // tens cycles
+      if (batchTensRemaining > 0) {
+        if (batchTensRemaining > 5) {
+          cycleActionLimit = 5;
+        }
+        else {
+          cycleActionLimit = (byte)batchTensRemaining;
+        }
+        if (batchTensRemaining == 1 && !motorPersistent) {
+          // single non-motor
+          scoreAdjustMotorMode = false;
+          lastCommandWasMotor  = false;
+          motorCycleStartMs    = millis();
+        }
+        else {
+          // continue motor cycle (even if remainder 1) if persistent
+          scoreAdjustMotorMode = true;
+          lastCommandWasMotor  = true;
+          motorCycleStartMs    = millis();
+        }
+      }
+      else {
+        scoreAdjustMotorMode = false;
+      }
+    }
+  }
+
+  // If all work consumed and not in motor mode, attempt finish
+  if (batchHundredsRemaining == 0 && batchTensRemaining == 0 && !scoreAdjustMotorMode) {
+    scoreAdjustFinishIfDone();
+  }
 }
+
 // ====== END SCORE ADJUST BLOCK ======
 
 // ---- Restored helper function definitions ----
@@ -663,7 +981,6 @@ void startNewGame(byte t_mode) {  // Start a new game in the specified mode.
   // Flush queue/state
   scoreCmdHead = scoreCmdTail = 0;
   scoreAdjustActive = false;
-  activeDeltaRemaining = 0;
   activeDirection = 0;
   displayScore(currentScore);
   return;
@@ -705,63 +1022,119 @@ void displayScore(int t_score) {
   lastScore = t_score;
 }
 
-void requestScoreAdjust100K(int numHundredKs) {
-  if (numHundredKs <= 0) return;
-  if (numHundredKs > 50) numHundredKs = 50; // Safety clamp
-  if (scoreAdjustActive) { hundredKQueuedSteps += (byte)numHundredKs; return; }
-  if (hundredKActive)    { hundredKQueuedSteps += (byte)numHundredKs; return; }
-  hundredKActive         = true;
-  hundredKDirection      = 1;
-  hundredKStepsRemaining = numHundredKs;
-  hundredKLastMs         = millis() - SCORE_100K_STEP_MS;
-}
-
-void processHundredKAdjust() {
-  if (!hundredKActive) {
-    if (!scoreAdjustActive && hundredKQueuedSteps > 0) {
-      hundredKActive         = true;
-      hundredKDirection      = 1;
-      hundredKStepsRemaining = hundredKQueuedSteps;
-      hundredKQueuedSteps    = 0;
-      hundredKLastMs         = millis() - SCORE_100K_STEP_MS;
-    }
-    return;
-  }
+void processScoreReset() {
+  if (!resetActive) return;
 
   unsigned long now = millis();
-  if (now - hundredKLastMs < SCORE_100K_STEP_MS) return;
 
-  // Ensure 10K unit coil is idle before firing (sound effect)
-  if (deviceParm[DEV_IDX_10K_UP].countdown != 0) return;
+  // Phase 0: Rapid high reversal (millions+hundredK only)
+  if (resetPhase == SCORE_RESET_PHASE_REV_HIGH) {
+    // Perform as many single 100K decrements as time allows WITHOUT skipping values.
+    if (resetHighUnitsRemaining > 0) {
+      while (resetHighUnitsRemaining > 0 &&
+             (now - resetHighLastMs) >= resetHighIntervalMs) {
+        resetHighLastMs += resetHighIntervalMs;
 
-  hundredKLastMs = now;
+        resetHighCurrent--;
+        resetHighUnitsRemaining--;
+        if (resetHighCurrent < 0) {
+          resetHighCurrent = 0;
+          resetHighUnitsRemaining = 0;
+        }
 
-  if (hundredKStepsRemaining <= 0) {
-    hundredKActive = false;
-    if (!scoreAdjustActive && hundredKQueuedSteps > 0) {
-      hundredKActive         = true;
-      hundredKStepsRemaining = hundredKQueuedSteps;
-      hundredKQueuedSteps    = 0;
-      hundredKLastMs         = millis() - SCORE_100K_STEP_MS;
-    } else {
-      saveScoreToEEPROM(currentScore);
-      snprintf(lcdString, sizeof(lcdString), "Score now %u", (unsigned)currentScore);
-      pLCD2004->println(lcdString);
-      Serial.println(lcdString);
+        int newMillions = resetHighCurrent / 10;
+        int newHundredK = resetHighCurrent % 10;
+        int tensK       = resetTensKStart;
+
+        currentScore = newMillions * 100 + newHundredK * 10 + tensK;
+        displayScore(currentScore);
+      }
+    }
+
+    // When all high units are cleared, wait until full motor cycle time has elapsed to mimic 1/4 rev.
+    if (resetHighUnitsRemaining == 0 &&
+        (now - resetHighCycleStartMs) >= SCORE_MOTOR_CYCLE_MS) {
+      // Transition to tensK cycle(s)
+      resetPhase = SCORE_RESET_PHASE_10K_CYCLE1;
+      resetCycleIndex   = 0;
+      resetLastMs       = now - SCORE_MOTOR_STEP_MS; // allow immediate first tensK sub-step
     }
     return;
   }
 
-  // Apply one 100K jump (+10 internal units)
-  int newScore = currentScore + (hundredKDirection * 10);
-  if (newScore > 999) newScore = 999;
+  // Shared pacing for tensK cycles (use motor sub-step timing 147ms)
+  if ((now - resetLastMs) < SCORE_MOTOR_STEP_MS) return;
+  resetLastMs = now;
+  byte localIndex = resetCycleIndex;
+  resetCycleIndex = (byte)((resetCycleIndex + 1) % SCORE_MOTOR_STEPS);
 
-  // Fire 10K unit (sound) and 100K bell only (NO 10K bell)
-  activateDevice(DEV_IDX_10K_UP);
-  activateDevice(DEV_IDX_100K_BELL);
+  // Phase 1 & 2: tensK advancement in batches of up to 5 (+rest)
+  if (resetPhase == SCORE_RESET_PHASE_10K_CYCLE1 ||
+      resetPhase == SCORE_RESET_PHASE_10K_CYCLE2) {
 
-  currentScore = newScore;
-  displayScore(currentScore);
+    bool secondCycle = (resetPhase == SCORE_RESET_PHASE_10K_CYCLE2);
 
-  hundredKStepsRemaining--;
+    if (localIndex < (SCORE_MOTOR_STEPS - 1) && reset10KStepsRemaining > 0) {
+      // Advance tensK ONLY; do NOT increment hundredK/millions during reset.
+      int tensK    = currentScore % 10;
+      int hundredK = (currentScore / 10) % 10;
+      int millions = (currentScore / 100) % 10;
+
+      int newTensK = (tensK + 1) % 10;
+
+      // Suppress hundredK/million roll during reset: when newTensK == 0 we just show 0 tensK (lamps off for that digit)
+      if (newTensK == 0) {
+        // Ring 100K bell to emulate boundary sound, but do not change hundredK lamp group in reset context.
+        activateDevice(DEV_IDX_100K_BELL);
+      }
+
+      activateDevice(DEV_IDX_10K_UP);
+      activateDevice(DEV_IDX_10K_BELL);
+
+      currentScore = millions * 100 + hundredK * 10 + newTensK;
+      displayScore(currentScore);
+      reset10KStepsRemaining--;
+    }
+
+    // After rest sub-step (cycleIndex == 0) decide next phase.
+    if (resetCycleIndex == 0) {
+      if (reset10KStepsRemaining == 0) {
+        resetPhase = SCORE_RESET_PHASE_DONE;
+      } else if (!secondCycle) {
+        // Need a second tensK cycle if more than 5 steps remain.
+        resetPhase = SCORE_RESET_PHASE_10K_CYCLE2;
+      } else {
+        // Second cycle completed but still remaining (shouldn't happen unless >10 requested)
+        resetPhase = SCORE_RESET_PHASE_DONE;
+      }
+    }
+    return;
+  }
+
+  // Phase done
+  if (resetPhase == SCORE_RESET_PHASE_DONE) {
+    resetActive = false;
+    saveScoreToEEPROM(currentScore);
+    pLCD2004->println("Reset done");
+  }
+}
+
+// -------- PRUNE QUEUE AT BOUNDARY (UPDATED) --------
+static void pruneQueuedAtBoundary(int saturatedDir) {
+  if (scoreCmdHead == scoreCmdTail) return;
+  int tmp[8]; byte wt = 0; byte rd = scoreCmdHead;
+  while (rd != scoreCmdTail) {
+    int cmd = scoreCmdQueue[rd];
+    if (((cmd > 0) ? 1 : -1) != saturatedDir) tmp[wt++] = cmd;
+    rd = (byte)((rd + 1) % (sizeof(scoreCmdQueue) / sizeof(scoreCmdQueue[0])));
+  }
+  scoreCmdHead = 0; scoreCmdTail = wt;
+  for (byte i = 0; i < wt; i++) scoreCmdQueue[i] = tmp[i];
+  if (scoreAdjustActive && activeDirection == saturatedDir) {
+    // Terminate current batch
+    batchHundredsRemaining = 0;
+    batchTensRemaining     = 0;
+    scoreAdjustMotorMode   = false;
+    scoreAdjustActive      = false;
+  }
 }
