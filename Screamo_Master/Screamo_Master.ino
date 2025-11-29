@@ -549,18 +549,63 @@ void setup() {
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
   pMessage->sendMAStoSLVGILamp(true);
   delay(500);
+
+
+
+
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLVCreditInc(3);
+  delay(500);
+
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLVCreditInc(1);
+  pMessage->sendMAStoSLVCreditInc(1);
+  pMessage->sendMAStoSLVCreditInc(1);
+  delay(500);
+
+  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  pMessage->sendMAStoSLVCreditDec();
+  pMessage->sendMAStoSLVCreditDec();
+  pMessage->sendMAStoSLVCreditDec();
+  pMessage->sendMAStoSLVCreditDec();
+  pMessage->sendMAStoSLVCreditDec();
+  pMessage->sendMAStoSLVCreditDec();
+  delay(500);
+
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
   pMessage->sendMAStoSLVBell10K();
+  pMessage->sendMAStoSLVBell10K();
+  pMessage->sendMAStoSLVBell10K();
+  pMessage->sendMAStoSLVBell10K();
+  pMessage->sendMAStoSLVBell10K();
   delay(500);
+
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
   pMessage->sendMAStoSLVBell100K();
+  pMessage->sendMAStoSLVBell100K();
+  pMessage->sendMAStoSLVBell100K();
+  pMessage->sendMAStoSLVBell100K();
+  pMessage->sendMAStoSLVBell100K();
   delay(500);
+
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
   pMessage->sendMAStoSLVBellSelect();
+  pMessage->sendMAStoSLVBellSelect();
+  pMessage->sendMAStoSLVBellSelect();
+  pMessage->sendMAStoSLVBellSelect();
+  pMessage->sendMAStoSLVBellSelect();
   delay(500);
+
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
   pMessage->sendMAStoSLV10KUnitPulse();
+  pMessage->sendMAStoSLV10KUnitPulse();
+  pMessage->sendMAStoSLV10KUnitPulse();
+  pMessage->sendMAStoSLV10KUnitPulse();
+  pMessage->sendMAStoSLV10KUnitPulse();
   delay(500);
+
+  while (true) {}  // **************************************************************************
+
   while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
   pMessage->sendMAStoSLVBell10K();
   pMessage->sendMAStoSLV10KUnitPulse();
