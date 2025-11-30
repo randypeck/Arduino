@@ -61,7 +61,7 @@ Pinball_Message* pMessage = nullptr;
 Pinball_Centipede* pShiftRegister = nullptr;  // Only need ONE object for one or two Centipede boards (SNS only has ONE Centipede.)
 
 // Define struct to store coil/motor power and time parameters.  Coils that may be held on include a hold strength parameter.
-struct deviceParmStruct {
+struct DeviceParmStruct {
   byte   pinNum;        // Arduino pin number for this coil/motor
   byte   powerInitial;  // 0..255 PWM power level when first energized
   byte   timeOn;        // Number of 10ms loop ticks (NOT raw ms). 4 => ~40ms.
@@ -89,7 +89,7 @@ const byte NUM_DEVS = 8;
 //   powerHold: 0..255 PWM power level to hold after initial timeOn; 0 = turn off after timeOn
 //   countdown: current countdown in 10ms ticks; -1..-8 = rest period, 0 = idle, >0 = active
 //   queueCount: number of pending activation requests while coil busy/resting
-deviceParmStruct deviceParm[NUM_DEVS] = {
+DeviceParmStruct deviceParm[NUM_DEVS] = {
   {  5, 100, 10, 0, 0, 0 },  // CREDIT UP.   timeOn 10 (=100ms); not score-motor paced.
   {  6, 140, 10, 0, 0, 0 },  // CREDIT DOWN. timeOn 10 (=100ms); not score-motor paced.
   {  7, 150,  5, 0, 0, 0 },  // 10K UP. 5 ticks ON (50ms) + 8 ticks rest (80ms) = 130ms cycle (<147ms).
@@ -117,7 +117,7 @@ unsigned long lastLoopTime       =  0;    // Used to track 10ms loop timing.
 const int8_t COIL_REST_TICKS   = -8;
 
 // Command queue (FIFO) for batching score deltas:
-const byte SCORE_CMD_QUEUE_SIZE = 8;  // up to 8 pending commands
+const byte SCORE_CMD_QUEUE_SIZE = 30;  // up to 30 pending commands
 int  scoreCmdQueue[SCORE_CMD_QUEUE_SIZE];
 byte scoreCmdHead = 0;         // dequeue index
 byte scoreCmdTail = 0;         // enqueue index
@@ -244,83 +244,36 @@ void setup() {
 // *****************************************************************************************
 
 void loop() {
-
-  // Enforce 10ms tick (optional but recommended for deterministic timing)
+  // Enforce 10ms cooperative scheduler tick.
+  // - Keeps timing deterministic for device timers and score motor slots.
+  // - Early-return style keeps loop short and predictable; avoid adding blocking work here.
   unsigned long now = millis();
   if (now - lastLoopTime < SCREAMO_SLAVE_TICK_MS) return;  // Still within this 10ms window
   lastLoopTime = now;
 
-  // Handle all pending RS-485 messages (non-blocking drain)
+  // Drain all pending RS-485 messages (non-blocking).
+  // Handlers must be quick and non-blocking; they may enqueue work for the state machines below.
   while ((msgType = pMessage->available()) != RS485_TYPE_NO_MESSAGE) {
     processMessage(msgType);
   }
 
-  // Update all active device timers (solenoids, bells, etc.)
+  // Advance per-device timers first so device state (countdown/rest) reflects this tick
+  // before any state machines attempt to activate coils/lamps again.
   updateDeviceTimers();
 
-  // Run non-blocking score adjustment state machine
+  // Run non-blocking score state machines in deterministic order:
+  // 1) processScoreAdjust() moves currentScore toward targetScore (may activate coils/bells).
+  // 2) processScoreReset() runs a reset sequence that preempts/blocks adjustments when active.
+  // Order matters: updateDeviceTimers() happens before these so an activation decision sees
+  // up-to-date device cooldown/rest state.
   processScoreAdjust();
-  processScoreReset();  // handle active score reset sequence
+  processScoreReset();
 
 }  // End of loop()
 
 // *****************************************************************************************
-// ************************ F U N C T I O N   D E F I N I T I O N S ************************
+// ***************************  M E S S A G E   H A N D L I N G  ***************************
 // *****************************************************************************************
-
-void setAllDevicesOff() {
-  // Initializes all device runtime state to idle and ensures their outputs are OFF.
-  // Called at startup; safe to call again if a fatal error requires a known-safe hardware state.
-  for (int i = 0; i < NUM_DEVS; i++) {
-    deviceParm[i].countdown = 0;     // 0 = idle (not active, not resting)
-    deviceParm[i].queueCount = 0;    // Clear any pending activations
-    digitalWrite(deviceParm[i].pinNum, LOW);
-    pinMode(deviceParm[i].pinNum, OUTPUT);
-  }
-}
-
-void setPWMFrequencies() {
-  // Raises Timer1 PWM frequency (pins 11, 12) to reduce visible LED flicker.
-  // Prescaler set to 1 => ~31kHz. Only affects Timer1-controlled outputs.
-  TCCR1B = (TCCR1B & 0b11111000) | 0x01;
-}
-
-bool canActivateDeviceNow(byte t_devIdx) {
-  // Returns true if device may be activated immediately (mechanical protection checks).
-  // CREDIT UP: inhibit if wheel is FULL (switch HIGH).
-  // CREDIT DOWN: inhibit if wheel is EMPTY (no credits to remove).
-  if (t_devIdx == DEV_IDX_CREDIT_UP) {
-    if (digitalRead(PIN_IN_SWITCH_CREDIT_FULL) == HIGH) {
-      return false;
-    }
-  } else if (t_devIdx == DEV_IDX_CREDIT_DOWN) {
-    if (!hasCredits()) {
-      return false;
-    }
-  }
-  return true;
-}
-
-void activateDevice(byte t_devIdx) {
-  // Requests immediate activation of a device:
-  // - If active (countdown > 0) or resting (countdown < 0) the request is queued.
-  // - If idle (countdown == 0) and allowed, starts initial power phase.
-  // Invalid index: halts system after forcing all outputs off (fatal configuration error).
-  if (t_devIdx >= NUM_DEVS) {
-    setAllDevicesOff();
-    sprintf(lcdString, "DEV NUM ERR %u", t_devIdx); pLCD2004->println(lcdString);
-    while (true) { }
-  }
-  if (deviceParm[t_devIdx].countdown != 0) {
-    // Busy or resting; accumulate request.
-    deviceParm[t_devIdx].queueCount++;
-    return;
-  }
-  if (canActivateDeviceNow(t_devIdx)) {
-    analogWrite(deviceParm[t_devIdx].pinNum, deviceParm[t_devIdx].powerInitial);
-    deviceParm[t_devIdx].countdown = deviceParm[t_devIdx].timeOn; // Begin active phase.
-  }
-}
 
 void processMessage(byte t_msgType) {
   // Dispatches a single RS-485 message already detected by available().
@@ -412,49 +365,19 @@ void processMessage(byte t_msgType) {
   } break;
 
   case RS485_TYPE_MAS_TO_SLV_SCORE_INC_10K: {
-    // Queues a signed delta in 10K units (-999..999) with range clamping and saturation pruning.
-    // Expected targetScore semantics:
-    // - targetScore represents the projected score after all pending adjustments, range 0..999.
-    // - It is updated immediately on enqueue (requestScoreAdjust) and used here to:
-    //    1) clamp incoming incAmount so targetScore stays in 0..999,
-    //    2) detect saturation at boundaries (0 or 999) and prune same-direction queued work.
+    // Forward signed delta (in 10K units) to the centralized enqueue/validation logic.
     int incAmount = 0;
     pMessage->getMAStoSLVScoreInc10K(&incAmount);
-    if (incAmount > 999) {
-      incAmount = 999;
-    } else if (incAmount < -999) {
-      incAmount = -999;
-    }
-    // If already saturated at boundary given current targetScore, ignore and prune.
-    if ((incAmount > 0 && targetScore >= 999) || (incAmount < 0 && targetScore <= 0)) {
-      pruneQueuedAtBoundary(incAmount > 0 ? 1 : -1);
-      sprintf(lcdString, "Sat ignore %d", incAmount); pLCD2004->println(lcdString);
-      break;
-    }
-    // Adjust incAmount so the resulting targetScore remains within 0..999.
-    // Note: prospective is computed against current targetScore (not currentScore)
-    // because targetScore already includes queued (not yet executed) adjustments.
-    long prospective = (long)targetScore + incAmount;
-    if (prospective > 999) {
-      incAmount = 999 - targetScore;
-    } else if (prospective < 0) {
-      incAmount = -targetScore;
-    }
-    if (incAmount == 0) {
-      // No effective change; prune same-direction queue if currently saturated.
-      pruneQueuedAtBoundary((targetScore == 999) ? 1 : (targetScore == 0 ? -1 : 0));
-      break;
-    }
     sprintf(lcdString, "Score adj %d", incAmount); pLCD2004->println(lcdString);
-    // requestScoreAdjust() will:
-    // - enqueue the delta,
-    // - update targetScore immediately (clamped),
-    // - start processing if idle.
+
+    // requestScoreAdjust() performs clamping, updates targetScore, prunes saturation, and starts processing if idle.
     requestScoreAdjust(incAmount);
-    // After enqueue, prune any further same-direction work if we reached boundary.
+
+    // If we hit a boundary as a result of enqueue, remove same-direction queued work.
     if (targetScore == 999) {
       pruneQueuedAtBoundary(1);
-    } else if (targetScore == 0) {
+    }
+    else if (targetScore == 0) {
       pruneQueuedAtBoundary(-1);
     }
   } break;
@@ -508,6 +431,64 @@ void processMessage(byte t_msgType) {
     sprintf(lcdString, "MSG TYPE ERR %u", t_msgType); pLCD2004->println(lcdString);
     while (true) { }
   } break;
+  }
+}
+
+// ************************************************************************************
+// ********************** H A R D W A R E / D E V I C E   C O N T R O L ************************
+// ************************************************************************************
+
+void setPWMFrequencies() {
+  // Raises Timer1 PWM frequency (pins 11, 12) to reduce visible LED flicker.
+  // Prescaler set to 1 => ~31kHz. Only affects Timer1-controlled outputs.
+  TCCR1B = (TCCR1B & 0b11111000) | 0x01;
+}
+
+void setAllDevicesOff() {
+  // Initializes all device runtime state to idle and ensures their outputs are OFF.
+  // Called at startup; safe to call again if a fatal error requires a known-safe hardware state.
+  for (int i = 0; i < NUM_DEVS; i++) {
+    deviceParm[i].countdown = 0;     // 0 = idle (not active, not resting)
+    deviceParm[i].queueCount = 0;    // Clear any pending activations
+    digitalWrite(deviceParm[i].pinNum, LOW);
+    pinMode(deviceParm[i].pinNum, OUTPUT);
+  }
+}
+
+bool canActivateDeviceNow(byte t_devIdx) {
+  // Returns true if device may be activated immediately (mechanical protection checks).
+  // CREDIT UP: inhibit if wheel is FULL (switch HIGH).
+  // CREDIT DOWN: inhibit if wheel is EMPTY (no credits to remove).
+  if (t_devIdx == DEV_IDX_CREDIT_UP) {
+    if (digitalRead(PIN_IN_SWITCH_CREDIT_FULL) == HIGH) {
+      return false;
+    }
+  } else if (t_devIdx == DEV_IDX_CREDIT_DOWN) {
+    if (!hasCredits()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void activateDevice(byte t_devIdx) {
+  // Requests immediate activation of a device:
+  // - If active (countdown > 0) or resting (countdown < 0) the request is queued.
+  // - If idle (countdown == 0) and allowed, starts initial power phase.
+  // Invalid index: halts system after forcing all outputs off (fatal configuration error).
+  if (t_devIdx >= NUM_DEVS) {
+    setAllDevicesOff();
+    sprintf(lcdString, "DEV NUM ERR %u", t_devIdx); pLCD2004->println(lcdString);
+    while (true) { }
+  }
+  if (deviceParm[t_devIdx].countdown != 0) {
+    // Busy or resting; accumulate request.
+    deviceParm[t_devIdx].queueCount++;
+    return;
+  }
+  if (canActivateDeviceNow(t_devIdx)) {
+    analogWrite(deviceParm[t_devIdx].pinNum, deviceParm[t_devIdx].powerInitial);
+    deviceParm[t_devIdx].countdown = deviceParm[t_devIdx].timeOn; // Begin active phase.
   }
 }
 
@@ -576,6 +557,41 @@ void updateDeviceTimers() {
   }
 }
 
+void setScoreLampBrightness(byte t_brightness) {
+  // Sets PWM brightness for score lamps (0..255). Does not alter GI state.
+  analogWrite(deviceParm[DEV_IDX_LAMP_SCORE].pinNum, t_brightness);
+}
+
+void setGITiltLampBrightness(byte t_brightness) {
+  // Sets PWM brightness for GI/Tilt lamp group (0..255). GI relay logic separate.
+  analogWrite(deviceParm[DEV_IDX_LAMP_HEAD_GI_TILT].pinNum, t_brightness);
+}
+
+void setGILamp(bool t_on) {
+  // Controls GI relay lamp (active LOW on Centipede pin).
+  pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_HEAD_GI, t_on ? LOW : HIGH);
+}
+
+void setTiltLamp(bool t_on) {
+  // Controls Tilt lamp (active LOW on Centipede pin).
+  pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_TILT, t_on ? LOW : HIGH);
+}
+
+// ************************************************************************************
+// ****************** S C O R E   M A N A G E M E N T   F U N C T I O N S *************
+// ************************************************************************************
+
+bool dequeueScoreCmdIfAny(int* t_cmd) {
+  // Dequeue one signed delta from scoreCmdQueue if available.
+  // Returns true and sets *t_cmd on success; returns false if queue empty.
+  if (scoreCmdHead == scoreCmdTail) {
+    return false;
+  }
+  *t_cmd = scoreCmdQueue[scoreCmdHead];
+  scoreCmdHead = (byte)((scoreCmdHead + 1) % SCORE_CMD_QUEUE_SIZE);
+  return true;
+}
+
 void requestScoreAdjust(int t_delta10Ks) {
   // Purpose of targetScore here:
   // - targetScore is updated immediately by the requested delta (clamped to 0..999).
@@ -614,11 +630,12 @@ void requestScoreAdjust(int t_delta10Ks) {
     return;
   }
 
-  byte nextTail = (byte)((scoreCmdTail + 1) % (sizeof(scoreCmdQueue) / sizeof(scoreCmdQueue[0])));
+  byte nextTail = (byte)((scoreCmdTail + 1) % SCORE_CMD_QUEUE_SIZE);
   if (nextTail == scoreCmdHead) {
-    // Queue full: fatal (should not occur under expected traffic).
-    sprintf(lcdString, "Score Q OVERFLOW %d", t_delta10Ks); pLCD2004->println(lcdString);
-    while (true) { }
+    // Queue full: drop this new request to avoid halting the system.
+    // Log so master/operator can see the overflow; do not enter infinite loop.
+    sprintf(lcdString, "Score Q FULL drop %d", t_delta10Ks); pLCD2004->println(lcdString);
+    return;
   }
   scoreCmdQueue[scoreCmdTail] = t_delta10Ks;
   scoreCmdTail = nextTail;
@@ -638,135 +655,100 @@ void requestScoreAdjust(int t_delta10Ks) {
     return;
   }
 
-  // Begin first command immediately.
-  int cmd = scoreCmdQueue[scoreCmdHead];
-  scoreCmdHead = (byte)((scoreCmdHead + 1) % (sizeof(scoreCmdQueue) / sizeof(scoreCmdQueue[0])));
+  // Begin first command immediately: dequeue via helper and hand to centralized starter.
+  int cmd = 0;
+  if (dequeueScoreCmdIfAny(&cmd)) {
+    startBatchFromCmd(cmd);
+  }
+}
+
+void startBatchFromCmd(int cmd) {
+  // Centralized helper that initializes state for executing a queued score adjustment command.
+  //
+  // Input:
+  //   cmd - signed delta expressed in 10K units (e.g. +6 means +60K; -10 means -100K)
+  //
+  // Responsibilities / side-effects:
+  // - Decompose the absolute magnitude into either "hundreds" (100K units) or "tens" (10K units).
+  //   Rule: if magnitude % 10 == 0 -> treat as hundreds (magnitude/10), else treat as pure tens.
+  // - Set 'scoreCmdActiveDirection' to the sign of the command (+1 or -1).
+  // - Initialize batch state variables:
+  //     'batchHundredsRemaining' or 'batchTensRemaining'
+  //     'scoreAdjustMotorMode' (true for motor-paced multi-unit batches)
+  //     'scoreCycleHundred' (true when current cycle advances are 100K steps)
+  //     'cycleActionLimit' (planned advances in the first cycle, capped to 5)
+  //     'motorPersistent' (true if the command STARTED as multi-unit (>1) and thus must keep motor pacing
+  //                       even if it later reduces to a single remainder)
+  //     'lastCommandWasMotor' (used by finish logic to select required rest window)
+  //     'motorCycleStartMs' (timestamp marking start of motor cycle or single-pulse rest window)
+  //     'scoreAdjustActive' and 'scoreAdjustLastMs' (activate state machine and allow immediate first slot)
+  //
+  // Notes / examples:
+  //  - cmd = 6  => magnitude 6 (tens). batchTensRemaining = 6 -> motor mode with cycleActionLimit = 5,
+  //                motorPersistent = true. Execution pattern: cycle1: 5 advances + rest, cycle2: 1 advance + 5 rests.
+  //  - cmd = 1  => single tens: processed as a non-motor single pulse (lastCommandWasMotor = false).
+  //  - cmd = 10 => magnitude 10 divisible by 10 => batchHundredsRemaining = 1 -> single 100K pulse (non-motor).
+  //  - This helper does NOT touch the command queue (head/tail) or 'targetScore'.
+  //
+  // Implementation details:
+  // - Use min(remaining, 5) to set cycleActionLimit so each motor cycle has up to 5 advances.
+  // - scoreAdjustLastMs is set to (now - SCORE_MOTOR_STEP_MS) so processScoreAdjust() may execute the first
+  //   advance slot immediately on the next loop iteration if device timers permit.
+  //
   scoreCmdActiveDirection = (cmd > 0) ? 1 : -1;
   int magnitude = abs(cmd);
 
-  // Decompose magnitude into 100K (10 * 10K) units vs pure 10K units.
-  // This only affects execution plan; targetScore already includes the full delta.
   if (magnitude % 10 == 0) {
+    // Treat as hundreds (100K units)
     batchHundredsRemaining = magnitude / 10;
     batchTensRemaining     = 0;
   }
   else {
+    // Treat as tens (10K units)
     batchHundredsRemaining = 0;
     batchTensRemaining     = magnitude;
   }
 
+  // Clear per-batch transient state
   scoreAdjustMotorMode  = false;
   scoreCycleHundred     = false;
   cycleActionLimit      = 0;
   scoreAdjustCycleIndex = 0;
   motorPersistent       = false;
 
-  // Decide initial pacing mode (multi-unit -> motor cycles, single -> non-motor).
+  // Decide initial pacing and persistence
   if (batchHundredsRemaining > 1) {
+    // Multi-hundred batch -> motor-paced hundred cycles
     scoreAdjustMotorMode = true;
     scoreCycleHundred    = true;
     cycleActionLimit     = (byte)min(batchHundredsRemaining, 5);
-    motorPersistent      = true;
+    motorPersistent      = true;   // preserve motor pacing even if remainder == 1
     lastCommandWasMotor  = true;
     motorCycleStartMs    = millis();
   }
   else if (batchHundredsRemaining == 1) {
+    // Single 100K -> single non-motor pulse
     lastCommandWasMotor  = false;
     motorCycleStartMs    = millis();
   }
   else if (batchTensRemaining > 1) {
+    // Multi-ten batch -> motor-paced tens cycles
     scoreAdjustMotorMode = true;
     scoreCycleHundred    = false;
     cycleActionLimit     = (byte)min(batchTensRemaining, 5);
-    motorPersistent      = true;
+    motorPersistent      = true;   // preserve motor pacing even if remainder == 1
     lastCommandWasMotor  = true;
     motorCycleStartMs    = millis();
   }
   else {
+    // Single 10K -> single non-motor pulse
     lastCommandWasMotor  = false;
     motorCycleStartMs    = millis();
   }
 
+  // Activate score adjust state machine and allow immediate first slot execution
   scoreAdjustActive = true;
-  scoreAdjustLastMs = millis() - SCORE_MOTOR_STEP_MS; // Allow immediate first slot execution.
-}
-
-void scoreAdjustFinishIfDone() {
-  // Finalizes score adjustment when all batch units consumed and rest interval satisfied.
-  // If more queued commands remain, starts next batch; else persists score and clears state.
-  if (batchHundredsRemaining != 0 || batchTensRemaining != 0) {
-    return;
-  }
-  if (scoreAdjustMotorMode) {
-    return;
-  }
-
-  unsigned long now = millis();
-  unsigned requiredMs = lastCommandWasMotor ? SCORE_MOTOR_CYCLE_MS : SCORE_MOTOR_STEP_MS;
-  if (now - motorCycleStartMs < requiredMs) {
-    return;
-  }
-
-  // Next queued command?
-  if (scoreCmdHead != scoreCmdTail) {
-    int cmd = scoreCmdQueue[scoreCmdHead];
-    scoreCmdHead = (byte)((scoreCmdHead + 1) % (sizeof(scoreCmdQueue) / sizeof(scoreCmdQueue[0])));
-    scoreCmdActiveDirection = (cmd > 0) ? 1 : -1;
-    int magnitude = abs(cmd);
-
-    if (magnitude % 10 == 0) {
-      batchHundredsRemaining = magnitude / 10;
-      batchTensRemaining     = 0;
-    }
-    else {
-      batchHundredsRemaining = 0;
-      batchTensRemaining     = magnitude;
-    }
-
-    scoreAdjustMotorMode  = false;
-    scoreCycleHundred     = false;
-    cycleActionLimit      = 0;
-    scoreAdjustCycleIndex = 0;
-    motorPersistent       = false;
-
-    if (batchHundredsRemaining > 1) {
-      scoreAdjustMotorMode = true;
-      scoreCycleHundred    = true;
-      cycleActionLimit     = (byte)min(batchHundredsRemaining, 5);
-      motorPersistent      = true;
-      lastCommandWasMotor  = true;
-      motorCycleStartMs    = millis();
-    }
-    else if (batchHundredsRemaining == 1) {
-      lastCommandWasMotor  = false;
-      motorCycleStartMs    = millis();
-    }
-    else if (batchTensRemaining > 1) {
-      scoreAdjustMotorMode = true;
-      scoreCycleHundred    = false;
-      cycleActionLimit     = (byte)min(batchTensRemaining, 5);
-      motorPersistent      = true;
-      lastCommandWasMotor  = true;
-      motorCycleStartMs    = millis();
-    }
-    else {
-      lastCommandWasMotor  = false;
-      motorCycleStartMs    = millis();
-    }
-
-    scoreAdjustActive = true;
-    scoreAdjustLastMs = millis() - SCORE_MOTOR_STEP_MS;
-    return;
-  }
-
-  // No pending commands; persist and clear.
-  scoreAdjustActive       = false;
-  scoreAdjustMotorMode    = false;
-  scoreCycleHundred       = false;
-  scoreCmdActiveDirection = 0;
-  scoreAdjustCycleIndex   = 0;
-  saveScoreToEEPROM(currentScore);
-  sprintf(lcdString, "Score now %u", (unsigned)currentScore); pLCD2004->println(lcdString);
+  scoreAdjustLastMs = millis() - SCORE_MOTOR_STEP_MS;
 }
 
 void processScoreAdjust() {
@@ -949,120 +931,66 @@ void processScoreAdjust() {
   }
 }
 
-void setScoreLampBrightness(byte t_brightness) {
-  // Sets PWM brightness for score lamps (0..255). Does not alter GI state.
-  analogWrite(deviceParm[DEV_IDX_LAMP_SCORE].pinNum, t_brightness);
-}
-
-void setGITiltLampBrightness(byte t_brightness) {
-  // Sets PWM brightness for GI/Tilt lamp group (0..255). GI relay logic separate.
-  analogWrite(deviceParm[DEV_IDX_LAMP_HEAD_GI_TILT].pinNum, t_brightness);
-}
-
-void setGILamp(bool t_on) {
-  // Controls GI relay lamp (active LOW on Centipede pin).
-  pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_HEAD_GI, t_on ? LOW : HIGH);
-}
-
-void setTiltLamp(bool t_on) {
-  // Controls Tilt lamp (active LOW on Centipede pin).
-  pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_TILT, t_on ? LOW : HIGH);
-}
-
-int recallScoreFromEEPROM() {
-  // Reads last persisted score (uint16_t) from EEPROM and clamps to 0..999.
-  // Returns 0 if stored value > 999 (treat as invalid).
-  uint16_t s = 0;
-  EEPROM.get(EEPROM_ADDR_SCORE, s);
-  if (s > 999) {
-    s = 0;
+void scoreAdjustFinishIfDone() {
+  // Finalizes score adjustment when all batch units consumed and rest interval satisfied.
+  // If more queued commands remain, starts next batch; else persists score and clears state.
+  if (batchHundredsRemaining != 0 || batchTensRemaining != 0) {
+    return;
   }
-  return (int)s;
-}
-
-void saveScoreToEEPROM(int t_score) {
-  // Persists score only if changed to reduce EEPROM wear.
-  // Input clamped into 0..999 before comparison/write.
-  if (t_score < 0) {
-    t_score = 0;
+  if (scoreAdjustMotorMode) {
+    return;
   }
-  if (t_score > 999) {
-    t_score = 999;
-  }
-  uint16_t newVal = (uint16_t)t_score;
-  uint16_t oldVal = 0;
-  EEPROM.get(EEPROM_ADDR_SCORE, oldVal);
-  if (oldVal != newVal) {
-    EEPROM.put(EEPROM_ADDR_SCORE, newVal);
-    sprintf(lcdString, "Saved score %d", t_score); pLCD2004->println(lcdString);
-  }
-}
 
-bool hasCredits() {
-  // Credit Empty switch LOW indicates at least one credit remains.
-  return digitalRead(PIN_IN_SWITCH_CREDIT_EMPTY) == LOW;
-}
+  unsigned long now = millis();
+  unsigned requiredMs = lastCommandWasMotor ? SCORE_MOTOR_CYCLE_MS : SCORE_MOTOR_STEP_MS;
+  if (now - motorCycleStartMs < requiredMs) {
+    return;
+  }
 
-void startNewGame(byte t_mode) {
-  // Initialize new game state:
-  // - Stores mode
-  // - Clears tilt lamp, turns on G.I.
-  // - Resets score and score processing queues (any queued adjustments are discarded.)
-  //   This ensures score logic restarts from a clean baseline.
-  // - Updates score display to zero.
-  modeCurrent   = t_mode;
-  setTiltLamp(false);
-  setGILamp(true);
-  currentScore  = 0;
-  targetScore   = 0;
-  scoreCmdHead  = scoreCmdTail = 0;
-  scoreAdjustActive = false;
+  // Next queued command? Use centralized dequeue helper to avoid duplicated head/tail logic.
+  int cmd = 0;
+  if (dequeueScoreCmdIfAny(&cmd)) {
+    // Delegate to helper that sets up batch state, timestamps and flags.
+    startBatchFromCmd(cmd);
+    // startBatchFromCmd() sets scoreAdjustActive and scoreAdjustLastMs.
+    return;
+  }
+
+  // No pending commands; persist and clear.
+  scoreAdjustActive       = false;
+  scoreAdjustMotorMode    = false;
+  scoreCycleHundred       = false;
   scoreCmdActiveDirection = 0;
-  displayScore(currentScore);
+  scoreAdjustCycleIndex   = 0;
+  saveScoreToEEPROM(currentScore);
+  sprintf(lcdString, "Score now %u", (unsigned)currentScore); pLCD2004->println(lcdString);
 }
 
-void displayScore(int t_score) {
-  // Updates score display lamps (1M, 100K, 10K sets).
-  // Only changes lamps whose digits differ since last update.
-  // Input score treated as digits: millions (hundreds place), hundredK (tens place), tensK (ones place).
-  if (t_score < 0) {
-    t_score = 0;
+void pruneQueuedAtBoundary(int t_saturatedDir) {
+  // Removes queued commands that continue in a saturated direction (already at min/max score).
+  // Also aborts current active batch if it matches saturation direction.
+  if (scoreCmdHead == scoreCmdTail) {
+    return;
   }
-  if (t_score > 999) {
-    t_score = 999;
+  int tmp[SCORE_CMD_QUEUE_SIZE]; byte wt = 0; byte rd = scoreCmdHead;
+  while (rd != scoreCmdTail) {
+    int cmd = scoreCmdQueue[rd];
+    if (((cmd > 0) ? 1 : -1) != t_saturatedDir) {
+      tmp[wt++] = cmd;
+    }
+    rd = (byte)((rd + 1) % SCORE_CMD_QUEUE_SIZE);
   }
-  static int lastScore = -1;
-  int millions = t_score / 100;
-  int hundredK = (t_score / 10) % 10;
-  int tensK    = t_score % 10;
-  int lastMillions = (lastScore < 0) ? 0 : lastScore / 100;
-  int lastHundredK = (lastScore < 0) ? 0 : (lastScore / 10) % 10;
-  int lastTensK    = (lastScore < 0) ? 0 : lastScore % 10;
-  if (lastMillions != millions) {
-    if (lastMillions > 0) {
-      pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_1M[lastMillions - 1], HIGH);
-    }
-    if (millions > 0) {
-      pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_1M[millions - 1], LOW);
-    }
+  scoreCmdHead = 0;
+  scoreCmdTail = wt;
+  for (byte i = 0; i < wt; i++) {
+    scoreCmdQueue[i] = tmp[i];
   }
-  if (lastHundredK != hundredK) {
-    if (lastHundredK > 0) {
-      pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_100K[lastHundredK - 1], HIGH);
-    }
-    if (hundredK > 0) {
-      pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_100K[hundredK - 1], LOW);
-    }
+  if (scoreAdjustActive && scoreCmdActiveDirection == t_saturatedDir) {
+    batchHundredsRemaining = 0;
+    batchTensRemaining     = 0;
+    scoreAdjustMotorMode   = false;
+    scoreAdjustActive      = false;
   }
-  if (lastTensK != tensK) {
-    if (lastTensK > 0) {
-      pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_10K[lastTensK - 1], HIGH);
-    }
-    if (tensK > 0) {
-      pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_10K[tensK - 1], LOW);
-    }
-  }
-  lastScore = t_score;
 }
 
 void processScoreReset() {
@@ -1126,7 +1054,7 @@ void processScoreReset() {
       }
     }
     // After all high reversals complete, wait a full motor cycle for realism before tens cycling.
-   if (resetHighUnitsRemaining == 0 &&
+    if (resetHighUnitsRemaining == 0 &&
       (now - resetHighCycleStartMs) >= SCORE_MOTOR_CYCLE_MS) {
       resetPhase       = SCORE_RESET_PHASE_10K_CYCLE1;
       resetCycleIndex  = 0;
@@ -1193,29 +1121,106 @@ void processScoreReset() {
   }
 }
 
-void pruneQueuedAtBoundary(int t_saturatedDir) {
-  // Removes queued commands that continue in a saturated direction (already at min/max score).
-  // Also aborts current active batch if it matches saturation direction.
-  if (scoreCmdHead == scoreCmdTail) {
-    return;
+void startNewGame(byte t_mode) {
+  // Initialize new game state:
+  // - Stores mode
+  // - Clears tilt lamp, turns on G.I.
+  // - Resets score and score processing queues (any queued adjustments are discarded.)
+  //   This ensures score logic restarts from a clean baseline.
+  // - Updates score display to zero.
+  modeCurrent   = t_mode;
+  setTiltLamp(false);
+  setGILamp(true);
+  currentScore  = 0;
+  targetScore   = 0;
+  scoreCmdHead  = scoreCmdTail = 0;
+  scoreAdjustActive = false;
+  scoreCmdActiveDirection = 0;
+  displayScore(currentScore);
+}
+
+// ************************************************************************************
+// ****************** D I S P L A Y   &   P E R S I S T E N C E   F U N C T I O N S *************
+// ************************************************************************************
+
+void displayScore(int t_score) {
+  // Updates score display lamps (1M, 100K, 10K sets).
+  // Only changes lamps whose digits differ since last update.
+  // Input score treated as digits: millions (hundreds place), hundredK (tens place), tensK (ones place).
+  if (t_score < 0) {
+    t_score = 0;
   }
-  int tmp[8]; byte wt = 0; byte rd = scoreCmdHead;
-  while (rd != scoreCmdTail) {
-    int cmd = scoreCmdQueue[rd];
-    if (((cmd > 0) ? 1 : -1) != t_saturatedDir) {
-      tmp[wt++] = cmd;
+  if (t_score > 999) {
+    t_score = 999;
+  }
+  static int lastScore = -1;
+  int millions = t_score / 100;
+  int hundredK = (t_score / 10) % 10;
+  int tensK    = t_score % 10;
+  int lastMillions = (lastScore < 0) ? 0 : lastScore / 100;
+  int lastHundredK = (lastScore < 0) ? 0 : (lastScore / 10) % 10;
+  int lastTensK    = (lastScore < 0) ? 0 : lastScore % 10;
+  if (lastMillions != millions) {
+    if (lastMillions > 0) {
+      pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_1M[lastMillions - 1], HIGH);
     }
-    rd = (byte)((rd + 1) % (sizeof(scoreCmdQueue) / sizeof(scoreCmdQueue[0])));
+    if (millions > 0) {
+      pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_1M[millions - 1], LOW);
+    }
   }
-  scoreCmdHead = 0;
-  scoreCmdTail = wt;
-  for (byte i = 0; i < wt; i++) {
-    scoreCmdQueue[i] = tmp[i];
+  if (lastHundredK != hundredK) {
+    if (lastHundredK > 0) {
+      pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_100K[lastHundredK - 1], HIGH);
+    }
+    if (hundredK > 0) {
+      pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_100K[hundredK - 1], LOW);
+    }
   }
-  if (scoreAdjustActive && scoreCmdActiveDirection == t_saturatedDir) {
-    batchHundredsRemaining = 0;
-    batchTensRemaining     = 0;
-    scoreAdjustMotorMode   = false;
-    scoreAdjustActive      = false;
+  if (lastTensK != tensK) {
+    if (lastTensK > 0) {
+      pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_10K[lastTensK - 1], HIGH);
+    }
+    if (tensK > 0) {
+      pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_10K[tensK - 1], LOW);
+    }
   }
+  lastScore = t_score;
+}
+
+void saveScoreToEEPROM(int t_score) {
+  // Persists score only if changed to reduce EEPROM wear.
+  // Input clamped into 0..999 before comparison/write.
+  if (t_score < 0) {
+    t_score = 0;
+  }
+  if (t_score > 999) {
+    t_score = 999;
+  }
+  uint16_t newVal = (uint16_t)t_score;
+  uint16_t oldVal = 0;
+  EEPROM.get(EEPROM_ADDR_SCORE, oldVal);
+  if (oldVal != newVal) {
+    EEPROM.put(EEPROM_ADDR_SCORE, newVal);
+    sprintf(lcdString, "Saved score %d", t_score); pLCD2004->println(lcdString);
+  }
+}
+
+int recallScoreFromEEPROM() {
+  // Reads last persisted score (uint16_t) from EEPROM and clamps to 0..999.
+  // Returns 0 if stored value > 999 (treat as invalid).
+  uint16_t s = 0;
+  EEPROM.get(EEPROM_ADDR_SCORE, s);
+  if (s > 999) {
+    s = 0;
+  }
+  return (int)s;
+}
+
+// ************************************************************************************
+// ****************** H E L P E R   &   U T I L I T Y   F U N C T I O N S *************
+// ************************************************************************************
+
+bool hasCredits() {
+  // Credit Empty switch LOW indicates at least one credit remains.
+  return digitalRead(PIN_IN_SWITCH_CREDIT_EMPTY) == LOW;
 }

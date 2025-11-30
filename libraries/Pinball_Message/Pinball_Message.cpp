@@ -31,7 +31,7 @@ Pinball_Message::Pinball_Message() {  // Constructor
   return;
 }
 
-void Pinball_Message::begin(HardwareSerial * t_mySerial, long unsigned int t_myBaud) {
+void Pinball_Message::begin(HardwareSerial* t_mySerial, long unsigned int t_myBaud) {
   // Rev: 11/01/25.  Confirm pLCD2004 isn't null before using it.
   m_mySerial = t_mySerial;      // Pointer to the serial port we want to use for RS485.
   m_myBaud = t_myBaud;          // RS485 serial port baud rate.
@@ -65,7 +65,6 @@ byte Pinball_Message::available() {
 // *****************************************************************************************
 // ************ P U B L I C   M O D U L E - S P E C I F I C   F U N C T I O N S ************
 // *****************************************************************************************
-
 // ALL incoming messages are retrieved by the calling modules by first calling pMessage->available().
 // If a message is found in the incoming RS485 buffer, available() populates this class's m_RS485Buf[] buffer, and passes the
 // message type back to the calling module i.e. MAS as the function's return value.
@@ -350,9 +349,9 @@ void Pinball_Message::sendMessageRS485(byte t_msg[]) {
   // This seems most likely to happen when LEG is receiving a long route, and also trying to populate and execute commands in the
   // Delayed Action table.  We should know if this happens because the receive function *should* detect a full input buffer and
   // do an emergency stop.  May not be a good permanent fix.  See header.
-  while ((millis() - m_messageLastSentTime) < RS485_MESSAGE_DELAY_MS) {}  // Pause to help prevent receiver's in buffer overflow.
-  while (m_mySerial->availableForWrite() < tMsgLen) {}  // Wait until there is enough room in the outgoing buffer for this message.
-  m_mySerial->write(t_msg, tMsgLen);  
+  while ((millis() - m_messageLastSentTime) < RS485_MESSAGE_DELAY_MS) { }  // Pause to help prevent receiver's in buffer overflow.
+  while (m_mySerial->availableForWrite() < tMsgLen) { }  // Wait until there is enough room in the outgoing buffer for this message.
+  m_mySerial->write(t_msg, tMsgLen);
   // 12/15/20: In addition to waiting *before* we transmit, to avoid overflowing our own output buffer, and the recipient's input
   // buffer, we will now pause until the entire message has been transmitted.  If we eliminate the flush() command, then we will
   // likely transition the RS-485 chip from transmit mode to receive mode *before* our message has been fully transmitted!
@@ -387,27 +386,51 @@ bool Pinball_Message::getMessageRS485(byte* t_msg) {
   // This only reads and returns one complete message at a time, regardless of how much more data may be in the incoming buffer.
   // Input byte t_msg[] is the initialized incoming byte array whose contents may be filled with a message by this function.
   byte bytesAvailableInBuffer = m_mySerial->available();  // How many bytes are waiting?  Size is 64.
-  if (bytesAvailableInBuffer > 60) {  // RS485 serial input buffer should never get this close to 64-byte overflow.  Fatal!
-    sprintf(lcdString, "RS485 in buf ovrflw!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
+  if (bytesAvailableInBuffer > 60) {  // RS485 serial input buffer should never get this close to 64-byte overflow.
+    // Non-fatal: log and drain to recover gracefully instead of halting the system.
+    sprintf(lcdString, "RS485 in buf ovrflw!");  // Discard and continue
+    pLCD2004->println(lcdString);
+    Serial.println(lcdString);
+    // Drain buffer
+    while (m_mySerial->available()) {
+      m_mySerial->read();
+    }
+    return false;
   }
   byte incomingMsgLen = m_mySerial->peek();  // First byte will be message length, or garbage is available = 0
   // bytesAvailableInBuffer must be greater than zero or there are no bytes in the incoming serial buffer.
   // bytesAvailableInBuffer must also be >= incomingMsgLen, or we don't have a complete message yet (we'll need to wait a moment.)
   if ((bytesAvailableInBuffer > 0) && (bytesAvailableInBuffer >= incomingMsgLen)) {
     // We have at least enough bytes for a complete incoming message!
-    if (incomingMsgLen < 3) {  // Message too short to be a legit message.  Fatal!
-      sprintf(lcdString, "RS485 msg too short!"); pLCD2004->println(lcdString); Serial.println(lcdString);
-      endWithFlashingLED(1);
+    if (incomingMsgLen < 3) {  // Message too short to be a legit message.
+      sprintf(lcdString, "RS485 msg too short");  // Discard and continue
+      pLCD2004->println(lcdString);
+      Serial.println(lcdString);
+      // Discard available bytes to recover.
+      while (m_mySerial->available()) {
+        m_mySerial->read();
+      }
+      return false;
     }
-    else if (incomingMsgLen > RS485_MAX_LEN) {  // Message too long to be any real message.  Fatal!
-      sprintf(lcdString, "RS485 msg too long!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
+    else if (incomingMsgLen > RS485_MAX_LEN) {  // Message too long to be any real message.
+      sprintf(lcdString, "RS485 msg too long");  // Discard and continue
+      pLCD2004->println(lcdString);
+      Serial.println(lcdString);
+      // Discard available bytes to recover.
+      while (m_mySerial->available()) {
+        m_mySerial->read();
+      }
+      return false;
     }
     // So far, so good!  Now read the bytes of the message from the incoming serial buffer into the message buffer...
     for (byte i = 0; i < incomingMsgLen; i++) {  // Get the RS485 incoming bytes and put them in the t_msg[] byte array
       t_msg[i] = m_mySerial->read();
     }
-    if (getChecksum(t_msg) != calcChecksumCRC8(t_msg, incomingMsgLen - 1)) {  // Bad checksum.  Fatal!
-      sprintf(lcdString, "RS485 bad checksum!"); pLCD2004->println(lcdString); Serial.println(lcdString); endWithFlashingLED(1);
+    if (getChecksum(t_msg) != calcChecksumCRC8(t_msg, incomingMsgLen - 1)) {  // Bad checksum.
+      sprintf(lcdString, "RS485 bad checksum");  // Discard and continue
+      pLCD2004->println(lcdString);
+      Serial.println(lcdString);
+      return false;
     }
     // At this point, we have a complete and legit message with good CRC, which may or may not be for us.
     return true;

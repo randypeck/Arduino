@@ -6,7 +6,8 @@ Welcome to the Screamo project. This document defines mandatory contribution sta
 ## Coding Standards
 - Language Level: C++14.
 - Target Platform: Arduino Mega (and related hardware modules).
-- File Encoding: UTF-8, but restrict actual characters used to 7-bit ASCII only (no Unicode punctuation or symbols). Use straight quotes (' ") and plain ASCII hyphen (-), etc.
+- File Encoding: UTF-8, but restrict actual characters used to 7-bit ASCII only (no Unicode punctuation or symbols). Use straight single and double quotes (\' and \") and plain ASCII hyphen (-). Do not use smart quotes, en/em dashes, ellipses, or other Unicode punctuation in source files or comments.
+- Quoting preference in source and comments: prefer single quote (') when referring to single characters and straight double quote (") for strings. Avoid using the backtick (`) in source comments; backticks are acceptable in Markdown documentation but should not be used inside .ino, .h, .cpp comments or identifiers.
 - Line Endings: Use CRLF or LF consistently per your environment; do not mix within a file.
 - Indentation: 2 spaces (no tabs) unless an existing file clearly uses a different width; maintain consistency within each file.
 - Max Line Length: Prefer <= 120 characters; wrap thoughtfully without breaking readability.
@@ -19,11 +20,11 @@ Welcome to the Screamo project. This document defines mandatory contribution sta
   - Macros (if any new ones): UPPER_SNAKE_CASE; avoid unless essential.
 - Comments:
   - Preserve existing descriptive comments; update only if behavior changes.
-  - Use ASCII characters only; do not insert smart quotes, em/en dashes, approximate symbols, or other Unicode glyphs.
+  - Use ASCII characters only; do not insert smart quotes, en/em dashes, approximate symbols, or other Unicode glyphs.
   - Explain timing assumptions (e.g. motor cycle ms) when changed.
 - Error Handling: For fatal configuration errors in embedded context, it is acceptable to halt (e.g. while(true){}). Provide an LCD or Serial log message before halting.
 - Timing: Favor non-blocking patterns (millis()-based) over delay() for runtime logic, except in setup() hardware stabilization or explicit test harness sections.
-- EEPROM Writes: Minimize wear—only write when value changes.
+- EEPROM Writes: Minimize wear; only write when value changes.
 
 ## Score Motor & Animation Rules
 - A 1/4 motor revolution is treated as 882 ms and subdivided into exactly 6 sub-steps (5 action + 1 rest) of ~147 ms each.
