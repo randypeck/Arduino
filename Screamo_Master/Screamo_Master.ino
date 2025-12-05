@@ -1,4 +1,4 @@
-// Screamo_Master.INO Rev: 11/29/25
+// Screamo_Master.INO Rev: 12/05/25
 // 11/12/25: Moved Right Kickout from pin 13 to pin 44 to avoid MOSFET firing twice on power-up.  Don't use MOSFET on pin 13.
 // Centipede #1 (0..63) is LAMP OUTPUTS
 // Centipede #2 (64..127) is SWITCH INPUTS
@@ -12,7 +12,7 @@
 // const int EEPROM_ADDR_SCORE = 0;  // Address to store 16-bit score (uses addr 0 and 1)
 
 const byte THIS_MODULE = ARDUINO_MAS;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "MASTER 11/29/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "MASTER 12/05/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which effectively makes it a global.
 // No need to pass lcdString[] to any functions that use it!
 
@@ -60,10 +60,10 @@ const byte NUM_DEVS                     = 14;
 DeviceParmStruct deviceParm[NUM_DEVS] = {
   // pinNum, powerInitial, timeOn(ms), powerHold, countdown
   {  5, 255,  5,   0, 0, 0 },  // DEV_IDX_POP_BUMPER          =  0, PWM MOSFET
-  {  4, 200, 10,   0, 0, 0 },  // DEV_IDX_KICKOUT_LEFT        =  1, PWM MOSFET (cannot modify PWM freq.)
-  { 44, 190, 10,   0, 0, 0 },  // DEV_IDX_KICKOUT_RIGHT       =  2, PWM MOSFET
-  {  6, 255, 10,   0, 0, 0 },  // DEV_IDX_SLINGSHOT_LEFT      =  3, PWM MOSFET
-  {  7, 255, 10,   0, 0, 0 },  // DEV_IDX_SLINGSHOT_RIGHT     =  4, PWM MOSFET
+  {  4, 190, 10,   0, 0, 0 },  // DEV_IDX_KICKOUT_LEFT        =  1, PWM MOSFET (cannot modify PWM freq.)
+  { 44, 200, 10,   0, 0, 0 },  // DEV_IDX_KICKOUT_RIGHT       =  2, PWM MOSFET
+  {  6, 180, 10,   0, 0, 0 },  // DEV_IDX_SLINGSHOT_LEFT      =  3, PWM MOSFET
+  {  7, 180, 10,   0, 0, 0 },  // DEV_IDX_SLINGSHOT_RIGHT     =  4, PWM MOSFET
   {  8, 150, 10,  40, 0, 0 },  // DEV_IDX_FLIPPER_LEFT        =  5, PWM MOSFET.  200 hits gobble hole too hard; 150 can get to top of p/f.
   {  9, 150, 10,  40, 0, 0 },  // DEV_IDX_FLIPPER_RIGHT       =  6, PWM MOSFET
   { 10, 200, 20,  40, 0, 0,},  // DEV_IDX_BALL_TRAY_RELEASE   =  7, PWM MOSFET (original tray release)
@@ -407,7 +407,7 @@ void setup() {
   pTsunami->start();         // Start Tsunami WAV player
 
 
-  runBasicDiagnostics();
+//  runBasicDiagnostics();
 
 
   pLCD2004->println("Setup complete.");
@@ -654,32 +654,24 @@ while (true) {
     // Check kickout switches - fire solenoids and flash corresponding lamps
     if (switchClosed(SWITCH_IDX_KICKOUT_LEFT)) {
       const byte devIdx = DEV_IDX_KICKOUT_LEFT;
-      // Fire left kickout solenoid at initial power, hold/turn-off per deviceParm
-      delay(200);
-      analogWrite(deviceParm[devIdx].pinNum, deviceParm[devIdx].powerInitial);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_KICKOUT_LEFT].pinNum, LOW);
-      delay((int)deviceParm[devIdx].timeOn * 10);                 // timeOn is in 10ms ticks
-      analogWrite(deviceParm[devIdx].pinNum, LOW);
-      delay(200);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_KICKOUT_LEFT].pinNum, HIGH);
+      pMessage->sendMAStoSLVScoreInc10K(50);  // Will resolve to 5x 100K advances on slave
+      digitalWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, HIGH); // Start the score motor (explicit, non?PWM)
+      delay(588);  // Let score motor run for 4 cycles = 147ms * 4 = 588ms
+      analogWrite(deviceParm[devIdx].pinNum, deviceParm[devIdx].powerInitial);  // Fire kickout solenoid
+      delay((int)deviceParm[devIdx].timeOn * 10); // Leave coil energized in timeOn 10ms ticks
+      analogWrite(deviceParm[devIdx].pinNum, LOW);  // De-energize kickout solenoid
+      digitalWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, LOW); // Stop the score motor (explicit)
     }
 
     if (switchClosed(SWITCH_IDX_KICKOUT_RIGHT)) {
       const byte devIdx = DEV_IDX_KICKOUT_RIGHT;
-      // Fire right kickout solenoid at initial power, hold/turn-off per deviceParm
-      delay(200);
-      analogWrite(deviceParm[devIdx].pinNum, deviceParm[devIdx].powerInitial);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_KICKOUT_RIGHT].pinNum, LOW);
-      delay((int)deviceParm[devIdx].timeOn * 10);                 // timeOn is in 10ms ticks
-      analogWrite(deviceParm[devIdx].pinNum, LOW);
-      delay(200);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_KICKOUT_RIGHT].pinNum, HIGH);
-    }
-
-    if (switchClosed(SWITCH_IDX_KICKOUT_RIGHT)) {
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_KICKOUT_RIGHT].pinNum, LOW);
-      delay(200);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_KICKOUT_RIGHT].pinNum, HIGH);
+      pMessage->sendMAStoSLVScoreInc10K(50);  // Will resolve to 5x 100K advances on slave
+      digitalWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, HIGH); // Start the score motor (explicit, non?PWM)
+      delay(588);  // Let score motor run for 4 cycles = 147ms * 4 = 588ms
+      analogWrite(deviceParm[devIdx].pinNum, deviceParm[devIdx].powerInitial);  // Fire kickout solenoid
+      delay((int)deviceParm[devIdx].timeOn * 10); // Leave coil energized in timeOn 10ms ticks
+      analogWrite(deviceParm[devIdx].pinNum, LOW);  // De-energize kickout solenoid
+      digitalWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, LOW); // Stop the score motor (explicit)
     }
 
     // Check drain switches
