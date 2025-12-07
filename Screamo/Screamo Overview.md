@@ -3,7 +3,8 @@ Rev: 12-05-25.
 
 ## 1. Introduction
 
-Screamo started out as a 1954 single-player Williams pinball machine.  
+Screamo was originally a 1954 single-player Williams pinball machine, and has since been cosmetically and mechanically restored. This project modernizes the control system while preserving the original gameplay experience as much as possible, plus adding a new Enhanced game mode with modern features.
+
 Originally, all rules, scoring, and features were handled by electromechanical (EM) devices:
 
 - Score Motor: advanced scores in increments of 50,000 or 500,000 points.
@@ -68,7 +69,7 @@ These remain physically present and are driven only for sound authenticity (no g
 - Knocker (cabinet).
 - Score Motor (cabinet).
 - Selection Unit (cabinet).
-- Relay Reset Unit (cabinet).
+- Relay Reset Unit (cabinet).  The original game has two Relay Reset Banks, but we retain only one; we will fire it twice when the original game would have fired both once.
 
 The actual scoring and rule decisions are all handled in software.
 
@@ -381,7 +382,7 @@ Slave must:
 
 All controlled by Master via MOSFETs and PWM:
 
-- 'DEV_IDX_POP_BUMPER' - Pop bumper coil.
+- 'DEV_IDX_POP_BUMPER' - Pop bumper coil.  For "E" bumper only.
 - 'DEV_IDX_KICKOUT_LEFT' - Left side kickout coil.
 - 'DEV_IDX_KICKOUT_RIGHT' - Right side kickout coil.
 - 'DEV_IDX_SLINGSHOT_LEFT' - Left slingshot coil.
@@ -486,14 +487,14 @@ Lamp groups and examples:
 
 ### 9.1 Main Loop Timing
 
-- System uses a 10 ms main loop on both Master and Slave:
+- For Original, Enhanced, and Impulse Mode games, we'll use a 10 ms main loop on both Master and Slave:
   - On each loop:
     - Read inputs (Centipede and/or direct pins).
     - Update outputs (coils, lamps, audio commands).
     - Update timers and state machines.
     - Keep track of min and max loop execution time for profiling.
 - Between loop iterations:
-  - Flipper input pins can be polled continuously (or at higher priority) outside the 10 ms loop if needed, to minimize flipper latency.
+  - Master Flipper input pins can be polled continuously (or at higher priority) outside the 10 ms loop to minimize flipper latency.
 
 ### 9.2 Mode and State Management
 
@@ -657,36 +658,75 @@ Implementation notes:
 
 ## 12. Original/Impulse Mode Rule Details
 
-Each playfield switch has a distinct behavior and score impact, depending on whether it is lit (if can be lit) and the status of the Selection Unit and other simulated electromechanical devices.
+### 12.1 Switch and Lamp Overview
+
+- Each playfield switch has a distinct behavior and score impact, depending on whether it is lit (if can be lit) and the status of the Selection Unit and other simulated electromechanical devices.
+
+ - Original rules call for a five-ball game; no extra balls are awarded.  Because the Ball Trough Release mechanism is new, and because we have disabled an original gate that held balls drained via the Gobble Hole, we will use the new ball release mechanism to release five balls per game, less one if a ball is detected in the ball lift at game start.
+   - If there are balls in either kickout at the start of the game, disable slingshot and flipper power, and eject balls and wait to see them in either the Gobble Hole or bottom drains before the first ball is released.
+   - If a ball happens to be detected in the Ball Lift at the start of a game, we will call that Ball 1, and only release four additional balls from the trough.
+   - If a ball happens to be in the Shooter Lane at the start of a game, we won't be able to see it and the player will effectively start with an extra ball.
+ - NOTE: On original game, the 10K Bell is physically tied to the 10K Unit, so every 10K score increment rings the bell.  In this simulation, therefore, we will ring the 10K Bell on every 10K score increment.
+ - On every 100K score increment, we will ring the 100K Bell (and also the 10K Bell, since 100K includes a 10K increment).
+ - Each time a WHITE INSERT is lit (even if already lit), we will ring the Selection Bell.
+ - Each time a CREDIT is added (coin mech or special), we will fire the Credit Unit step-up coil and fire the Knocker.
+
+- Pressing Start button once does the following:
+  - Turns on Score Motor.
+  - Deducts one credit (if credits > 0). (Motor cycle 1, Slot 1)
+  - Fires the Relay Reset Bank coil. (Slot 1)
+  - Opens the ball tray. (Slot 1)
+  - Fires the Relay Reset Bank coil again. (Slot 4)
+  - Releases the 1M/100K rapid reset. (Slot 5)
+  - Resets score to zero via Score Motor timing. (Motor cycles 2 and possibly 3)
+  - Turns off Score Motor. (After score reset complete)
+  - Fires Ball Release coil to release one ball into Ball Lift (if not already present.)
+  - NOTE: The ball tray remains open until the first point is scored.
+
+### 12.2 Replays
+
+- There are a few ways to win a free game (add a credit via the Credit Unit step-up coil):
+  - Each time the SCORE is updated, we will evaluate to see if a replay score has been achieved:
+    - One replay each at 4.5M, 6M, 7M, 8M, and 9M points.
+  - If all five balls drain via Gobble Hole (the SPECIAL WHEN LIT insert will be lit on the 5th ball), one replay is awarded.
+  - Each time a SPOTTED NUMBER is awarded (lighting the corresponding white insert), we will evaluate the 1-9 Number Matrix for patterns that award replays:
+      - Any 3-in-a-row (horizontal, vertical, or diagonal) awards 1 replay (only 1 3-in-a-row scores).
+      - Four corners (1, 3, 7, 9) and center (5) awards 5 replays.
+      - Making 1-3 awards 20 replays.
+
+- ### 12.3 Scoring Rules
 
 - Scoring Events:
-  - Hitting either slingshot awards 10K points.
-  - Hitting a bumper awards 10K points and extinguishes its lamp.
-  - Hitting the last lit bumper, in this order:
-    - Simultaneously extinguishes the lamp, awards 10K points, and lights the spotted number.  No motor activity.
-    - Re-lights all bumper lamps and awards 500K points.  One motor cycle.
-  - Hitting any of the nine Side Targets awards 10K points and advances spotted (red) number (via the Selection Unit).
-  - Rolling over any Hat awards 10K points, or 100K points if lit.
+  - Hitting either SLINGSHOT awards 10K points.  This is invariable.
+  - Hitting a BUMPER awards 10K points and extinguishes its lamp, whether last lit bumper or not.
+  - Hitting the last lit bumper, in addition to awarding 10K and extinguishing the lamp:
+    - Simultaneously lights the spotted number (if not already lit).
+    - Fires the Relay Reset Bank coil.
+    - Re-lights all bumper lamps.
+    - Rings the Selection Bell.
+    - Awards 500K points via one motor cycle.
+  - Hitting any of the nine SIDE TARGETS fires the Selection Unit, which:
+    - Awards 10K points (via a switch on the Selection Unit).
+    - Advances spotted (Red) number (via the Selection Unit).
+    - Sometimes lights or extinguishes the Hat rollover lamps (via the Selection Unit).
+      - See Selection Unit details below for the sequence of Red inserts and Hat lamp states.
+  - Rolling over any HAT SWITCH awards 10K points, or 100K points if lit.
     - Rolling over a lit Hat does not extinguish it (because the Selection Unit controls Hat lamps, and only the nine Side Targets advance the Selection Unit).
-  - Landing in either Left or Right Kickout awards 500K points.  If lit, also awards spotted number.
+  - Landing in either LEFT or RIGHT KICKOUTs awards 500K points.  If lit, also awards spotted number.
     - Landing in a lit Kickout does not extinguish it (because the 10K Unit controls Kickout lamps, and Kickouts do NOT advance the 10K Unit).
-  - Draining via Left or Right Drain Rollover awards 100K points.  If lit, also awards spotted number.
+  - Draining via LEFT or RIGHT DRAIN ROLLOVER awards 100K points.  If lit, also awards spotted number.
     - Draining via a lit Drain Rollover does not extinguish it (because the 10K Unit controls Rollover lamps, and Rollovers do NOT advance the 10K Unit).
-  - Draining via Center Drain awards 500K points.
-  - Ball draining via Gobble Hole awards 500K points and (always) awards spotted number.
+  - Draining via CENTER DRAIN ROLLOVER awards 500K points.
+  - Ball draining via GOBBLE HOLE awards 500K points and (always) awards spotted number.
   - If all five balls drain via Gobble Hole, a replay is also awarded.
 
-  - Each time the score is updated, we will evaluate to see if a replay score has been achieved:
-    - 1 Replay each at 4.5M, 6M, 7M, 8M, and 9M points.
 
-- Bumpers:
-  - There are seven bumpers, each labeled with a letter: S, C, R, E, A, M, O.
-  - Hitting a lit bumper awards the spotted number (lighting the corresponding white insert) and advances the 10K Unit by one step.
-  - Hitting an unlit bumper advances the 10K Unit by one step only.
-  - When all seven bumpers are lit and hit, the last hit awards 500K points and rings the Selection Bell.
+- Bumpers: There are seven bumpers, each labeled with a letter: S, C, R, E, A, M, O.  Bumpers are initially lit and extinguised when hit.
+
 - The 1-9 Number Matrix:
   - The red numbered inserts (1-9) indicate the "spotted number" determined by the Selection Unit.
-  - The white numbered inserts (1-9) indicate the "awarded number", which is lit when various events occur:
+    - There is always exactly one red insert lit at any time.
+  - The corresponding white numbered inserts (1-9) indicate the "awarded number", which is lit when various events occur:
     - When the ball hits a lighted "Spots Number When Lit" kickout or drain rollover switch.
     - When the ball drains via the gobble hole.
     - When all seven lit bumpers are hit.
@@ -695,20 +735,18 @@ Each playfield switch has a distinct behavior and score impact, depending on whe
     - When any 3-in-a-row (horizontal, vertical, or diagonal) is completed, a replay is awarded.  Only 1 3-in-a-row scores.
     - Making the four corners (1, 3, 7, 9) and center number (5) awards five additional replays.
     - Making 1-3 scores twenty additional replays.
-  - Various scoring events award the spotted number, lighting the corresponding white insert.
-  - Once all nine white inserts are lit, the Special When Lit lamp is also lit.
 
 - The 10K Unit is directly fired by the Bumper switches, the Hat rollover switches, the Slingshot swtiches, and when the Selection Unit is fired.
   - Bumpers, Hats, and Slingshots do NOT advance the Selection Unit.
   - The 10K Unit controls when the Left Kickout/Right Drain and Right Kickout/Left Drain lamps are lit ("Spots Number When Lit").
-    - When the 10K Unit is a zero, Left Kickout and Right Drain lamps are lit.
-    - When the 10K Unit is a five, Right Kickout and Left Drain lamps are lit.
+    - When the 10K Unit is at zero, Left Kickout and Right Drain lamps are lit.
+    - When the 10K Unit is at 50K, Right Kickout and Left Drain lamps are lit.
     - These are independent of the Selection Unit.
 
-- The Selection Unit is directly fired by the 9 Side Target switches.
-  - These devices do NOT fire the 10K Unit directly, but the Selection Unit fires the 10K Unit each time it advances.
+- The Selection Unit is directly fired only by the 9 Side Target switches (simulated; in fact the Master fires the Selection Unit coil when any 9 Side Target is hit).
+  - These devices do NOT fire the 10K Unit directly, but the Selection Unit fires the 10K Unit each time it advances (simulated.)
   - We use the Selection Unit coil for sound effects, but its behavior is simulated in software.
-  - The Selection Unit has two functions:
+  - The Selection Unit (simulated) has two functions:
     1. Determines which of the red 1-9 numbered "Spot" inserts are lit (one of them is always lit).
        - Various scoring events award the "spotted number", which lights the corresponding white 1-9 numbered insert.
     2. Determines when the four Hat rollover lamps are lit (in Original mode, they always light together).
@@ -728,12 +766,78 @@ Each playfield switch has a distinct behavior and score impact, depending on whe
    - When the fourth ball is gobbled, the Special When Lit lamp is also lit.
    - When the fifth ball is gobbled, a replay is scored.
 
+---
+
+## 13. Enhanced Mode Rule Details
+
+Enhanced Mode rules are based on Original mode rules, with the following additions and changes:
+
+### 13.1 General Features
+
+- Up to four players can play in sequence.
+- Shaker Motor is used to provide tactile feedback during certain events.
+- Tsunami audio is used for voice, music, and sound effects.
+- Ball Save feature gives player a grace period after first scoring a point on each ball.
+- Side Kickouts can hold balls temporarily, ejecting them for MULTIBALL play (or when game ends or is tilted).
+- Features can either carry over between balls and/or players, or reset at the start of each ball (to be defined).
+- Extra balls can be awarded.
+- G.I. Lamps, Hat Lamps and Switches may be triggered and controlled independently (not only as a group as with Original mode).
+- We are not constrained by the original behaviors of the 10K Unit and Selection Unit.
+  - For example, we can light or extinguish Hat lamps independently of the Selection Unit.
+  - We can light or extinguish Kickout and Drain Rollover lamps independently of the 10K Unit.
+  - We can define new behaviors for these devices as needed.
+- All lamps may be lit, flashed, or extinguished independently (to be defined).
+  - For example, multiple Red "Spot" lamps may be lit simultaneously or randomly in "motion" (to be defined).
+  - All playfield lamps may be extinguished except one group, such as bumpers, during certain modes or events (to be defined).
+
+### 13.2 Shaker Motor
+
+The Shaker Motor shakes the cabinet to enhance gameplay.  It is controlled by Master via PWM.
+
+- Slow shaking begins after ball has been released into ball lift and then the switch opens; i.e. when player pushes ball into shooter lane.
+  - This simulates the feeling of climbing the first hill of a rollercoaster.
+  - Corresponds with Tsunami sound effect of rollercoaster being hauled up the chain to the top of the first drop.
+  - Shaking and sound continues until player scores the first point (hits any target, bumper, gobble, etc.).
+  - This feature may be disabled after the first ball so it doesn't become tiresome to the player(s).
+
+- Faster shaking begins then increases then cuts off after the first point is scored, for a few seconds.
+  - This simulates the more intense event of dropping down the first hill.
+  - Corresponds with Tsunami sound effect of rollercoaster dropping down the first hill and girls screaming.
+
+- Additional shaking events may be defined later to correspond with other modes, scoring events, multi-ball.
+
+### 13.3 Audio
+
+Tsunami WAV Trigger plays voice lines, music tracks, and sound effects.
+
+- Voice lines are played to:
+  - Announce start of game, and when players 2 to 4 are added.
+  - Announce next player's turn for multi-player games.
+  - Announce ball saved.
+  - Announce mode starts, completions, and instructions/goals.
+  - Announce scoring events such as jackpots, specials, extra balls, replays.
+  - Tease player when ball drains and when Game Over.
+  - Provide thematic commentary.
+
+- Sound effects are played for:
+  - Bumper hits.
+  - Target hits.
+  - Gobble and drain events.
+  - Other scoring events and achievements.
+  - Game start (i.e. girl screaming) and end.
+
+- Music tracks play during modes and multi-ball.
+
+
+
+
+
 
 
 
 ---
 
-## 13. Open Items and Implementation Notes
+## 14. Open Items and Implementation Notes
 
 These are good hooks for Copilot to help write code.
 
@@ -766,19 +870,11 @@ These are good hooks for Copilot to help write code.
 
 ---
 
-## 14. Suggested Sections to Flesh Out (For Future Docs / Copilot)
+## 15. Suggested Sections to Flesh Out (For Future Docs / Copilot)
 
 The following sections would help Copilot (and future you) a lot if you add more detail:
 
-
-1. Original/Impulse Mode Rule Details
-   - Exact scoring rules, feature ladders.
-   - Which combinations of bumpers, targets, gobble events, etc. trigger:
-     - Score increments.
-     - Sound effects via EM devices.
-     - Lamp changes.
-
-2. Enhanced Mode Rule Details
+1. Enhanced Mode Rule Details
    - Exact scoring rules, feature ladders, multi-ball, extra ball, ball save logic.
    - Which combinations of bumpers, targets, gobble events, etc. trigger and end:
      - Voice lines.
@@ -787,27 +883,19 @@ The following sections would help Copilot (and future you) a lot if you add more
      - Shaker events.
    - Definition of "roller coaster" themed modes, if any (for example multiball, hurry-up).
 
-3. Audio Mapping Table
+2. Audio Mapping Table
    - A table mapping:
      - Tsunami track numbers to descriptions and when to play.
    - Include priorities (music vs sound effects vs voice), interrupt rules, and any ducking rules.
 
-4. Diagnostics Data Structures
-   - How coils, lights, and switches are enumerated and named.
-   - Lookup tables for:
-     - Device index to human-readable name.
-     - Device index to Centipede address / pin.
-   - This will make diagnostic menu code easier to auto-generate.
-
-5. Configuration and Tuning Constants
+3. Configuration and Tuning Constants
    - A central header file for all tunables:
-     - Coil on-times, PWM duty cycles.
      - Shaker motor patterns.
      - Ball save duration.
      - Lamp fade timings (if implemented).
      - Debounce times.
 
-6. Safety and Fault Handling
+4. Safety and Fault Handling
    - Define behavior on:
      - Stuck switches.
      - Coil on too long (watchdog).
