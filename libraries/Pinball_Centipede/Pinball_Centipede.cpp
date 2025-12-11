@@ -16,6 +16,14 @@ Pinball_Centipede::Pinball_Centipede() {  // no constructor tasks yet
 
 // Set device to default values
 void Pinball_Centipede::begin() {
+  // Ensure output latches default to HIGH (inactive for active-LOW relays)
+  // Write OLAT (0x12) = 0xFFFF for all ports to avoid transient ON
+  for (int port = 0; port < 8; ++port) {
+    CSDataArray[0] = 0xFF;
+    CSDataArray[1] = 0xFF;
+    WriteRegisters(port, 0x12, 2); // OLAT registers
+  }
+  // Continue with existing default configuration
   for (int j = 0; j < 7; j++) {
     CSDataArray[0] = 255;
     CSDataArray[1] = 255;

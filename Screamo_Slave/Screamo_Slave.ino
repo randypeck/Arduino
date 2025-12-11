@@ -1,14 +1,15 @@
-// Screamo_Slave.INO Rev: 11/28/25
+// Screamo_Slave.INO Rev: 12/11/25
 
 #include <Arduino.h>
 #include <Pinball_Consts.h>
 #include <Pinball_Functions.h>
+#include <avr/wdt.h>
 
 #include <EEPROM.h>               // For saving and recalling score, to persist between power cycles.
 const int EEPROM_ADDR_SCORE = 0;  // Address to store 16-bit score (uses addr 0 and 1)
 
 const byte THIS_MODULE = ARDUINO_SLV;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "SLAVE 11/28/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "SLAVE 12/11/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which effectively makes it a global.
 // No need to pass lcdString[] to any functions that use it!
 
@@ -184,35 +185,51 @@ const unsigned RESET_HIGH_STEP_MS = 8;  // ms between rapid high (100K) reversal
 int  batchHundredsRemaining = 0;   // number of 100K steps left in current batch (each == 10 units)
 int  batchTensRemaining     = 0;   // number of 10K steps left in current batch
 
+// ---- New globals for flashing state ----
+bool flashActive = false;
+int flashScoreValue = 0;            // 0..999 value being flashed
+bool flashShowOn = false;           // current visible state (true => show flashScoreValue; false => show 0)
+unsigned long flashLastToggleMs = 0;
+const unsigned FLASH_HALF_MS = 250; // 250ms half-period => 2 Hz blink
+int lastDisplayedScore = -1;        // replaced displayScore's static cache (global so we can reset it)
+
 // *****************************************************************************************
 // **************************************  S E T U P  **************************************
 // *****************************************************************************************
 
 void setup() {
 
-  initScreamoSlaveArduinoPins();  // Arduino direct I/O pins only.
+  initScreamoSlaveArduinoPins();                     // Arduino direct I/O pins only.
 
-  setAllDevicesOff();  // Set initial state for all MOSFET PWM output pins (pins 5-12)
+  setAllDevicesOff();  // Set initial state for all MOSFET PWM and Centipede outputs
 
-  setPWMFrequencies(); // Set non-default PWM frequencies for certain pins.
+  // *** INITIALIZE PINBALL_CENTIPEDE SHIFT REGISTER ***
+  // WARNING: Instantiating Pinball_Centipede class hangs the system if hardware is not connected.
+  // Initialize I2C and Centipede as early as possible to minimize relay-on (turns on all lamps) at power-up
+  Wire.begin();                            // Join the I2C bus as a master for Centipede shift register.
+  pShiftRegister = new Pinball_Centipede;  // C++ quirk: no parens in ctor call if no parms; else thinks it's fn decl'n.
+  pShiftRegister->begin();                 // Set all registers to default.
+
+// ************************************************************************
+// delay(50); // add a short 10-50ms delay after shiftregister->begin if we see relays flash; hardware may need a few ms to settle before I can guarantee outputs are off *************************************************
+// ************************************************************************
+
+  pShiftRegister->initScreamoSlaveCentipedePins();
+
+  setPWMFrequencies(); // Set non-default PWM frequencies so coils don't buzz.
+
+  clearAllPWM();  // Clear any PWM outputs that may have been set during setPWMFrequencies()
 
   // *** INITIALIZE SERIAL PORTS ***
   Serial.begin(SERIAL0_SPEED);   // PC serial monitor window 115200.  Change if using thermal mini printer.
   // Serial1 LCD2004 instantiated via pLCD2004->begin.
   // Serial2 RS485   instantiated via pMessage->begin.
 
+
   // *** INITIALIZE RS485 MESSAGE CLASS AND OBJECT *** (Heap uses 30 bytes)
   // WARNING: Instantiating Message class hangs the system if hardware is not connected.
   pMessage = new Pinball_Message;  // C++ quirk: no parens in ctor call if no parms; else thinks it's fn decl'n.
   pMessage->begin(&Serial2, SERIAL2_SPEED);
-
-  // *** INITIALIZE PINBALL_CENTIPEDE SHIFT REGISTER ***
-  // WARNING: Instantiating Pinball_Centipede class hangs the system if hardware is not connected.
-  // We're doing this near the top of the code so we can turn on G.I. as quickly as possible.
-  Wire.begin();                               // Join the I2C bus as a master for Centipede shift register.
-  pShiftRegister = new Pinball_Centipede;     // C++ quirk: no parens in ctor call if no parms; else thinks it's fn decl'n.
-  pShiftRegister->begin();                    // Set all registers to default.
-  pShiftRegister->initScreamoSlaveCentipedePins();
 
   // Turn on GI lamps so player thinks they're getting instant startup (NOTE: Can't do this until after pShiftRegister is initialized)
   setScoreLampBrightness(deviceParm[DEV_IDX_LAMP_SCORE].powerInitial);     // Ready to turn on as soon as relay contacts close.
@@ -248,20 +265,33 @@ void loop() {
   // - Keeps timing deterministic for device timers and score motor slots.
   // - Early-return style keeps loop short and predictable; avoid adding blocking work here.
   unsigned long now = millis();
-  if (now - lastLoopTime < SCREAMO_SLAVE_TICK_MS) return;  // Still within this 10ms window
+  if (now - lastLoopTime < SCREAMO_SLAVE_TICK_MS) return;
   lastLoopTime = now;
 
-  // Drain all pending RS-485 messages (non-blocking).
-  // Handlers must be quick and non-blocking; they may enqueue work for the state machines below.
-  while ((msgType = pMessage->available()) != RS485_TYPE_NO_MESSAGE) {
-    processMessage(msgType);
+  // Drain RS-485 messages. If flashing, any incoming message should stop flashing FIRST.
+  byte incomingMsg;
+  while ((incomingMsg = pMessage->available()) != RS485_TYPE_NO_MESSAGE) {
+    // If we're flashing and message is NOT another flash-start, stop flashing and prepare display state.
+    if (flashActive && incomingMsg != RS485_TYPE_MAS_TO_SLV_SCORE_FLASH) {
+      // Per requirement: if incoming is NOT score-related, set score to zero before processing.
+      if (incomingMsg != RS485_TYPE_MAS_TO_SLV_SCORE_ABS &&
+        incomingMsg != RS485_TYPE_MAS_TO_SLV_SCORE_INC_10K &&
+        incomingMsg != RS485_TYPE_MAS_TO_SLV_SCORE_RESET &&
+        incomingMsg != RS485_TYPE_MAS_TO_SLV_SCORE_QUERY) {
+        currentScore = 0;
+        targetScore = 0;
+        scoreAdjustActive = false;
+      }
+      stopFlashScore();
+    }
+    processMessage(incomingMsg);
   }
 
   // Advance per-device timers first so device state (countdown/rest) reflects this tick
   // before any state machines attempt to activate coils/lamps again.
   updateDeviceTimers();
 
-  // Run non-blocking score state machines in deterministic order:
+  // Run score state machines (these call displayScore internally). displayScore will no-op while flashActive==true.
   // 1) processScoreAdjust() moves currentScore toward targetScore (may activate coils/bells).
   // 2) processScoreReset() runs a reset sequence that preempts/blocks adjustments when active.
   // Order matters: updateDeviceTimers() happens before these so an activation decision sees
@@ -269,6 +299,20 @@ void loop() {
   processScoreAdjust();
   processScoreReset();
 
+  // If flash active, toggle lamps at the requested rate (non-blocking).
+  if (flashActive) {
+    unsigned long nowMs = millis();
+    if ((nowMs - flashLastToggleMs) >= FLASH_HALF_MS) {
+      flashLastToggleMs = nowMs;
+      flashShowOn = !flashShowOn;
+      if (flashShowOn) {
+        setScoreLampsDirect(flashScoreValue);
+      }
+      else {
+        setScoreLampsDirect(0);
+      }
+    }
+  }
 }  // End of loop()
 
 // *****************************************************************************************
@@ -287,6 +331,11 @@ void processMessage(byte t_msgType) {
     pMessage->getMAStoSLVMode(&newMode);
     sprintf(lcdString, "Mode change %u", newMode); pLCD2004->println(lcdString);
     startNewGame(newMode);
+  } break;
+
+  case RS485_TYPE_MAS_TO_SLV_COMMAND_RESET: {
+    // Software reset
+    softwareReset();
   } break;
 
   case RS485_TYPE_MAS_TO_SLV_CREDIT_STATUS: {
@@ -364,6 +413,19 @@ void processMessage(byte t_msgType) {
     saveScoreToEEPROM(currentScore);
   } break;
 
+  case RS485_TYPE_MAS_TO_SLV_SCORE_FLASH: {
+    int flashScore = 0;
+    pMessage->getMAStoSLVScoreFlash(&flashScore);
+    if (flashScore == 0) {
+      // Shortcut: behave like a no-op score change; stop flash and resume previous display.
+      stopFlashScore();
+      // No score change; displayScore() is already invoked in stopFlashScore().
+    }
+    else {
+      startFlashScore(flashScore);
+    }
+  } break;
+
   case RS485_TYPE_MAS_TO_SLV_SCORE_INC_10K: {
     // Forward signed delta (in 10K units) to the centralized enqueue/validation logic.
     int incAmount = 0;
@@ -438,14 +500,9 @@ void processMessage(byte t_msgType) {
 // ********************** H A R D W A R E / D E V I C E   C O N T R O L ************************
 // ************************************************************************************
 
-void setPWMFrequencies() {
-  // Raises Timer1 PWM frequency (pins 11, 12) to reduce visible LED flicker.
-  // Prescaler set to 1 => ~31kHz. Only affects Timer1-controlled outputs.
-  TCCR1B = (TCCR1B & 0b11111000) | 0x01;
-}
-
 void setAllDevicesOff() {
-  // Initializes all device runtime state to idle and ensures their outputs are OFF.
+  // Set the output latch low first, then configure as OUTPUT.
+  // This avoids a brief HIGH when changing direction.
   // Called at startup; safe to call again if a fatal error requires a known-safe hardware state.
   for (int i = 0; i < NUM_DEVS; i++) {
     deviceParm[i].countdown = 0;     // 0 = idle (not active, not resting)
@@ -453,6 +510,32 @@ void setAllDevicesOff() {
     digitalWrite(deviceParm[i].pinNum, LOW);
     pinMode(deviceParm[i].pinNum, OUTPUT);
   }
+  // Use shared helper to force Centipede outputs OFF (safe if pShiftRegister == nullptr)
+  centipedeForceAllOff();
+}
+
+void setPWMFrequencies() {
+  // Configure PWM timers / prescalers for higher PWM frequency (~31kHz)
+  // Keep this separate from clearAllPWM() which only clears PWM outputs.
+  // Prescaler set to 1 => ~31kHz. Only affects Timer1-controlled outputs.
+  TCCR1B = (TCCR1B & 0b11111000) | 0x01;
+}
+
+void clearAllPWM() {
+  // Call this after PWM timers / prescalers have been configured.
+  // On PWM-capable pins this clears compare outputs; harmless on non-PWM pins.
+  for (int i = 0; i < NUM_DEVS; i++) {
+    analogWrite(deviceParm[i].pinNum, 0);
+  }
+}
+
+void softwareReset() {
+  // Ensure everything is driven off (both latch and PWM) before reset.
+  setAllDevicesOff();
+  clearAllPWM();
+  cli(); // disable interrupts
+  wdt_enable(WDTO_15MS); // enable watchdog timer to trigger a system reset with shortest timeout
+  while (1) { }  // wait for watchdog to reset system
 }
 
 bool canActivateDeviceNow(byte t_devIdx) {
@@ -1143,31 +1226,46 @@ void startNewGame(byte t_mode) {
 // ****************** D I S P L A Y   &   P E R S I S T E N C E   F U N C T I O N S *************
 // ************************************************************************************
 
-void displayScore(int t_score) {
-  // Updates score display lamps (1M, 100K, 10K sets).
-  // Only changes lamps whose digits differ since last update.
-  // Input score treated as digits: millions (hundreds place), hundredK (tens place), tensK (ones place).
-  if (t_score < 0) {
-    t_score = 0;
+void setScoreLampsDirect(int t_score) {
+  if (t_score < 0) t_score = 0;
+  if (t_score > 999) t_score = 999;
+
+  // Fast path: for zero, force all 27 lamps OFF to avoid any stale-on conditions.
+  if (t_score == 0) {
+    // Millions (1..9)
+    for (int i = 0; i < 9; ++i) {
+      pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_1M[i], HIGH);
+    }
+    // HundredK (1..9)
+    for (int i = 0; i < 9; ++i) {
+      pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_100K[i], HIGH);
+    }
+    // TensK (1..9)
+    for (int i = 0; i < 9; ++i) {
+      pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_10K[i], HIGH);
+    }
+    lastDisplayedScore = 0;
+    return;
   }
-  if (t_score > 999) {
-    t_score = 999;
-  }
-  static int lastScore = -1;
+
   int millions = t_score / 100;
   int hundredK = (t_score / 10) % 10;
   int tensK    = t_score % 10;
-  int lastMillions = (lastScore < 0) ? 0 : lastScore / 100;
-  int lastHundredK = (lastScore < 0) ? 0 : (lastScore / 10) % 10;
-  int lastTensK    = (lastScore < 0) ? 0 : lastScore % 10;
+
+  int lastMillions = (lastDisplayedScore < 0) ? 0 : lastDisplayedScore / 100;
+  int lastHundredK = (lastDisplayedScore < 0) ? 0 : (lastDisplayedScore / 10) % 10;
+  int lastTensK    = (lastDisplayedScore < 0) ? 0 : lastDisplayedScore % 10;
+
+  // Millions lamps (active LOW)
   if (lastMillions != millions) {
     if (lastMillions > 0) {
-      pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_1M[lastMillions - 1], HIGH);
+      pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_1M[lastMillions - 1], HIGH); // OFF
     }
     if (millions > 0) {
-      pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_1M[millions - 1], LOW);
+      pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_1M[millions - 1], LOW);      // ON
     }
   }
+  // 100K lamps (active LOW)
   if (lastHundredK != hundredK) {
     if (lastHundredK > 0) {
       pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_100K[lastHundredK - 1], HIGH);
@@ -1176,6 +1274,7 @@ void displayScore(int t_score) {
       pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_100K[hundredK - 1], LOW);
     }
   }
+  // 10K lamps (active LOW)
   if (lastTensK != tensK) {
     if (lastTensK > 0) {
       pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_10K[lastTensK - 1], HIGH);
@@ -1184,7 +1283,55 @@ void displayScore(int t_score) {
       pShiftRegister->digitalWrite(PIN_OUT_SR_LAMP_10K[tensK - 1], LOW);
     }
   }
-  lastScore = t_score;
+  lastDisplayedScore = t_score;
+}
+
+// ---- Start/Stop flash helpers ----
+void startFlashScore(int t_score) {
+  // If t_score == 0, stop flashing and resume normal display (no score changes).
+  if (t_score <= 0) {
+    if (flashActive) {
+      stopFlashScore();        // restores current display
+    }
+    else {
+      displayScore(currentScore);
+    }
+    return;
+  }
+  flashActive = true;
+  flashScoreValue = constrain(t_score, 0, 999);
+  flashShowOn = true;
+  flashLastToggleMs = millis();
+  setScoreLampsDirect(flashScoreValue);
+}
+
+void stopFlashScore() {
+  if (!flashActive) return;
+  flashActive = false;
+
+  // Force a clean base state: turn all score lamps OFF and reset cache.
+  setScoreLampsDirect(0);   // explicit all-off path
+  lastDisplayedScore = -1;  // force next displayScore() to recalc transitions fully
+
+  // Restore normal displayed score immediately
+  displayScore(currentScore);
+}
+
+void displayScore(int t_score) {
+  // Do not override flashing display
+  if (flashActive) {
+    return;
+  }
+
+  if (t_score < 0) {
+    t_score = 0;
+  }
+  if (t_score > 999) {
+    t_score = 999;
+  }
+
+  // Centralize lamp updates in setScoreLampsDirect() to avoid duplicated logic.
+  setScoreLampsDirect(t_score);
 }
 
 void saveScoreToEEPROM(int t_score) {

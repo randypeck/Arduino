@@ -56,24 +56,26 @@ const byte RS845_PAYLOAD_OFFSET =  4;        // fifth byte of message is the fir
 // Here is a list of all RS485 message types (the 1-byte TYPE field):
 const byte RS485_TYPE_NO_MESSAGE                =  0;  // No message
 const byte RS485_TYPE_MAS_TO_SLV_MODE           =  1;  // Mode change.
+const byte RS485_TYPE_MAS_TO_SLV_COMMAND_RESET  =  2;  // Software reset.
 // MODE_ORIGINAL/ENHANCED/IMPULSE starts new game; tilt off, GI on, revert score, but does not deduct a credit.
-const byte RS485_TYPE_MAS_TO_SLV_CREDIT_STATUS  =  2;  // Request if credits > zero
-const byte RS485_TYPE_SLV_TO_MAS_CREDIT_STATUS  =  3;  // Slave response to credit status request: credits zero or > zero
-const byte RS485_TYPE_MAS_TO_SLV_CREDIT_INC     =  4;  // Credit increment
-const byte RS485_TYPE_MAS_TO_SLV_CREDIT_DEC     =  5;  // Credit decrement (will not return error even if credits already zero)
-const byte RS485_TYPE_MAS_TO_SLV_SCORE_RESET    =  6;  // Reset score to zero
-const byte RS485_TYPE_MAS_TO_SLV_SCORE_ABS      =  7;  // Absolute score update (0.999 in 10,000s)
-const byte RS485_TYPE_MAS_TO_SLV_SCORE_INC_10K  =  8;  // Increment score update (1..999in 10,000s)
-const byte RS485_TYPE_MAS_TO_SLV_SCORE_INC_100K =  9;  // Increment score update (1..999 in 100,000s)
-const byte RS485_TYPE_MAS_TO_SLV_SCORE_DEC_10K  = 10;  // Decrement score update (-999..-1 in 10,000s) (won't go below zero)
-const byte RS485_TYPE_MAS_TO_SLV_BELL_10K       = 11;  // Ring the 10K bell
-const byte RS485_TYPE_MAS_TO_SLV_BELL_100K      = 12;  // Ring the 100K bell
-const byte RS485_TYPE_MAS_TO_SLV_BELL_SELECT    = 13;  // Ring the Select bell
-const byte RS485_TYPE_MAS_TO_SLV_10K_UNIT       = 14;  // Pulse the 10K Unit coil (for testing)
-const byte RS485_TYPE_MAS_TO_SLV_SCORE_QUERY    = 15;  // Master requesting current score displayed by Slave (in 10,000s)
-const byte RS485_TYPE_SLV_TO_MAS_SCORE_REPORT   = 16;  // Slave reporting current score (in 10,000s)
-const byte RS485_TYPE_MAS_TO_SLV_GI_LAMP        = 17;  // Master command to turn G.I. lamps on or off
-const byte RS485_TYPE_MAS_TO_SLV_TILT_LAMP      = 18;  // Master command to turn Tilt lamp on or off
+const byte RS485_TYPE_MAS_TO_SLV_CREDIT_STATUS  =  3;  // Request if credits > zero
+const byte RS485_TYPE_SLV_TO_MAS_CREDIT_STATUS  =  4;  // Slave response to credit status request: credits zero or > zero
+const byte RS485_TYPE_MAS_TO_SLV_CREDIT_INC     =  5;  // Credit increment
+const byte RS485_TYPE_MAS_TO_SLV_CREDIT_DEC     =  6;  // Credit decrement (will not return error even if credits already zero)
+const byte RS485_TYPE_MAS_TO_SLV_SCORE_RESET    =  7;  // Reset score to zero
+const byte RS485_TYPE_MAS_TO_SLV_SCORE_ABS      =  8;  // Absolute score update (0.999 in 10,000s)
+const byte RS485_TYPE_MAS_TO_SLV_SCORE_FLASH    =  9;  // Flash score (used w/ 1M..4M to indicate player number 1..4)
+const byte RS485_TYPE_MAS_TO_SLV_SCORE_INC_10K  = 10;  // Increment score update (1..999in 10,000s)
+const byte RS485_TYPE_MAS_TO_SLV_SCORE_INC_100K = 11;  // Increment score update (1..999 in 100,000s)
+const byte RS485_TYPE_MAS_TO_SLV_SCORE_DEC_10K  = 12;  // Decrement score update (-999..-1 in 10,000s) (won't go below zero)
+const byte RS485_TYPE_MAS_TO_SLV_BELL_10K       = 13;  // Ring the 10K bell
+const byte RS485_TYPE_MAS_TO_SLV_BELL_100K      = 14;  // Ring the 100K bell
+const byte RS485_TYPE_MAS_TO_SLV_BELL_SELECT    = 15;  // Ring the Select bell
+const byte RS485_TYPE_MAS_TO_SLV_10K_UNIT       = 16;  // Pulse the 10K Unit coil (for testing)
+const byte RS485_TYPE_MAS_TO_SLV_SCORE_QUERY    = 17;  // Master requesting current score displayed by Slave (in 10,000s)
+const byte RS485_TYPE_SLV_TO_MAS_SCORE_REPORT   = 18;  // Slave reporting current score (in 10,000s)
+const byte RS485_TYPE_MAS_TO_SLV_GI_LAMP        = 19;  // Master command to turn G.I. lamps on or off
+const byte RS485_TYPE_MAS_TO_SLV_TILT_LAMP      = 20;  // Master command to turn Tilt lamp on or off
 
 // NOTE REGARDING DIAGNOSTIC MODE:
 //   For LAMP TEST, in addition to G.I. and Tilt on/off, Master can send SCORE_ABS messages that will cycle through all

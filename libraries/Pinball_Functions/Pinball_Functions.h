@@ -28,6 +28,7 @@ extern void wdt_disable();  // Used by SWT to release all turnout solenoids in h
 
 void initScreamoMasterArduinoPins();
 void initScreamoSlaveArduinoPins();
+void centipedeForceAllOff();
 void haltIfHaltPinPulledLow();
 void endWithFlashingLED(int t_numFlashes);
 void requestEmergencyStop();

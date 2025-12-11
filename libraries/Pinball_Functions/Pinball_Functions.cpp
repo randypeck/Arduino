@@ -2,6 +2,10 @@
 // Declares and defines several functions that are global to all (or nearly all) Arduino modules.
 
 #include "Pinball_Functions.h"
+#include <Pinball_Centipede.h>
+
+// pShiftRegister is a global defined in the sketches; declare it extern here.
+extern Pinball_Centipede* pShiftRegister;
 
 void initScreamoMasterArduinoPins() {
 
@@ -33,6 +37,17 @@ void initScreamoSlaveArduinoPins() {
   pinMode(PIN_OUT_RS485_TX_ENABLE, OUTPUT);                    // HIGH = RS485 transmit, LOW = not transmitting (receive)
 
   return;
+}
+
+// Force all Centipede outputs to their inactive state (defensive, idempotent).
+// Lamps are active-LOW on your hardware, so HIGH = OFF.
+void centipedeForceAllOff() {
+  if (pShiftRegister == nullptr) {
+    return;
+  }
+  for (int pin = 0; pin < 64; ++pin) {
+    pShiftRegister->digitalWrite(pin, HIGH); // HIGH = lamp OFF
+  }
 }
 
 void haltIfHaltPinPulledLow() {

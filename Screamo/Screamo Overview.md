@@ -292,6 +292,9 @@ Motor-paced batches:
 
 Planned or needed functionality:
 
+### 6.1 Persistent Score Storage
+
+- Use non-volatile storage (EEPROM) on Master Arduino to save scores.
 - Saving previous score when:
   - A game ends, or
   - Periodically during games (for example every N iterations of the 10 ms loop equal to about 15 to 30 seconds).
@@ -306,6 +309,24 @@ Planned or needed functionality:
   - 'startNewGame()' should:
     - Reset internal score variables.
     - Command Slave to step the score down to 0 using realistic timing.
+
+### 6.2 Hardware Startup Behavior
+
+- On power-up or hardware reset of Master or Slave:
+  - Both Arduinos should initialize their internal state to GAME_OVER mode.
+  - Master should read persistent score from EEPROM and command Slave to display it.
+  - All outputs (coils, lamps) should be turned off initially.
+  - Head lamps (GI and Tilt) should be turned on.
+  - TILT lamp should be off.
+
+### 6.3 Hardware Reset Behavior
+
+- At any time during gameplay, game over, or diagnostics:
+  - Pressing and holding the KNOCKOFF button for more than 1 second should trigger a hardware reset of both Master and Slave Arduinos:
+    - Master sends a reset command to Slave via RS-485.
+    - Master and Slave both immediately release all coils, stop all motors, turn off all lamps.
+    - Perform software reset.  Result will be as if power had been recycled.
+  - Pressing the KNOCKOFF button for less than one second, one or more times, has other functions (for example, adding credits).
 
 ---
 

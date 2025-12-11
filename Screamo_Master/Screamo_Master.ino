@@ -1,4 +1,4 @@
-// Screamo_Master.INO Rev: 12/05/25
+// Screamo_Master.INO Rev: 12/11/25
 // 11/12/25: Moved Right Kickout from pin 13 to pin 44 to avoid MOSFET firing twice on power-up.  Don't use MOSFET on pin 13.
 // Centipede #1 (0..63) is LAMP OUTPUTS
 // Centipede #2 (64..127) is SWITCH INPUTS
@@ -7,12 +7,13 @@
 #include <Pinball_Consts.h>
 #include <Pinball_Functions.h>
 #include <Tsunami.h>
+#include <avr/wdt.h>
 
 // #include <EEPROM.h>               // For saving and recalling score, to persist between power cycles.
 // const int EEPROM_ADDR_SCORE = 0;  // Address to store 16-bit score (uses addr 0 and 1)
 
 const byte THIS_MODULE = ARDUINO_MAS;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "MASTER 12/05/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "MASTER 12/11/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which effectively makes it a global.
 // No need to pass lcdString[] to any functions that use it!
 
@@ -347,38 +348,24 @@ void setup() {
 
   initScreamoMasterArduinoPins();                    // Arduino direct I/O pins only.
 
-  // Set initial state for all MOSFET PWM output pins (pins 5-12)
-  for (int i = 0; i < NUM_DEVS; i++) {
-    digitalWrite(deviceParm[i].pinNum, LOW);         // Ensure all MOSFET outputs are off at startup.
-    pinMode(deviceParm[i].pinNum, OUTPUT);
-  }
+  setAllDevicesOff();  // Set initial state for all MOSFET PWM and Centipede outputs
 
-  // Initialize I2C and Centipede expander as early as possible to minimize relay-on (turns on all lamps) at power-up
-  Wire.begin();                                      // Join the I2C bus as a master for Centipede shift register.
-  pShiftRegister = new Pinball_Centipede;            // Instantiate Centipede object as early as possible
-  pShiftRegister->begin();                           // Set all registers to default.
+  // *** INITIALIZE PINBALL_CENTIPEDE SHIFT REGISTER ***
+  // WARNING: Instantiating Pinball_Centipede class hangs the system if hardware is not connected.
+  // Initialize I2C and Centipede as early as possible to minimize relay-on (turns on all lamps) at power-up
+  Wire.begin();                            // Join the I2C bus as a master for Centipede shift register.
+  pShiftRegister = new Pinball_Centipede;  // C++ quirk: no parens in ctor call if no parms; else thinks it's fn decl'n.
+  pShiftRegister->begin();                 // Set all registers to default.
+
+// ************************************************************************
+// delay(50); // add a short 10-50ms delay after shiftregister->begin if we see relays flash; hardware may need a few ms to settle before I can guarantee outputs are off *************************************************
+// ************************************************************************
+
   pShiftRegister->initScreamoMasterCentipedePins();
 
-  // Increase PWM frequency for pins 11 and 12 (Timer 1) to reduce solenoid buzzing.
-  // Pins 11 and 12 are Ball Trough Release coil and Shaker Motor control
-  // Set Timer 1 prescaler to 1 for ~31kHz PWM frequency
-  TCCR1B = (TCCR1B & 0b11111000) | 0x01;
+  setPWMFrequencies(); // Set non-default PWM frequencies so coils don't buzz.
 
-  // Increase PWM frequency for pins 9 and 10 (Timer 2) to reduce solenoid buzzing.
-  // Pins 9 and 10 are Right Flipper and Ball Tray Release (original) coil control
-  // Set Timer 2 prescaler to 1 for ~31kHz PWM frequency
-  TCCR2B = (TCCR2B & 0b11111000) | 0x01;
-
-  // Increase PWM frequency for pin 6..8 (Timer 4) to reduce solenoid buzzing.
-  // Pins 6, 7, 8 are Left and Right Slingshot, and Left Flipper coil control
-  // Set Timer 4 prescaler to 1 for ~31kHz PWM frequency
-  TCCR4B = (TCCR4B & 0b11111000) | 0x01;
-
-  // Increase PWM frequency for pins44..46 (Timer 5) to reduce solenoid buzzing.
-  // Pin 44 is Right Kickout coil control.
-  // Pins44..46 are additional PWM outputs on Timer5 (Mega2560)
-  // Set Timer 5 prescaler to 1 for ~31kHz PWM frequency
-  TCCR5B = (TCCR5B & 0b11111000) | 0x01;
+  clearAllPWM();  // Clear any PWM outputs that may have been set during setPWMFrequencies()
 
   // *** INITIALIZE SERIAL PORTS ***
   Serial.begin(SERIAL0_SPEED);   // PC serial monitor window 115200.  Change if using thermal mini printer.
@@ -398,8 +385,6 @@ void setup() {
   pLCD2004 = new Pinball_LCD(&Serial1, SERIAL1_SPEED);  // Instantiate the object and assign the global pointer.
   pLCD2004->begin();  // 20-char x 4-line LCD display via Serial 1.
   pLCD2004->println(lcdString);  // Display app version, defined above.
-  Serial.println(lcdString);
-  pLCD2004->println("Setup starting.");
 
   // *** INITIALIZE TSUNAMI WAV PLAYER OBJECT ***
   // Files must be WAV format, 16-bit PCM, 44.1kHz, Stereo.  Details in Tsunami.h comments.
@@ -408,10 +393,6 @@ void setup() {
 
 
 //  runBasicDiagnostics();
-
-
-  pLCD2004->println("Setup complete.");
-
 
 
   // Here is some code to test the Tsunami WAV player by playing a sound...
@@ -548,7 +529,9 @@ while (true) {
         delay(10);
       }
       analogWrite(deviceParm[DEV_IDX_FLIPPER_LEFT].pinNum, LOW);  // Turn OFF
+      pMessage->sendMAStoSLVScoreFlash(400);  // Flash 4M
     }
+
     if (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == LOW) {  // Fire the right flipper
       analogWrite(deviceParm[DEV_IDX_FLIPPER_RIGHT].pinNum, deviceParm[DEV_IDX_FLIPPER_RIGHT].powerInitial);
       delay(deviceParm[DEV_IDX_FLIPPER_RIGHT].timeOn * 10);
@@ -558,6 +541,7 @@ while (true) {
         delay(10);
       }
       analogWrite(deviceParm[DEV_IDX_FLIPPER_RIGHT].pinNum, LOW);  // Turn OFF
+      pMessage->sendMAStoSLVScoreFlash(0);  // Flash off (same as sending absScore(0)
     }
     // Check left slingshot
     if (switchClosed(SWITCH_IDX_SLINGSHOT_LEFT)) {
@@ -746,6 +730,7 @@ while (true) {
       delay(200);
       pShiftRegister->digitalWrite(lampParm[LAMP_IDX_GI_RIGHT_CENTER_2].pinNum, HIGH);
     }
+
     if (switchClosed(SWITCH_IDX_START_BUTTON)) {
       pShiftRegister->digitalWrite(lampParm[LAMP_IDX_WHITE_5].pinNum, LOW);
 
@@ -770,9 +755,9 @@ while (true) {
 
 
     if (switchClosed(SWITCH_IDX_DIAG_1)) {
-      analogWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, 255); // energize score motor
-      delay(30000);
-      analogWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, HIGH); // turn off score motor
+      digitalWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, HIGH); // Start the score motor
+      delay(5000);
+      digitalWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, LOW); // Stop the score motor (explicit)
       pShiftRegister->digitalWrite(lampParm[LAMP_IDX_WHITE_1].pinNum, LOW);
       delay(200);
       pShiftRegister->digitalWrite(lampParm[LAMP_IDX_WHITE_1].pinNum, HIGH);
@@ -803,11 +788,14 @@ while (true) {
       delay(500);
       pShiftRegister->digitalWrite(lampParm[LAMP_IDX_WHITE_3].pinNum, HIGH);
     }
-    if (switchClosed(SWITCH_IDX_DIAG_4)) {
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_WHITE_4].pinNum, LOW);
-      delay(200);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_WHITE_4].pinNum, HIGH);
+
+    if (switchClosed(SWITCH_IDX_DIAG_4)) {  // TEST SOFTWARE RESET
+      // Send message to slave to also reset
+      pMessage->sendMAStoSLVCommandReset();
+      delay(10);  // Allow message to fully transmit and Slave to process before Master resets
+      softwareReset();
     }
+
     if (switchClosed(SWITCH_IDX_KNOCK_OFF)) {
       pShiftRegister->digitalWrite(lampParm[LAMP_IDX_WHITE_6].pinNum, LOW);
       const byte idx = DEV_IDX_BALL_TROUGH_RELEASE;
@@ -1043,41 +1031,51 @@ bool switchClosed(byte t_switchIdx) {
   return ((switchNewState[portIndex] & (1 << bitNum)) == 0);
 }
 
-
-// ********************************************************************************************************************************
-// **************************************************** OPERATE IN MANUAL MODE ****************************************************
-// ********************************************************************************************************************************
-
-void MASManualMode() {  // CLEAN THIS UP SO THAT MAS/OCC/LEG ARE MORE CONSISTENT WHEN DOING THE SAME THING I.E. RETRIEVING SENSORS AND UPDATING SENSOR-BLOCK *******************************
-  /*
-  // When starting MANUAL mode, MAS/SNS will always immediately send status of every sensor.
-  // Recieve a Sensor Status from every sensor.  No need to clear first as we'll get them all.
-  // We don't care about sensors in MAS Manual mode, so we disregard them (but other modules will see and want.)
-  for (int i = 1; i <= TOTAL_SENSORS; i++) {  // For every sensor on the layout
-    // First, MAS must transmit the request...
-    pMessage->sendMAStoALLModeState(1, 1);
-    // Wait for a Sensor message (there better not be any other type that comes in)...
-    while (pMessage->available() != 'S') {}  // Do nothing until we have a new message
-    byte sensorNum;
-    byte trippedOrCleared;
-    pMessage->getMAStoALLModeState(&sensorNum, &trippedOrCleared);
-    if (i != sensorNum) {
-      sprintf(lcdString, "SNS %i %i NUM ERR", i, sensorNum); pLCD2004->println(lcdString);  Serial.println(lcdString); endWithFlashingLED(1);
-    }
-    if ((trippedOrCleared != SENSOR_STATUS_TRIPPED) && (trippedOrCleared != SENSOR_STATUS_CLEARED)) {
-      sprintf(lcdString, "SNS %i %c T|C ERR", i, trippedOrCleared); pLCD2004->println(lcdString);  Serial.println(lcdString); endWithFlashingLED(1);
-    }
-    if (trippedOrCleared == SENSOR_STATUS_TRIPPED) {
-      sprintf(lcdString, "Sensor %i Tripped", i); pLCD2004->println(lcdString); Serial.println(lcdString);
-    } else {
-      sprintf(lcdString, "Sensor %i Cleared", i); Serial.println(lcdString);  // Not to LCD
-    }
-    delay(20);  // Not too fast or we'll overflow LEG's input buffer
+void setAllDevicesOff() {
+  // Set the output latch low first, then configure as OUTPUT.
+  // This avoids a brief HIGH when changing direction.
+  for (int i = 0; i < NUM_DEVS; i++) {
+    digitalWrite(deviceParm[i].pinNum, LOW);  // set PORTx latch to 0 while pin still INPUT
+    pinMode(deviceParm[i].pinNum, OUTPUT);    // now become driven LOW
   }
-  // Okay, we've received all TOTAL_SENSORS sensor status updates (and disregarded them.)
-  */
-  return;
+
+  // Use shared helper to force Centipede outputs OFF (safe if pShiftRegister == nullptr)
+  centipedeForceAllOff();
 }
+
+void setPWMFrequencies() {
+  // Configure PWM timers / prescalers for higher PWM frequency (~31kHz)
+  // Keep this separate from clearAllPWM() which only clears PWM outputs.
+  // Timer 1 -> pins 11, 12 (Ball Trough Release, Shaker)
+  TCCR1B = (TCCR1B & 0b11111000) | 0x01; // prescaler = 1
+  // Timer 2 -> pins 9, 10 (Right Flipper, Ball Tray Release)
+  TCCR2B = (TCCR2B & 0b11111000) | 0x01; // prescaler = 1
+  // Timer 4 -> pins 6, 7, 8 (Left/Right Slingshots, Left Flipper)
+  TCCR4B = (TCCR4B & 0b11111000) | 0x01; // prescaler = 1
+  // Timer 5 -> pins 44..46 (Right Kickout, etc.)
+  TCCR5B = (TCCR5B & 0b11111000) | 0x01; // prescaler = 1
+}
+
+void clearAllPWM() {
+  // Call this after PWM timers / prescalers have been configured.
+  // On PWM-capable pins this clears compare outputs; harmless on non-PWM pins.
+  for (int i = 0; i < NUM_DEVS; i++) {
+    analogWrite(deviceParm[i].pinNum, 0);
+  }
+}
+
+void softwareReset() {
+  // Ensure everything is driven off (both latch and PWM) before reset.
+  setAllDevicesOff();
+  clearAllPWM();
+  cli(); // disable interrupts
+  wdt_enable(WDTO_15MS); // enable watchdog timer to trigger a system reset with shortest timeout
+  while (1) { }  // wait for watchdog to reset system
+}
+
+// ********************************************************************************************************************************
+// ********************************************************************************************************************************
+// ********************************************************************************************************************************
 
 void runBasicDiagnostics() {
   // Let's send some test messages to the Slave Arduino in the head.
