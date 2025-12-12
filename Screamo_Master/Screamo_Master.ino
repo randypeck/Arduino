@@ -60,24 +60,27 @@ const byte NUM_DEVS                     = 14;
 
 DeviceParmStruct deviceParm[NUM_DEVS] = {
   // pinNum, powerInitial, timeOn(ms), powerHold, countdown
-  {  5, 255,  5,   0, 0, 0 },  // DEV_IDX_POP_BUMPER          =  0, PWM MOSFET
-  {  4, 190, 10,   0, 0, 0 },  // DEV_IDX_KICKOUT_LEFT        =  1, PWM MOSFET (cannot modify PWM freq.)
-  { 44, 200, 10,   0, 0, 0 },  // DEV_IDX_KICKOUT_RIGHT       =  2, PWM MOSFET
-  {  6, 180, 10,   0, 0, 0 },  // DEV_IDX_SLINGSHOT_LEFT      =  3, PWM MOSFET
-  {  7, 180, 10,   0, 0, 0 },  // DEV_IDX_SLINGSHOT_RIGHT     =  4, PWM MOSFET
-  {  8, 150, 10,  40, 0, 0 },  // DEV_IDX_FLIPPER_LEFT        =  5, PWM MOSFET.  200 hits gobble hole too hard; 150 can get to top of p/f.
-  {  9, 150, 10,  40, 0, 0 },  // DEV_IDX_FLIPPER_RIGHT       =  6, PWM MOSFET
-  { 10, 200, 20,  40, 0, 0,},  // DEV_IDX_BALL_TRAY_RELEASE   =  7, PWM MOSFET (original tray release)
-  { 23, 255,  5,   0, 0, 0 },  // DEV_IDX_SELECTION_UNIT      =  8, Non-PWM MOSFET; on/off only.
-  { 24, 255,  5,   0, 0, 0 },  // DEV_IDX_RELAY_RESET         =  9, Non-PWM MOSFET; on/off only.
-  { 11, 150, 23,   0, 0, 0,},  // DEV_IDX_BALL_TROUGH_RELEASE = 10, PWM MOSFET (new up/down post)
+  {  5, 255,  5,   0, 0, 0 },  // POP_BUMPER          =  0, PWM MOSFET
+  {  4, 190, 10,   0, 0, 0 },  // KICKOUT_LEFT        =  1, PWM MOSFET (cannot modify PWM freq.)
+  { 44, 200, 10,   0, 0, 0 },  // KICKOUT_RIGHT       =  2, PWM MOSFET
+  {  6, 180, 10,   0, 0, 0 },  // SLINGSHOT_LEFT      =  3, PWM MOSFET
+  {  7, 180, 10,   0, 0, 0 },  // SLINGSHOT_RIGHT     =  4, PWM MOSFET
+  {  8, 150, 10,  40, 0, 0 },  // FLIPPER_LEFT        =  5, PWM MOSFET.  200 hits gobble hole too hard; 150 can get to top of p/f.
+  {  9, 150, 10,  40, 0, 0 },  // FLIPPER_RIGHT       =  6, PWM MOSFET
+  { 10, 200, 20,  40, 0, 0,},  // BALL_TRAY_RELEASE   =  7, PWM MOSFET (original tray release)
+  { 23, 255,  5,   0, 0, 0 },  // SELECTION_UNIT      =  8, Non-PWM MOSFET; on/off only.
+  { 24, 255,  5,   0, 0, 0 },  // RELAY_RESET         =  9, Non-PWM MOSFET; on/off only.
+  { 11, 150, 23,   0, 0, 0,},  // BALL_TROUGH_RELEASE = 10, PWM MOSFET (new up/down post)
   // For the ball trough release coil, 150 is the right power; 100 could not guarantee it could retract if there was pressure holding it from balls above.
   // 230ms is just enough time for ball to get 1/2 way past post and momentum carries it so it won't get pinned by the post.
   // The post springs back fully extended before the next ball hits it.
-  { 12, 200, 25,   0, 0, 0 },  // DEV_IDX_MOTOR_SHAKER        = 11, PWM MOSFET
-  { 26, 200,  4,   0, 0, 0 },  // DEV_IDX_KNOCKER             = 12, Non-PWM MOSFET; on/off only.
-  { 25, 255, 25,   0, 0, 0 }   // DEV_IDX_MOTOR_SCORE         = 13, A/C SSR; on/off only; NOT PWM.
+  { 12,   0,  0,   0, 0, 0 },  // MOTOR_SHAKER        = 11, PWM MOSFET. Range is 70 to 140. Below won't start; above triggers hats.
+  { 26, 200,  4,   0, 0, 0 },  // KNOCKER             = 12, Non-PWM MOSFET; on/off only.
+  { 25, 255,  0,   0, 0, 0 }   // MOTOR_SCORE         = 13, A/C SSR; on/off only; NOT PWM.
 };
+
+const byte MOTOR_SHAKER_POWER_MIN =  70;  // Minimum power to start shaker motor
+const byte MOTOR_SHAKER_POWER_MAX = 140;  // Maximum power before hats trigger
 
 // ****************************************
 // ***** SWITCH STRUCTS AND CONSTANTS *****
@@ -339,7 +342,6 @@ bool debugOn    = false;
 unsigned int switchOldState[] = { 65535,65535,65535,65535 };
 unsigned int switchNewState[] = { 65535,65535,65535,65535 };
 
-
 // *****************************************************************************************
 // **************************************  S E T U P  **************************************
 // *****************************************************************************************
@@ -510,7 +512,7 @@ while (true) {
 
 // Here is some code that fires the slingshot coils when their switches are pressed...
 
-  byte shakerMotorPower = 0;
+  byte shakerMotorPower = 0;  // Tested range 12/12/25 is 70 to 140.  At 150 the hats sometimes false trigger.
 
   while (true) {
     // Fast read all 64 Centipede #2 inputs (16 bits at a time) into switchNewState[] before checking any switches.
@@ -772,6 +774,7 @@ while (true) {
         shakerMotorPower = 0;
         analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, shakerMotorPower); // turn off shaker motor
       }
+      sprintf(lcdString, "Shaker %i", shakerMotorPower); pLCD2004->println(lcdString);
       delay(500);
       pShiftRegister->digitalWrite(lampParm[LAMP_IDX_WHITE_2].pinNum, HIGH);
     }
@@ -785,6 +788,7 @@ while (true) {
         shakerMotorPower = shakerMotorPower + 10;
         analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, shakerMotorPower); // energize shaker motor
       }
+      sprintf(lcdString, "Shaker %i", shakerMotorPower); pLCD2004->println(lcdString);
       delay(500);
       pShiftRegister->digitalWrite(lampParm[LAMP_IDX_WHITE_3].pinNum, HIGH);
     }
