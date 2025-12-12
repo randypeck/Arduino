@@ -135,6 +135,11 @@ const unsigned SCORE_MOTOR_CYCLE_MS = 882;                 // one 1/4 revolution
 const unsigned SCORE_MOTOR_STEPS    = 6;                   // sub-steps per 1/4 rev (up to 5 advances + 1 rest)
 const unsigned SCORE_MOTOR_STEP_MS  = SCORE_MOTOR_CYCLE_MS / SCORE_MOTOR_STEPS; // spacing per sub-step (ms)
 
+// Score saving:
+const unsigned long EEPROM_SAVE_INTERVAL_MS = 60000;  // Save score every 60 seconds
+unsigned long lastEEPROMSaveMs = 0;
+int lastSavedScore = -1;  // Track last saved value to avoid redundant writes
+
 // Score reset phases used for Reset State Machine:
 // The score reset sequence runs through several phases to simulate mechanical score motor behavior.
 // SCORE_RESET_PHASE_REV_HIGH:
@@ -190,7 +195,7 @@ bool flashActive = false;
 int flashScoreValue = 0;            // 0..999 value being flashed
 bool flashShowOn = false;           // current visible state (true => show flashScoreValue; false => show 0)
 unsigned long flashLastToggleMs = 0;
-const unsigned FLASH_HALF_MS = 250; // 250ms half-period => 2 Hz blink
+const unsigned FLASH_RATE_MS = 250; // 250ms half-period => 2 Hz blink
 int lastDisplayedScore = -1;        // replaced displayScore's static cache (global so we can reset it)
 
 // *****************************************************************************************
@@ -268,9 +273,15 @@ void loop() {
   if (now - lastLoopTime < SCREAMO_SLAVE_TICK_MS) return;
   lastLoopTime = now;
 
+  // Check for RS485 communication errors
+  byte incomingMsg = pMessage->available();
+  if (incomingMsg >= RS485_ERROR_BEGIN) {  // Error code range
+    handleRS485Error(incomingMsg);
+    return;  // Stop processing
+  }
+
   // Drain RS-485 messages. If flashing, any incoming message should stop flashing FIRST.
-  byte incomingMsg;
-  while ((incomingMsg = pMessage->available()) != RS485_TYPE_NO_MESSAGE) {
+  if (incomingMsg != RS485_TYPE_NO_MESSAGE) {
     // If we're flashing and message is NOT another flash-start, stop flashing and prepare display state.
     if (flashActive && incomingMsg != RS485_TYPE_MAS_TO_SLV_SCORE_FLASH) {
       // Per requirement: if incoming is NOT score-related, set score to zero before processing.
@@ -299,10 +310,23 @@ void loop() {
   processScoreAdjust();
   processScoreReset();
 
+  // Periodic EEPROM save (i.e. every 60 seconds) (only if score has changed.)
+  // Since we don't *really* care if the score displayed at power-up is the absolute latest score.
+  // We could just as easily have the score come up at some always-the-same value; just so it's not zero.
+  // The original game would persist score-at-power-off until the next power-on, so we're just simulating this.
+  now = millis();
+  if ((now - lastEEPROMSaveMs) >= EEPROM_SAVE_INTERVAL_MS) {
+    if (currentScore != lastSavedScore) {
+      saveScoreToEEPROM(currentScore);
+      lastSavedScore = currentScore;
+    }
+    lastEEPROMSaveMs = now;
+  }
+
   // If flash active, toggle lamps at the requested rate (non-blocking).
   if (flashActive) {
     unsigned long nowMs = millis();
-    if ((nowMs - flashLastToggleMs) >= FLASH_HALF_MS) {
+    if ((nowMs - flashLastToggleMs) >= FLASH_RATE_MS) {
       flashLastToggleMs = nowMs;
       flashShowOn = !flashShowOn;
       if (flashShowOn) {
@@ -410,7 +434,6 @@ void processMessage(byte t_msgType) {
     scoreCmdActiveDirection = 0;
     sprintf(lcdString, "Score set %u", (unsigned)currentScore); pLCD2004->println(lcdString);
     displayScore(currentScore);
-    saveScoreToEEPROM(currentScore);
   } break;
 
   case RS485_TYPE_MAS_TO_SLV_SCORE_FLASH: {
@@ -487,13 +510,15 @@ void processMessage(byte t_msgType) {
     setTiltLamp(tiltOn);
   } break;
 
-  default: {
-    // Unknown message type: force safe hardware state then halt (protocol mismatch).
-    setAllDevicesOff();
-    sprintf(lcdString, "MSG TYPE ERR %u", t_msgType); pLCD2004->println(lcdString);
-    while (true) { }
+  case RS485_ERROR_UNEXPECTED_TYPE: {
+    handleRS485Error(RS485_ERROR_UNEXPECTED_TYPE);
   } break;
-  }
+
+  default: {
+    // Unknown message type.
+    handleRS485Error(RS485_ERROR_UNEXPECTED_TYPE);
+  } break;
+  }  // End of switch
 }
 
 // ************************************************************************************
@@ -1045,8 +1070,6 @@ void scoreAdjustFinishIfDone() {
   scoreCycleHundred       = false;
   scoreCmdActiveDirection = 0;
   scoreAdjustCycleIndex   = 0;
-  saveScoreToEEPROM(currentScore);
-  sprintf(lcdString, "Score now %u", (unsigned)currentScore); pLCD2004->println(lcdString);
 }
 
 void pruneQueuedAtBoundary(int t_saturatedDir) {
@@ -1199,7 +1222,6 @@ void processScoreReset() {
   if (resetPhase == SCORE_RESET_PHASE_DONE) {
     // Finalize reset sequence.
     resetActive = false;
-    saveScoreToEEPROM(currentScore);
     pLCD2004->println("Reset done");
   }
 }
@@ -1370,4 +1392,28 @@ int recallScoreFromEEPROM() {
 bool hasCredits() {
   // Credit Empty switch LOW indicates at least one credit remains.
   return digitalRead(PIN_IN_SWITCH_CREDIT_EMPTY) == LOW;
+}
+
+void handleRS485Error(byte t_errorCode) {
+  // Fatal error; display on LCD and flash TILT lamp
+  // Force all hardware OFF
+  setAllDevicesOff();
+  clearAllPWM();
+  // Display error on LCD
+  pLCD2004->println("RS485 COMM ERROR:");
+  if (t_errorCode == RS485_ERROR_UNEXPECTED_TYPE)       sprintf(lcdString, "Unknown type");
+  else if (t_errorCode == RS485_ERROR_BUFFER_OVERFLOW)  sprintf(lcdString, "Buffer overflow");
+  else if (t_errorCode == RS485_ERROR_MSG_TOO_SHORT)    sprintf(lcdString, "Msg too short");
+  else if (t_errorCode == RS485_ERROR_MSG_TOO_LONG)     sprintf(lcdString, "Msg too long");
+  else if (t_errorCode == RS485_ERROR_CHECKSUM)         sprintf(lcdString, "Bad checksum");
+  else                                                  sprintf(lcdString, "Unknown %i", t_errorCode);
+  pLCD2004->println(lcdString);
+  // Flash TILT lamp at FLASH_RATE_MS
+  setGITiltLampBrightness(deviceParm[DEV_IDX_LAMP_HEAD_GI_TILT].powerInitial);  // We just turned MOSFETs off; turn TILT back on!
+  while (true) {
+    setTiltLamp(true);
+    delay(FLASH_RATE_MS);
+    setTiltLamp(false);
+    delay(FLASH_RATE_MS);
+  }
 }

@@ -76,6 +76,14 @@ const byte RS485_TYPE_MAS_TO_SLV_SCORE_QUERY    = 17;  // Master requesting curr
 const byte RS485_TYPE_SLV_TO_MAS_SCORE_REPORT   = 18;  // Slave reporting current score (in 10,000s)
 const byte RS485_TYPE_MAS_TO_SLV_GI_LAMP        = 19;  // Master command to turn G.I. lamps on or off
 const byte RS485_TYPE_MAS_TO_SLV_TILT_LAMP      = 20;  // Master command to turn Tilt lamp on or off
+// RS-485 ERROR MESSAGE TYPES:
+// Error codes that available() can return instead of a message type
+const byte RS485_ERROR_BEGIN                    = 50;  // Error codes start here
+const byte RS485_ERROR_UNEXPECTED_TYPE          = 51;  // Message type not recognized
+const byte RS485_ERROR_BUFFER_OVERFLOW          = 52;  // Input buffer overflow
+const byte RS485_ERROR_MSG_TOO_SHORT            = 53;  // Message length < 3
+const byte RS485_ERROR_MSG_TOO_LONG             = 54;  // Message length > RS485_MAX_LEN
+const byte RS485_ERROR_CHECKSUM                 = 55;  // CRC checksum mismatch
 
 // NOTE REGARDING DIAGNOSTIC MODE:
 //   For LAMP TEST, in addition to G.I. and Tilt on/off, Master can send SCORE_ABS messages that will cycle through all

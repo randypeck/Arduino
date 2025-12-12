@@ -19,6 +19,7 @@ class Pinball_Message {
 
     byte available();
     // Returns message type waiting in RS485 incoming buffer, else RS485_TYPE_NO_MESSAGE if there are no messages.
+    // Will also return error message types such as RS485_ERROR_TYPE_CHECKSUM if appropriate.
     // Caller MUST call the appropriate Message "get" function to retrieve the data, or the message will be lost.
 
     // *** MESSAGES TO/FROM MASTER AND SLAVE ***
@@ -90,6 +91,7 @@ class Pinball_Message {
           unsigned long m_messageLastSentTime  = 0;  // Keeps track of *when* a message was last sent
     const unsigned long RS485_MESSAGE_DELAY_MS = 2;  // How long should we wait between RS485 transmissions?
 
+    byte m_lastError = 0;  // Stores error code for available() to return
 };
 
 #endif

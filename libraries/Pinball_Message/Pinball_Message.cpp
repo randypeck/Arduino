@@ -47,18 +47,25 @@ void Pinball_Message::begin(HardwareSerial* t_mySerial, long unsigned int t_myBa
 }
 
 byte Pinball_Message::available() {
-  // Rev: 11/16/25.
+  // Rev: 12/11/25.
   // This function is called by a main module just to check what type, if any, message is waiting for it.
   // Returns byte TYPE of "relevant" message waiting in RS485 incoming buffer, else RS485_TYPE_NO_MESSAGE if no message.
+  // Can also return error code if message was malformed.
   // IF A MESSAGE TYPE IS RETURNED, CALLER MUST STILL CALL THE APPROPRIATE "GET" MESSAGE FUNCTION TO RETRIEVE THE MESSAGE!
   // i.e. pMessage->getUpdateScore()
   // Otherwise the contents of this message will be lost.
   // EXCEPTION: If the message contains no parms, such as "Set Tilt", then the recipient doesn't need to "get" anything else.
   // Because we only have two Arduinos (versus seven with the Trains system,) we can assume that any message found is for us.
-  if (getMessageRS485(m_RS485Buf) == true) {  // OK, there *is* a message.
+  if (getMessageRS485(m_RS485Buf) == true) {  // OK, there *is* a message (and it's not an error)
     return m_RS485Buf[RS485_TYPE_OFFSET];
   }
-  // No message is waiting
+  // But there still could be an error condition flagged by getMessageRS485()
+  if (m_lastError != 0) {
+    byte err = m_lastError;  // Save error code
+    m_lastError = 0;        // Clear error code for next time
+    return err;             // Return error code to caller
+  }
+  // Else no error and no message is waiting
   return RS485_TYPE_NO_MESSAGE;
 }
 
@@ -407,7 +414,8 @@ bool Pinball_Message::getMessageRS485(byte* t_msg) {
     while (m_mySerial->available()) {
       m_mySerial->read();
     }
-    return false;
+    m_lastError = RS485_ERROR_BUFFER_OVERFLOW;
+    return false;  // BUT, we're signaling an error code
   }
   byte incomingMsgLen = m_mySerial->peek();  // First byte will be message length, or garbage is available = 0
   // bytesAvailableInBuffer must be greater than zero or there are no bytes in the incoming serial buffer.
@@ -415,34 +423,28 @@ bool Pinball_Message::getMessageRS485(byte* t_msg) {
   if ((bytesAvailableInBuffer > 0) && (bytesAvailableInBuffer >= incomingMsgLen)) {
     // We have at least enough bytes for a complete incoming message!
     if (incomingMsgLen < 3) {  // Message too short to be a legit message.
-      sprintf(lcdString, "RS485 msg too short");  // Discard and continue
-      pLCD2004->println(lcdString);
-      Serial.println(lcdString);
-      // Discard available bytes to recover.
-      while (m_mySerial->available()) {
+      sprintf(lcdString, "RS485 msg too short"); pLCD2004->println(lcdString);
+      while (m_mySerial->available()) {  // Discard available bytes to recover.
         m_mySerial->read();
       }
-      return false;
-    }
-    else if (incomingMsgLen > RS485_MAX_LEN) {  // Message too long to be any real message.
-      sprintf(lcdString, "RS485 msg too long");  // Discard and continue
-      pLCD2004->println(lcdString);
-      Serial.println(lcdString);
-      // Discard available bytes to recover.
-      while (m_mySerial->available()) {
+      m_lastError = RS485_ERROR_MSG_TOO_SHORT;
+      return false;  // BUT, we're signaling an error code
+    } else if (incomingMsgLen > RS485_MAX_LEN) {  // Message too long to be any real message.
+      sprintf(lcdString, "RS485 msg too long"); pLCD2004->println(lcdString);
+      while (m_mySerial->available()) {  // Discard available bytes to recover.
         m_mySerial->read();
       }
-      return false;
+      m_lastError = RS485_ERROR_MSG_TOO_LONG;
+      return false;  // BUT, we're signaling an error code
     }
     // So far, so good!  Now read the bytes of the message from the incoming serial buffer into the message buffer...
     for (byte i = 0; i < incomingMsgLen; i++) {  // Get the RS485 incoming bytes and put them in the t_msg[] byte array
       t_msg[i] = m_mySerial->read();
     }
     if (getChecksum(t_msg) != calcChecksumCRC8(t_msg, incomingMsgLen - 1)) {  // Bad checksum.
-      sprintf(lcdString, "RS485 bad checksum");  // Discard and continue
-      pLCD2004->println(lcdString);
-      Serial.println(lcdString);
-      return false;
+      sprintf(lcdString, "RS485 bad checksum"); pLCD2004->println(lcdString);
+      m_lastError = RS485_ERROR_CHECKSUM;
+      return false;  // BUT, we're signaling an error code
     }
     // At this point, we have a complete and legit message with good CRC, which may or may not be for us.
     return true;
