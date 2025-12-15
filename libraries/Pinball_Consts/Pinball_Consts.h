@@ -23,13 +23,13 @@ const byte ARDUINO_SLV =  2;              // Slave Arduino
 const byte ARDUINO_ALL = 99;              // Master broadcasting to all i.e. mode change
 
 // *** OPERATING MODES:
-const byte MODE_UNDEFINED  = 0;
-const byte MODE_TILT       = 1;           // Tilt mode (all coils off, GI off, lamps off except tilt lamp)
-const byte MODE_GAME_OVER  = 2;           // Game Over = Attract mode (GI on, lamps on, coils off)
-const byte MODE_DIAGNOSTIC = 3;           // Diagnostics (Default mode until a game is started)
-const byte MODE_ORIGINAL   = 4;           // Playing as original but with normal flippers (not impulse.)
-const byte MODE_ENHANCED   = 5;           // Playing with Randy's Screamo rules
-const byte MODE_IMPULSE    = 6;           // Playing as original with impulse flippers
+const byte MODE_UNDEFINED   = 0;
+const byte MODE_ATTRACT     = 1;
+const byte MODE_ORIGINAL    = 2;
+const byte MODE_ENHANCED    = 3;
+const byte MODE_IMPULSE     = 4;
+const byte MODE_TILT        = 5;
+const byte MODE_DIAGNOSTIC  = 6;
 
 const byte LCD_WIDTH      = 20;  // 2004 (20 char by 4 lines) LCD display
 
@@ -84,6 +84,7 @@ const byte RS485_ERROR_BUFFER_OVERFLOW          = 52;  // Input buffer overflow
 const byte RS485_ERROR_MSG_TOO_SHORT            = 53;  // Message length < 3
 const byte RS485_ERROR_MSG_TOO_LONG             = 54;  // Message length > RS485_MAX_LEN
 const byte RS485_ERROR_CHECKSUM                 = 55;  // CRC checksum mismatch
+const byte SLAVE_SCORE_QUEUE_FULL               = 56;  // Slave score command queue full
 
 // NOTE REGARDING DIAGNOSTIC MODE:
 //   For LAMP TEST, in addition to G.I. and Tilt on/off, Master can send SCORE_ABS messages that will cycle through all

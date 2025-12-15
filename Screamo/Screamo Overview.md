@@ -223,6 +223,10 @@ Screamo runs in several modes. Unless otherwise noted, Master is mode authority 
 
 The original Score Motor is used for sound and timing reference only. Actual scores are computed in software and displayed via lamps, driven by Slave.
 
+Master should start the Score Motor, and potentially fire the Selection Unit and/or the Relay Reset Bank for the audible/mechanical effect around the time it sends relevant messages to Slave, such as score updates.
+
+Master should wait a realistic motor run duration (varies depending on score digits adjusted and other factors) before stopping motor.  But typically the score motor will run for 0, 1, 2, or 3 full 1/4 revolutions (each 882 ms) depending on the score adjustment being made.
+
 ### 5.1 Mechanical Timing
 
 - Score Motor runs at 17 RPM.

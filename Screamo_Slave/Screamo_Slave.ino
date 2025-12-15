@@ -1,4 +1,4 @@
-// Screamo_Slave.INO Rev: 12/11/25
+// Screamo_Slave.INO Rev: 12/12/25
 
 #include <Arduino.h>
 #include <Pinball_Consts.h>
@@ -9,7 +9,7 @@
 const int EEPROM_ADDR_SCORE = 0;  // Address to store 16-bit score (uses addr 0 and 1)
 
 const byte THIS_MODULE = ARDUINO_SLV;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "SLAVE 12/11/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "SLAVE 12/12/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which effectively makes it a global.
 // No need to pass lcdString[] to any functions that use it!
 
@@ -215,10 +215,6 @@ void setup() {
   pShiftRegister = new Pinball_Centipede;  // C++ quirk: no parens in ctor call if no parms; else thinks it's fn decl'n.
   pShiftRegister->begin();                 // Set all registers to default.
 
-// ************************************************************************
-// delay(50); // add a short 10-50ms delay after shiftregister->begin if we see relays flash; hardware may need a few ms to settle before I can guarantee outputs are off *************************************************
-// ************************************************************************
-
   pShiftRegister->initScreamoSlaveCentipedePins();
 
   setPWMFrequencies(); // Set non-default PWM frequencies so coils don't buzz.
@@ -229,7 +225,6 @@ void setup() {
   Serial.begin(SERIAL0_SPEED);   // PC serial monitor window 115200.  Change if using thermal mini printer.
   // Serial1 LCD2004 instantiated via pLCD2004->begin.
   // Serial2 RS485   instantiated via pMessage->begin.
-
 
   // *** INITIALIZE RS485 MESSAGE CLASS AND OBJECT *** (Heap uses 30 bytes)
   // WARNING: Instantiating Message class hangs the system if hardware is not connected.
@@ -276,7 +271,7 @@ void loop() {
   // Check for RS485 communication errors
   byte incomingMsg = pMessage->available();
   if (incomingMsg >= RS485_ERROR_BEGIN) {  // Error code range
-    handleRS485Error(incomingMsg);
+    handleError(incomingMsg);
     return;  // Stop processing
   }
 
@@ -511,12 +506,12 @@ void processMessage(byte t_msgType) {
   } break;
 
   case RS485_ERROR_UNEXPECTED_TYPE: {
-    handleRS485Error(RS485_ERROR_UNEXPECTED_TYPE);
+    handleError(RS485_ERROR_UNEXPECTED_TYPE);
   } break;
 
   default: {
     // Unknown message type.
-    handleRS485Error(RS485_ERROR_UNEXPECTED_TYPE);
+    handleError(RS485_ERROR_UNEXPECTED_TYPE);
   } break;
   }  // End of switch
 }
@@ -640,7 +635,7 @@ void updateDeviceTimers() {
         }
         else if (i == DEV_IDX_CREDIT_UP) {
           // Credit add blocked (already full) -> discard queued adds and notify Master.
-          sprintf(lcdString, "Credit FULL discard %u", deviceParm[i].queueCount); pLCD2004->println(lcdString);
+          sprintf(lcdString, "Credit FULL %u", deviceParm[i].queueCount); pLCD2004->println(lcdString);
           deviceParm[i].queueCount = 0;
           pMessage->sendSLVtoMASCreditStatus(hasCredits());
         }
@@ -657,7 +652,7 @@ void updateDeviceTimers() {
       }
       else if (i == DEV_IDX_CREDIT_UP) {
         // Discard queued adds if wheel is full while idle.
-        sprintf(lcdString, "Credit FULL discard %u", deviceParm[i].queueCount); pLCD2004->println(lcdString);
+        sprintf(lcdString, "Credit FULL %u", deviceParm[i].queueCount); pLCD2004->println(lcdString);
         deviceParm[i].queueCount = 0;
         pMessage->sendSLVtoMASCreditStatus(hasCredits());
       }
@@ -740,9 +735,9 @@ void requestScoreAdjust(int t_delta10Ks) {
 
   byte nextTail = (byte)((scoreCmdTail + 1) % SCORE_CMD_QUEUE_SIZE);
   if (nextTail == scoreCmdHead) {
-    // Queue full: drop this new request to avoid halting the system.
-    // Log so master/operator can see the overflow; do not enter infinite loop.
-    sprintf(lcdString, "Score Q FULL drop %d", t_delta10Ks); pLCD2004->println(lcdString);
+    // Queue full: drop this new request and halt.
+    sprintf(lcdString, "Queue FULL drop %d", t_delta10Ks); pLCD2004->println(lcdString);
+    handleError(SLAVE_SCORE_QUEUE_FULL);
     return;
   }
   scoreCmdQueue[scoreCmdTail] = t_delta10Ks;
@@ -1394,7 +1389,7 @@ bool hasCredits() {
   return digitalRead(PIN_IN_SWITCH_CREDIT_EMPTY) == LOW;
 }
 
-void handleRS485Error(byte t_errorCode) {
+void handleError(byte t_errorCode) {
   // Fatal error; display on LCD and flash TILT lamp
   // Force all hardware OFF
   setAllDevicesOff();

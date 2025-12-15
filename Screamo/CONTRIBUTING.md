@@ -19,54 +19,77 @@ Welcome to the Screamo project. This document defines mandatory contribution sta
   - Functions: lowerCamelCase (e.g. processScoreReset()).
   - Macros (if any new ones): UPPER_SNAKE_CASE; avoid unless essential.
 - Comments:
-  - Preserve existing descriptive comments; update only if behavior changes.
-  - Use ASCII characters only; do not insert smart quotes, en/em dashes, approximate symbols, or other Unicode glyphs.
-  - Explain timing assumptions (e.g. motor cycle ms) when changed.
-- Error Handling: For fatal configuration errors in embedded context, it is acceptable to halt (e.g. while(true){}). Provide an LCD or Serial log message before halting.
-- Timing: Favor non-blocking patterns (millis()-based) over delay() for runtime logic, except in setup() hardware stabilization or explicit test harness sections.
-- EEPROM Writes: Minimize wear; only write when value changes.
+  - Preserve existing descriptive comments. Do not remove or trim comments unless they are factually incorrect or describe behavior that no longer exists. When modifying code paths, update the affected comments instead of deleting them.
+  - Add new comments when introducing functionality that might not be immediately obvious.
+  - Use ASCII characters only; do not insert smart quotes, en/em dashes, approximate symbols, or other Unicode glyphs in source comments.
+- Testing: Describe any hardware dependencies or assumptions when submitting changes.
 
-## Score Motor & Animation Rules
-- A 1/4 motor revolution is treated as 882 ms and subdivided into exactly 6 sub-steps (5 action + 1 rest) of ~147 ms each.
-- Batched 10K or 100K adjustments that use motor pacing must respect sub-step timing so that a 5-step batch completes within one 882 ms quarter-cycle followed by one rest sub-step.
-- Reset sequences: Do not skip intermediate 100K values when counting down. Each displayed 100K decrement is atomic and occurs at a controlled interval that fits within a single quarter-cycle for the entire high portion if possible.
+## Project-specific C++ Usage Preferences
 
-## RS-485 Messaging
-- All new message types must be documented in Pinball_Message.h with a clear one-line purpose.
-- Avoid blocking waits for messages; poll within the 10 ms loop.
+These rules override general C++ style recommendations where they conflict.
 
-## ASCII-Only Character Policy (New Rule)
-To ensure compatibility with environments limited by codepage settings:
-1. Use only ASCII characters (code points 0x20–0x7E) in source and comments.
-2. Replace any stylistic punctuation (smart quotes ’ “ ”, dashes — –, approximate sign ?, degree °, etc.) with plain ASCII equivalents (' " - ~) before committing.
-3. Avoid invisible Unicode (zero-width space, BOM in the middle of files).
-4. When copying from external documents, run a sanitization pass or manually retype punctuation.
-5. Commit reviews must reject any non-ASCII characters.
+### Consts vs enums
 
-## Testing & Diagnostics
-- Temporary test loops (while(true)) are allowed only in dedicated diagnostic sections; label them clearly and remove before integrating gameplay logic.
-- Provide LCD output for critical state transitions (reset begin/end, queue full conditions, credit edge cases).
+For indices, categories, and flags, prefer `const` integral values instead of C++ `enum` / `enum class`:
 
-## Performance
-- Any change that might increase loop execution beyond the 10 ms tick should be profiled or refactored to remain within timing budget.
+- Use `const byte SOME_IDX = 0;` or `const uint8_t SOME_FLAG = 0x01;` for:
+  - Device indices (coils / motors)
+  - Lamp indices and groups
+  - Switch indices
+  - Audio categories and subcategories
+- Reasons:
+  - Keeps all index-style identifiers visually consistent across the codebase.
+  - Avoids IntelliSense / Arduino parser quirks seen with enums in `.ino` files.
 
-## Submitting Changes
-1. Ensure code compiles with no new warnings. Particularly avoid unused variable warnings—either use or remove variables; do not leave dead code.
-2. Run existing test harness sequences (score increments, resets, credit adjustments) to verify motor pacing correctness.
-3. Confirm no Unicode characters by searching for pattern `[\x80-\xFF]` or using an editor "non-ASCII" highlight feature.
-4. Update comments when adjusting timing constants.
-5. Include brief commit message summarizing functional change and timing impact if any.
+Existing enums may remain, but new code should use `const` integral values for this kind of identifier.
 
-## Style Change Requests
-- Propose changes to timing constants or pacing algorithms via a documented rationale (e.g. measured coil latency). Include before/after timing table.
+### References vs pointers
 
-## Review Checklist
-- [ ] ASCII-only
-- [ ] No added blocking delays inside main loop
-- [ ] EEPROM writes minimized
-- [ ] Score reset shows every 100K decrement
-- [ ] Motor-paced batches finish within single quarter-cycle
-- [ ] RS-485 messages drained non-blocking
-- [ ] Comments accurate & preserved
+Avoid C++ references in this project:
 
-Thank you for contributing while maintaining consistent behavior and readability.
+- Do not introduce new function parameters or variables using `T&` or `const T&`.
+- Prefer:
+  - Plain values for small POD types (e.g. `uint8_t`, `int`, `bool`).
+  - Raw pointers (`T*`, `const T*`) where shared objects are needed.
+  - Existing globals where that matches current patterns (e.g. `pShiftRegister`, `pTsunami`, `pMessage`, `pLCD2004`).
+
+This keeps indirection explicit, avoids hidden aliasing, and matches the existing style of simple structs + tables + helper functions.
+
+### LCD string buffer (`lcdString`)
+
+`lcdString` is a global buffer used for formatting text sent to the Digole 20x4 LCD. Its size is fixed at `LCD_WIDTH + 1`, where `LCD_WIDTH` is 20 characters:
+
+- The buffer holds **exactly 20 display characters plus a terminating null**.
+- Any use of `sprintf`, `snprintf`, or similar functions **must guarantee** that the resulting string (excluding the terminating `\0`) is at most 20 characters long.
+- Do not write longer strings and rely on truncation; overflowing `lcdString` will corrupt memory on the Arduino.
+
+Guidelines when formatting into `lcdString`:
+
+- Always consider the maximum value of numeric fields when designing format strings.
+  - Example: `sprintf(lcdString, "Diag Page %d", page);` is safe only if the formatted result never exceeds 20 characters.
+- If you change a format string or add new fields, re-check the worst-case total length against 20 characters.
+- Prefer shorter labels if needed to stay within the 20-character limit.
+
+## Arduino / AVR specifics
+
+- Be mindful of Arduino core and AVR constraints.
+- Prefer fixed-width integer types (`uint8_t`, `int16_t`, etc.) for values sent over the wire or stored in tables.
+- When using `sizeof` for array lengths, store the result in `const` variables (e.g. `const uint8_t NUM_ITEMS = (uint8_t)(sizeof(items) / sizeof(items[0]));`).
+
+## Testing and Safety
+
+- Always ensure coils, motors, and high-power outputs are driven to a safe OFF state on startup and before any software reset.
+- When modifying timing or power parameters for coils and motors, test on real hardware at low duty first.
+- Any change that affects score handling, credits, or ball handling must be tested in both Original and Enhanced modes.
+
+## Helpers around tables (devices, lamps, switches, audio)
+
+- Access table entries by index (`table[idx]`) using named `const` indices.
+- It is acceptable (and preferred) to read fields directly from the table into local scalars:
+  - Example: `uint16_t trackNum = audioTracks[idx].trackNum;`
+- Avoid clever abstractions (templates, heavy OO, RAII wrappers) that make the control flow less obvious.
+
+## Documentation
+
+- Update `Screamo Overview.md` when changing high-level behavior (modes, scoring rules, hardware usage).
+- Keep function and file headers in `.ino` / `.cpp` files up to date with revision date and a brief summary of changes.
