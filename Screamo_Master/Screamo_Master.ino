@@ -1,189 +1,45 @@
-// Screamo_Master.INO Rev: 12/13/25
+// Screamo_Master.INO Rev: 12/29/25
 // 11/12/25: Moved Right Kickout from pin 13 to pin 44 to avoid MOSFET firing twice on power-up.  Don't use MOSFET on pin 13.
+// 12/28/25: Changed flipper inputs from direct Arduino inputs to Centipede inputs.
 
 #include <Arduino.h>
 #include <Pinball_Consts.h>
 #include <Pinball_Functions.h>
 #include <Tsunami.h>
 #include <avr/wdt.h>
+#include <EEPROM.h>               // For saving and recalling score, volume, etc., to persist between power cycles.
+#include <Pinball_Descriptions.h> 
 
-#include <EEPROM.h>               // For saving and recalling score, to persist between power cycles.
-// const int EEPROM_ADDR_SCORE = 0;  // Address to store 16-bit score (uses addr 0 and 1)
-const int EEPROM_ADDR_TSUNAMI_GAIN = 10; // Any unused address
-const int8_t TSUNAMI_GAIN_DB_DEFAULT = -10;  // Default Tsunami master gain in dB
-int8_t tsunamiGainDb = TSUNAMI_GAIN_DB_DEFAULT;              // Persisted Tsunami gain
+const int EEPROM_ADDR_TSUNAMI_GAIN         = 10;  // 1-byte signed: Overall gain (-40 to 0; default -10dB.)
+const int EEPROM_ADDR_TSUNAMI_GAIN_VOICE   = 11;  // 1-byte signed: Voice gain OFFSET +/- from overall. Default 0dB.
+const int EEPROM_ADDR_TSUNAMI_GAIN_SFX     = 12;  // 1-byte signed: SFX gain OFFSET +/- from overall. Default 0dB.
+const int EEPROM_ADDR_TSUNAMI_GAIN_MUSIC   = 13;  // 1-byte signed: Music gain OFFSET +/- from overall. Default 0dB.
+
+const int EEPROM_ADDR_THEME                = 20;  // 1-byte unsigned: Callipe or Surf Rock theme (music) selection
+const int EEPROM_ADDR_LAST_SONG_PLAYED     = 21;  // 1-byte unsigned: Last song number played (to avoid repeats)
+const int EEPROM_ADDR_BALL_SAVE_TIME       = 30;  // 1-byte unsigned: Ball save time (0=off, 1-30 seconds) from first point scored that ball.
+const int EEPROM_ADDR_HURRY_UP_1_TIME      = 31;  // 1-byte unsigned: Mode 1 time limit (in seconds)
+const int EEPROM_ADDR_HURRY_UP_2_TIME      = 32;  // 1-byte unsigned
+const int EEPROM_ADDR_HURRY_UP_3_TIME      = 33;  // 1-byte unsigned
+const int EEPROM_ADDR_HURRY_UP_4_TIME      = 34;  // 1-byte unsigned
+const int EEPROM_ADDR_HURRY_UP_5_TIME      = 35;  // 1-byte unsigned
+const int EEPROM_ADDR_HURRY_UP_6_TIME      = 36;  // 1-byte unsigned
+
+const int EEPROM_ADDR_ORIGINAL_REPLAY_1    = 40;  // 2-byte unsigned: 1st replay score for Original/Impulse mode
+const int EEPROM_ADDR_ORIGINAL_REPLAY_2    = 42;  // 2-byte unsigned
+const int EEPROM_ADDR_ORIGINAL_REPLAY_3    = 44;  // 2-byte unsigned
+const int EEPROM_ADDR_ORIGINAL_REPLAY_4    = 46;  // 2-byte unsigned
+const int EEPROM_ADDR_ORIGINAL_REPLAY_5    = 48;  // 2-byte unsigned
+const int EEPROM_ADDR_ENHANCED_REPLAY_1    = 50;  // 2-byte unsigned: 1st replay score for Enhanced mode
+const int EEPROM_ADDR_ENHANCED_REPLAY_2    = 52;  // 2-byte unsigned
+const int EEPROM_ADDR_ENHANCED_REPLAY_3    = 54;  // 2-byte unsigned
+const int EEPROM_ADDR_ENHANCED_REPLAY_4    = 56;  // 2-byte unsigned
+const int EEPROM_ADDR_ENHANCED_REPLAY_5    = 58;  // 2-byte unsigned
 
 const byte THIS_MODULE = ARDUINO_MAS;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "MASTER 12/13/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "MASTER 12/29/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which effectively makes it a global.
 // No need to pass lcdString[] to any functions that use it!
-
-// ************************************************
-// ***** COIL AND MOTOR STRUCTS AND CONSTANTS *****
-// ************************************************
-
-// Define a struct to store coil/motor pin number, power, and time parms.  Coils that may be held on include a hold strength.
-// In this case, pinNum refers to an actual Arduino Mega R3 I/O pin number.
-// For Flippers, original Ball Gate, new Ball Release Post, and other coils that may be held after initial activation, include a
-// "hold strength" parm as well as initial strength and time on.
-// If Hold Strength == 0, then simply release after hold time; else change to Hold Strength until released by software.
-// Example usage:
-//   analogWrite(deviceParm[DEV_IDX_FLIPPER_LEFT].pinNum, deviceParm[DEV_IDX_FLIPPER_LEFT].powerInitial);
-//   delay(deviceParm[DEV_IDX_FLIPPER_LEFT].timeOn);
-//   analogWrite(deviceParm[DEV_IDX_FLIPPER_LEFT].pinNum, deviceParm[DEV_IDX_FLIPPER_LEFT].powerHold);
-// countdown will be set to "timeOn" and decremented every 10ms in main loop until it reaches zero, at which time power will be set to powerHold.
-struct DeviceParmStruct {
-  byte   pinNum;        // Arduino pin number for this coil/motor
-  byte   powerInitial;  // 0..255 PWM power level when first energized
-  byte   timeOn;        // Number of 10ms loop ticks (NOT raw ms). 4 => ~40ms.
-  byte   powerHold;     // 0..255 PWM power level to hold after initial timeOn; 0 = turn off after timeOn
-  int8_t countdown;     // Current countdown in 10ms ticks; -1..-8 = rest period, 0 = idle, >0 = active
-  byte   queueCount;    // Number of pending activation requests while coil busy/resting
-};
-
-// Define array index constants - this list is rather arbitrary and doesn't relate to device number/pin numbers:
-const byte DEV_IDX_POP_BUMPER           =  0;
-const byte DEV_IDX_KICKOUT_LEFT         =  1;
-const byte DEV_IDX_KICKOUT_RIGHT        =  2;
-const byte DEV_IDX_SLINGSHOT_LEFT       =  3;
-const byte DEV_IDX_SLINGSHOT_RIGHT      =  4;
-const byte DEV_IDX_FLIPPER_LEFT         =  5;
-const byte DEV_IDX_FLIPPER_RIGHT        =  6;
-const byte DEV_IDX_BALL_TRAY_RELEASE    =  7;  // Original
-const byte DEV_IDX_SELECTION_UNIT       =  8;  // Sound FX only
-const byte DEV_IDX_RELAY_RESET          =  9;  // Sound FX only
-const byte DEV_IDX_BALL_TROUGH_RELEASE  = 10;  // New up/down post
-const byte DEV_IDX_MOTOR_SHAKER         = 11;  // 12vdc
-const byte DEV_IDX_KNOCKER              = 12;
-const byte DEV_IDX_MOTOR_SCORE          = 13;  // 50vac; sound FX only
-
-const byte NUM_DEVS                     = 14;
-
-DeviceParmStruct deviceParm[NUM_DEVS] = {
-  // pinNum, powerInitial, timeOn(ms), powerHold, countdown
-  {  5, 255,  5,   0, 0, 0 },  // POP_BUMPER          =  0, PWM MOSFET
-  {  4, 190, 10,   0, 0, 0 },  // KICKOUT_LEFT        =  1, PWM MOSFET (cannot modify PWM freq.)
-  { 44, 200, 10,   0, 0, 0 },  // KICKOUT_RIGHT       =  2, PWM MOSFET
-  {  6, 180, 10,   0, 0, 0 },  // SLINGSHOT_LEFT      =  3, PWM MOSFET
-  {  7, 180, 10,   0, 0, 0 },  // SLINGSHOT_RIGHT     =  4, PWM MOSFET
-  {  8, 150, 10,  40, 0, 0 },  // FLIPPER_LEFT        =  5, PWM MOSFET.  200 hits gobble hole too hard; 150 can get to top of p/f.
-  {  9, 150, 10,  40, 0, 0 },  // FLIPPER_RIGHT       =  6, PWM MOSFET
-  { 10, 200, 20,  40, 0, 0,},  // BALL_TRAY_RELEASE   =  7, PWM MOSFET (original tray release)
-  { 23, 255,  5,   0, 0, 0 },  // SELECTION_UNIT      =  8, Non-PWM MOSFET; on/off only.
-  { 24, 255,  5,   0, 0, 0 },  // RELAY_RESET         =  9, Non-PWM MOSFET; on/off only.
-  { 11, 150, 23,   0, 0, 0,},  // BALL_TROUGH_RELEASE = 10, PWM MOSFET (new up/down post)
-  // For the ball trough release coil, 150 is the right power; 100 could not guarantee it could retract if there was pressure holding it from balls above.
-  // 230ms is just enough time for ball to get 1/2 way past post and momentum carries it so it won't get pinned by the post.
-  // The post springs back fully extended before the next ball hits it, regardless of how many balls are stacked above it.
-  { 12,   0,  0,   0, 0, 0 },  // MOTOR_SHAKER        = 11, PWM MOSFET. Range is 70 to 140. Below won't start; above triggers hats.
-  { 26, 200,  4,   0, 0, 0 },  // KNOCKER             = 12, Non-PWM MOSFET; on/off only.
-  { 25, 255,  0,   0, 0, 0 }   // MOTOR_SCORE         = 13, A/C SSR; on/off only; NOT PWM.
-};
-
-const byte MOTOR_SHAKER_POWER_MIN =  70;  // Minimum power to start shaker motor
-const byte MOTOR_SHAKER_POWER_MAX = 140;  // Maximum power before hats trigger
-
-// ****************************************
-// ***** SWITCH STRUCTS AND CONSTANTS *****
-// ****************************************
-
-// Define a struct to store switch parameters.
-// Centipede #1 (0..63) is LAMP OUTPUTS
-// Centipede #2 (64..127) is SWITCH INPUTS
-// In this case, pinNum refers to Centipede #2 input shift register pin number (64..127).
-// The loopConst and loopCount are going to change so that we always trigger on a switch closure, but use debounce delay before checking if it's open or closed again.
-// That is, unless we find we're getting phantom closures, in which case we'll need to debounce both closing and opening.
-struct SwitchParmStruct {
-  byte pinNum;        // Centipede #2 pin number for this switch (64..127)
-  byte loopConst;     // Number of 10ms loops to confirm stable state change
-  byte loopCount;     // Current count of 10ms loops with stable state (initialized to zero)
-};
-
-// Define array index constants - this list is rather arbitrary and doesn't relate to device number/pin numbers:
-// Flipper buttons are direct-wired to Arduino pins for faster response, so not included here.
-// CABINET SWITCHES:
-const byte SWITCH_IDX_START_BUTTON        =  0;
-const byte SWITCH_IDX_DIAG_1              =  1;  // Back
-const byte SWITCH_IDX_DIAG_2              =  2;  // Minus/Left
-const byte SWITCH_IDX_DIAG_3              =  3;  // Plus/Right
-const byte SWITCH_IDX_DIAG_4              =  4;  // Select
-const byte SWITCH_IDX_KNOCK_OFF           =  5;  // Quick press adds a credit; long press forces software reset (Slave and Master.)
-const byte SWITCH_IDX_COIN_MECH           =  6;
-const byte SWITCH_IDX_BALL_PRESENT        =  7;  // (New) Ball present at bottom of ball lift
-const byte SWITCH_IDX_TILT_BOB            =  8;
-// PLAYFIELD SWITCHES:
-const byte SWITCH_IDX_BUMPER_S            =  9;  // 'S' bumper switch
-const byte SWITCH_IDX_BUMPER_C            = 10;  // 'C' bumper switch
-const byte SWITCH_IDX_BUMPER_R            = 11;  // 'R' bumper switch
-const byte SWITCH_IDX_BUMPER_E            = 12;  // 'E' bumper switch
-const byte SWITCH_IDX_BUMPER_A            = 13;  // 'A' bumper switch
-const byte SWITCH_IDX_BUMPER_M            = 14;  // 'M' bumper switch
-const byte SWITCH_IDX_BUMPER_O            = 15;  // 'O' bumper switch
-const byte SWITCH_IDX_KICKOUT_LEFT        = 16;
-const byte SWITCH_IDX_KICKOUT_RIGHT       = 17;
-const byte SWITCH_IDX_SLINGSHOT_LEFT      = 18;  // Two switches wired in parallel
-const byte SWITCH_IDX_SLINGSHOT_RIGHT     = 19;  // Two switches wired in parallel
-const byte SWITCH_IDX_HAT_LEFT_TOP        = 20;
-const byte SWITCH_IDX_HAT_LEFT_BOTTOM     = 21;
-const byte SWITCH_IDX_HAT_RIGHT_TOP       = 22;
-const byte SWITCH_IDX_HAT_RIGHT_BOTTOM    = 23;
-// Note that there is no "LEFT_SIDE_TARGET_1" on the playfield; starting left side targets at 2 so they match right-side target numbers.
-const byte SWITCH_IDX_LEFT_SIDE_TARGET_2  = 24;  // Long narrow side target near top left
-const byte SWITCH_IDX_LEFT_SIDE_TARGET_3  = 25;  // Upper switch above left kickout
-const byte SWITCH_IDX_LEFT_SIDE_TARGET_4  = 26;  // Lower switch above left kickout
-const byte SWITCH_IDX_LEFT_SIDE_TARGET_5  = 27;  // Below left kickout
-const byte SWITCH_IDX_RIGHT_SIDE_TARGET_1 = 28;  // Top right just below ball gate
-const byte SWITCH_IDX_RIGHT_SIDE_TARGET_2 = 29;  // Long narrow side target near top right
-const byte SWITCH_IDX_RIGHT_SIDE_TARGET_3 = 30;  // Upper switch above right kickout
-const byte SWITCH_IDX_RIGHT_SIDE_TARGET_4 = 31;  // Lower switch above right kickout
-const byte SWITCH_IDX_RIGHT_SIDE_TARGET_5 = 32;  // Below right kickout
-const byte SWITCH_IDX_GOBBLE              = 33;
-const byte SWITCH_IDX_DRAIN_LEFT          = 34;  // Left drain switch index in Centipede input shift register
-const byte SWITCH_IDX_DRAIN_CENTER        = 35;  // Center drain switch index in Centipede input shift register
-const byte SWITCH_IDX_DRAIN_RIGHT         = 36;  // Right drain switch index in Centipede input shift register
-
-const byte NUM_SWITCHES                   = 37;
-
-// Store Centipede #2 pin numbers (64..127) for switches (original pins + 64)
-SwitchParmStruct switchParm[NUM_SWITCHES] = {
-  { 118,  0,  0 },  // SWITCH_IDX_START_BUTTON        =  0  (54 + 64)
-  { 115,  0,  0 },  // SWITCH_IDX_DIAG_1              =  1  (51 + 64)
-  { 112,  0,  0 },  // SWITCH_IDX_DIAG_2              =  2  (48 + 64)
-  { 113,  0,  0 },  // SWITCH_IDX_DIAG_3              =  3  (49 + 64)
-  { 116,  0,  0 },  // SWITCH_IDX_DIAG_4              =  4  (52 + 64)
-  { 127,  0,  0 },  // SWITCH_IDX_KNOCK_OFF           =  5  (63 + 64)
-  { 117,  0,  0 },  // SWITCH_IDX_COIN_MECH           =  6  (53 + 64)
-  { 114,  0,  0 },  // SWITCH_IDX_BALL_PRESENT        =  7  (50 + 64)
-  { 119,  0,  0 },  // SWITCH_IDX_TILT_BOB            =  8  (55 + 64)
-  { 104,  0,  0 },  // SWITCH_IDX_BUMPER_S            =  9  (40 + 64)
-  {  90,  0,  0 },  // SWITCH_IDX_BUMPER_C            = 10  (26 + 64)
-  {  87,  0,  0 },  // SWITCH_IDX_BUMPER_R            = 11  (23 + 64)
-  {  80,  0,  0 },  // SWITCH_IDX_BUMPER_E            = 12  (16 + 64)
-  { 110,  0,  0 },  // SWITCH_IDX_BUMPER_A            = 13  (46 + 64)
-  { 107,  0,  0 },  // SWITCH_IDX_BUMPER_M            = 14  (43 + 64)
-  {  88,  0,  0 },  // SWITCH_IDX_BUMPER_O            = 15  (24 + 64)
-  { 105,  0,  0 },  // SWITCH_IDX_KICKOUT_LEFT        = 16  (41 + 64)
-  {  83,  0,  0 },  // SWITCH_IDX_KICKOUT_RIGHT       = 17  (19 + 64)
-  {  84,  0,  0 },  // SWITCH_IDX_SLINGSHOT_LEFT      = 18  (20 + 64)
-  {  98,  0,  0 },  // SWITCH_IDX_SLINGSHOT_RIGHT     = 19  (34 + 64)
-  {  99,  0,  0 },  // SWITCH_IDX_HAT_LEFT_TOP        = 20  (35 + 64)
-  {  81,  0,  0 },  // SWITCH_IDX_HAT_LEFT_BOTTOM     = 21  (17 + 64)
-  {  89,  0,  0 },  // SWITCH_IDX_HAT_RIGHT_TOP       = 22  (25 + 64)
-  {  92,  0,  0 },  // SWITCH_IDX_HAT_RIGHT_BOTTOM    = 23  (28 + 64)
-  {  86,  0,  0 },  // SWITCH_IDX_LEFT_SIDE_TARGET_2  = 24  (22 + 64)
-  { 108,  0,  0 },  // SWITCH_IDX_LEFT_SIDE_TARGET_3  = 25  (44 + 64)
-  {  85,  0,  0 },  // SWITCH_IDX_LEFT_SIDE_TARGET_4  = 26  (21 + 64)
-  {  96,  0,  0 },  // SWITCH_IDX_LEFT_SIDE_TARGET_5  = 27  (32 + 64)
-  {  82,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_1 = 28  (18 + 64)
-  { 111,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_2 = 29  (47 + 64)
-  {  94,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_3 = 30  (30 + 64)
-  {  95,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_4 = 31  (31 + 64)
-  {  91,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_5 = 32  (27 + 64)
-  { 109,  0,  0 },  // SWITCH_IDX_GOBBLE              = 33  (45 + 64)
-  { 106,  0,  0 },  // SWITCH_IDX_DRAIN_LEFT          = 34  (42 + 64)
-  {  97,  0,  0 },  // SWITCH_IDX_DRAIN_CENTER        = 35  (33 + 64)
-  {  93,  0,  0 }   // SWITCH_IDX_DRAIN_RIGHT         = 36  (29 + 64)
-};
 
 // **************************************
 // ***** LAMP STRUCTS AND CONSTANTS *****
@@ -315,33 +171,213 @@ LampParmStruct lampParm[NUM_LAMPS] = {
   { 59, LAMP_GROUP_NONE,    LAMP_OFF }  // SPOT_NUMBER_RIGHT = 46
 };
 
+// ****************************************
+// ***** SWITCH STRUCTS AND CONSTANTS *****
+// ****************************************
+
+// Define a struct to store switch parameters.
+// Centipede #1 (0..63) is LAMP OUTPUTS
+// Centipede #2 (64..127) is SWITCH INPUTS
+// In this case, pinNum refers to Centipede #2 input shift register pin number (64..127).
+// The loopConst and loopCount are going to change so that we always trigger on a switch closure, but use debounce delay before checking if it's open or closed again.
+// That is, unless we find we're getting phantom closures, in which case we'll need to debounce both closing and opening.
+struct SwitchParmStruct {
+  byte pinNum;        // Centipede #2 pin number for this switch (64..127)
+  byte loopConst;     // Number of 10ms loops to confirm stable state change
+  byte loopCount;     // Current count of 10ms loops with stable state (initialized to zero)
+};
+
+// Define array index constants - this list is rather arbitrary and doesn't relate to device number/pin numbers:
+// Flipper buttons are direct-wired to Arduino pins for faster response, so not included here.
+// CABINET SWITCHES:
+const byte SWITCH_IDX_START_BUTTON         =  0;
+const byte SWITCH_IDX_DIAG_1               =  1;  // Back
+const byte SWITCH_IDX_DIAG_2               =  2;  // Minus/Left
+const byte SWITCH_IDX_DIAG_3               =  3;  // Plus/Right
+const byte SWITCH_IDX_DIAG_4               =  4;  // Select
+const byte SWITCH_IDX_KNOCK_OFF            =  5;  // Quick press adds a credit; long press forces software reset (Slave and Master.)
+const byte SWITCH_IDX_COIN_MECH            =  6;
+const byte SWITCH_IDX_BALL_PRESENT         =  7;  // (New) Ball present at bottom of ball lift
+const byte SWITCH_IDX_TILT_BOB             =  8;
+// PLAYFIELD SWITCHES:
+const byte SWITCH_IDX_BUMPER_S             =  9;  // 'S' bumper switch
+const byte SWITCH_IDX_BUMPER_C             = 10;  // 'C' bumper switch
+const byte SWITCH_IDX_BUMPER_R             = 11;  // 'R' bumper switch
+const byte SWITCH_IDX_BUMPER_E             = 12;  // 'E' bumper switch
+const byte SWITCH_IDX_BUMPER_A             = 13;  // 'A' bumper switch
+const byte SWITCH_IDX_BUMPER_M             = 14;  // 'M' bumper switch
+const byte SWITCH_IDX_BUMPER_O             = 15;  // 'O' bumper switch
+const byte SWITCH_IDX_KICKOUT_LEFT         = 16;
+const byte SWITCH_IDX_KICKOUT_RIGHT        = 17;
+const byte SWITCH_IDX_SLINGSHOT_LEFT       = 18;  // Two switches wired in parallel
+const byte SWITCH_IDX_SLINGSHOT_RIGHT      = 19;  // Two switches wired in parallel
+const byte SWITCH_IDX_HAT_LEFT_TOP         = 20;
+const byte SWITCH_IDX_HAT_LEFT_BOTTOM      = 21;
+const byte SWITCH_IDX_HAT_RIGHT_TOP        = 22;
+const byte SWITCH_IDX_HAT_RIGHT_BOTTOM     = 23;
+// Note that there is no "LEFT_SIDE_TARGET_1" on the playfield; starting left side targets at 2 so they match right-side target numbers.
+const byte SWITCH_IDX_LEFT_SIDE_TARGET_2   = 24;  // Long narrow side target near top left
+const byte SWITCH_IDX_LEFT_SIDE_TARGET_3   = 25;  // Upper switch above left kickout
+const byte SWITCH_IDX_LEFT_SIDE_TARGET_4   = 26;  // Lower switch above left kickout
+const byte SWITCH_IDX_LEFT_SIDE_TARGET_5   = 27;  // Below left kickout
+const byte SWITCH_IDX_RIGHT_SIDE_TARGET_1  = 28;  // Top right just below ball gate
+const byte SWITCH_IDX_RIGHT_SIDE_TARGET_2  = 29;  // Long narrow side target near top right
+const byte SWITCH_IDX_RIGHT_SIDE_TARGET_3  = 30;  // Upper switch above right kickout
+const byte SWITCH_IDX_RIGHT_SIDE_TARGET_4  = 31;  // Lower switch above right kickout
+const byte SWITCH_IDX_RIGHT_SIDE_TARGET_5  = 32;  // Below right kickout
+const byte SWITCH_IDX_GOBBLE               = 33;
+const byte SWITCH_IDX_DRAIN_LEFT           = 34;  // Left drain switch index in Centipede input shift register
+const byte SWITCH_IDX_DRAIN_CENTER         = 35;  // Center drain switch index in Centipede input shift register
+const byte SWITCH_IDX_DRAIN_RIGHT          = 36;  // Right drain switch index in Centipede input shift register
+// Flipper buttons now arrive via Centipede inputs (entries at the end of switchParm[]).
+const byte SWITCH_IDX_FLIPPER_LEFT_BUTTON  = 37;
+const byte SWITCH_IDX_FLIPPER_RIGHT_BUTTON = 38;
+
+const byte NUM_SWITCHES = 39;
+
+// Store Centipede #2 pin numbers (64..127) for switches (original pins + 64)
+SwitchParmStruct switchParm[NUM_SWITCHES] = {
+  { 118,  0,  0 },  // SWITCH_IDX_START_BUTTON         =  0  (54 + 64)
+  { 115,  0,  0 },  // SWITCH_IDX_DIAG_1               =  1  (51 + 64)
+  { 112,  0,  0 },  // SWITCH_IDX_DIAG_2               =  2  (48 + 64)
+  { 113,  0,  0 },  // SWITCH_IDX_DIAG_3               =  3  (49 + 64)
+  { 116,  0,  0 },  // SWITCH_IDX_DIAG_4               =  4  (52 + 64)
+  { 127,  0,  0 },  // SWITCH_IDX_KNOCK_OFF            =  5  (63 + 64)
+  { 117,  0,  0 },  // SWITCH_IDX_COIN_MECH            =  6  (53 + 64)
+  { 114,  0,  0 },  // SWITCH_IDX_BALL_PRESENT         =  7  (50 + 64)
+  { 119,  0,  0 },  // SWITCH_IDX_TILT_BOB             =  8  (55 + 64)
+  { 104,  0,  0 },  // SWITCH_IDX_BUMPER_S             =  9  (40 + 64)
+  {  90,  0,  0 },  // SWITCH_IDX_BUMPER_C             = 10  (26 + 64)
+  {  87,  0,  0 },  // SWITCH_IDX_BUMPER_R             = 11  (23 + 64)
+  {  80,  0,  0 },  // SWITCH_IDX_BUMPER_E             = 12  (16 + 64)
+  { 110,  0,  0 },  // SWITCH_IDX_BUMPER_A             = 13  (46 + 64)
+  { 107,  0,  0 },  // SWITCH_IDX_BUMPER_M             = 14  (43 + 64)
+  {  88,  0,  0 },  // SWITCH_IDX_BUMPER_O             = 15  (24 + 64)
+  { 105,  0,  0 },  // SWITCH_IDX_KICKOUT_LEFT         = 16  (41 + 64)
+  {  83,  0,  0 },  // SWITCH_IDX_KICKOUT_RIGHT        = 17  (19 + 64)
+  {  84,  0,  0 },  // SWITCH_IDX_SLINGSHOT_LEFT       = 18  (20 + 64)
+  {  98,  0,  0 },  // SWITCH_IDX_SLINGSHOT_RIGHT      = 19  (34 + 64)
+  {  99,  0,  0 },  // SWITCH_IDX_HAT_LEFT_TOP         = 20  (35 + 64)
+  {  81,  0,  0 },  // SWITCH_IDX_HAT_LEFT_BOTTOM      = 21  (17 + 64)
+  {  89,  0,  0 },  // SWITCH_IDX_HAT_RIGHT_TOP        = 22  (25 + 64)
+  {  92,  0,  0 },  // SWITCH_IDX_HAT_RIGHT_BOTTOM     = 23  (28 + 64)
+  {  86,  0,  0 },  // SWITCH_IDX_LEFT_SIDE_TARGET_2   = 24  (22 + 64)
+  { 108,  0,  0 },  // SWITCH_IDX_LEFT_SIDE_TARGET_3   = 25  (44 + 64)
+  {  85,  0,  0 },  // SWITCH_IDX_LEFT_SIDE_TARGET_4   = 26  (21 + 64)
+  {  96,  0,  0 },  // SWITCH_IDX_LEFT_SIDE_TARGET_5   = 27  (32 + 64)
+  {  82,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_1  = 28  (18 + 64)
+  { 111,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_2  = 29  (47 + 64)
+  {  94,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_3  = 30  (30 + 64)
+  {  95,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_4  = 31  (31 + 64)
+  {  91,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_5  = 32  (27 + 64)
+  { 109,  0,  0 },  // SWITCH_IDX_GOBBLE               = 33  (45 + 64)
+  { 106,  0,  0 },  // SWITCH_IDX_DRAIN_LEFT           = 34  (42 + 64)
+  {  97,  0,  0 },  // SWITCH_IDX_DRAIN_CENTER         = 35  (33 + 64)
+  {  93,  0,  0 },  // SWITCH_IDX_DRAIN_RIGHT          = 36  (29 + 64)
+  { 125,  0,  0 },  // SWITCH_IDX_FLIPPER_LEFT_BUTTON  = 37  (61 + 64)
+  { 126,  0,  0 }   // SWITCH_IDX_FLIPPER_RIGHT_BUTTON = 38  (62 + 64)
+};
+
+// ************************************************
+// ***** COIL AND MOTOR STRUCTS AND CONSTANTS *****
+// ************************************************
+
+// Define a struct to store coil/motor pin number, power, and time parms.  Coils that may be held on include a hold strength.
+// In this case, pinNum refers to an actual Arduino Mega R3 I/O pin number.
+// For Flippers, original Ball Gate, new Ball Release Post, and other coils that may be held after initial activation, include a
+// "hold strength" parm as well as initial strength and time on.
+// If Hold Strength == 0, then simply release after hold time; else change to Hold Strength until released by software.
+// Example usage:
+//   analogWrite(deviceParm[DEV_IDX_FLIPPER_LEFT].pinNum, deviceParm[DEV_IDX_FLIPPER_LEFT].powerInitial);
+//   delay(deviceParm[DEV_IDX_FLIPPER_LEFT].timeOn);
+//   analogWrite(deviceParm[DEV_IDX_FLIPPER_LEFT].pinNum, deviceParm[DEV_IDX_FLIPPER_LEFT].powerHold);
+// countdown will be set to "timeOn" and decremented every 10ms in main loop until it reaches zero, at which time power will be set to powerHold.
+struct DeviceParmStruct {
+  byte   pinNum;        // Arduino pin number for this coil/motor
+  byte   powerInitial;  // 0..255 PWM power level when first energized
+  byte   timeOn;        // Number of 10ms loop ticks (NOT raw ms). 4 => ~40ms.
+  byte   powerHold;     // 0..255 PWM power level to hold after initial timeOn; 0 = turn off after timeOn
+  int8_t countdown;     // Current countdown in 10ms ticks; -1..-8 = rest period, 0 = idle, >0 = active
+  byte   queueCount;    // Number of pending activation requests while coil busy/resting
+};
+
+// Define array index constants - this list is rather arbitrary and doesn't relate to device number/pin numbers:
+const byte DEV_IDX_POP_BUMPER           =  0;
+const byte DEV_IDX_KICKOUT_LEFT         =  1;
+const byte DEV_IDX_KICKOUT_RIGHT        =  2;
+const byte DEV_IDX_SLINGSHOT_LEFT       =  3;
+const byte DEV_IDX_SLINGSHOT_RIGHT      =  4;
+const byte DEV_IDX_FLIPPER_LEFT         =  5;
+const byte DEV_IDX_FLIPPER_RIGHT        =  6;
+const byte DEV_IDX_BALL_TRAY_RELEASE    =  7;  // Original
+const byte DEV_IDX_SELECTION_UNIT       =  8;  // Sound FX only
+const byte DEV_IDX_RELAY_RESET          =  9;  // Sound FX only
+const byte DEV_IDX_BALL_TROUGH_RELEASE  = 10;  // New up/down post
+const byte DEV_IDX_MOTOR_SHAKER         = 11;  // 12vdc
+const byte DEV_IDX_KNOCKER              = 12;
+const byte DEV_IDX_MOTOR_SCORE          = 13;  // 50vac; sound FX only
+
+const byte NUM_DEVS                     = 14;
+
+DeviceParmStruct deviceParm[NUM_DEVS] = {
+  // pinNum, powerInitial, timeOn(ms), powerHold, countdown, queueCount
+  {  5, 255,  5,   0, 0, 0 },  // POP_BUMPER          =  0, PWM MOSFET
+  {  4, 190, 10,   0, 0, 0 },  // KICKOUT_LEFT        =  1, PWM MOSFET (cannot modify PWM freq.)
+  { 44, 200, 10,   0, 0, 0 },  // KICKOUT_RIGHT       =  2, PWM MOSFET
+  {  6, 180, 10,   0, 0, 0 },  // SLINGSHOT_LEFT      =  3, PWM MOSFET
+  {  7, 180, 10,   0, 0, 0 },  // SLINGSHOT_RIGHT     =  4, PWM MOSFET
+  {  8, 150, 10,  40, 0, 0 },  // FLIPPER_LEFT        =  5, PWM MOSFET.  200 hits gobble hole too hard; 150 can get to top of p/f.
+  {  9, 150, 10,  40, 0, 0 },  // FLIPPER_RIGHT       =  6, PWM MOSFET
+  { 10, 200, 20,  40, 0, 0,},  // BALL_TRAY_RELEASE   =  7, PWM MOSFET (original tray release)
+  { 23, 255,  5,   0, 0, 0 },  // SELECTION_UNIT      =  8, Non-PWM MOSFET; on/off only.
+  { 24, 255,  5,   0, 0, 0 },  // RELAY_RESET         =  9, Non-PWM MOSFET; on/off only.
+  { 11, 150, 23,   0, 0, 0,},  // BALL_TROUGH_RELEASE = 10, PWM MOSFET (new up/down post)
+  // For the ball trough release coil, 150 is the right power; 100 could not guarantee it could retract if there was pressure holding it from balls above.
+  // 230ms is just enough time for ball to get 1/2 way past post and momentum carries it so it won't get pinned by the post.
+  // The post springs back fully extended before the next ball hits it, regardless of how many balls are stacked above it.
+  { 12,   0,  0,   0, 0, 0 },  // MOTOR_SHAKER        = 11, PWM MOSFET. Range is 70 to 140. Below won't start; above triggers hats.
+  { 26, 200,  4,   0, 0, 0 },  // KNOCKER             = 12, Non-PWM MOSFET; on/off only.
+  { 25, 255,  0,   0, 0, 0 }   // MOTOR_SCORE         = 13, A/C SSR; on/off only; NOT PWM.
+};
+
+const byte MOTOR_SHAKER_POWER_MIN =  70;  // Minimum power to start shaker motor
+const byte MOTOR_SHAKER_POWER_MAX = 140;  // Maximum power before hats trigger
+
+
 // ********************************
 // ***** AUDIO TRACK METADATA *****
 // ********************************
 
+
+
+
+
+
+
+
 // Audio categories (use consts instead of enums)
-const uint8_t AUDIO_CAT_VOICE = 0;
-const uint8_t AUDIO_CAT_SFX   = 1;
-const uint8_t AUDIO_CAT_MUSIC = 2;
+const byte AUDIO_CAT_VOICE = 0;
+const byte AUDIO_CAT_SFX   = 1;
+const byte AUDIO_CAT_MUSIC = 2;
 
 // Voice subcategories (for random selection within an event type)
-const uint8_t VOICE_SUB_NONE        = 0;
-const uint8_t VOICE_SUB_GAME_START  = 1;
-const uint8_t VOICE_SUB_PLAYER_UP   = 2;
-const uint8_t VOICE_SUB_BALL_SAVED  = 3;
-const uint8_t VOICE_SUB_BAD_PLAY    = 4;
-const uint8_t VOICE_SUB_GAME_OVER   = 5;
+const byte VOICE_SUB_NONE        = 0;
+const byte VOICE_SUB_GAME_START  = 1;
+const byte VOICE_SUB_PLAYER_UP   = 2;
+const byte VOICE_SUB_BALL_SAVED  = 3;
+const byte VOICE_SUB_BAD_PLAY    = 4;
+const byte VOICE_SUB_GAME_OVER   = 5;
 // Add more as needed.
 // Bit flags controlling behavior
-const uint8_t AUDIO_FLAG_LOOP          = 0x01;  // Track should loop until explicitly stopped
-const uint8_t AUDIO_FLAG_NON_INTERRUPT = 0x02;  // Do not start if another same-category track playing
-const uint8_t AUDIO_FLAG_DUCK_OTHERS   = 0x04;  // Future: lower volume on other categories while this plays
+const byte AUDIO_FLAG_LOOP          = 0x01;  // Track should loop until explicitly stopped
+const byte AUDIO_FLAG_NON_INTERRUPT = 0x02;  // Do not start if another same-category track playing
+const byte AUDIO_FLAG_DUCK_OTHERS   = 0x04;  // Future: lower volume on other categories while this plays
 
 struct AudioTrackDef {
-  uint16_t trackNum;     // Tsunami track number (001..nnn on SD card)
-  uint8_t  category;     // AUDIO_CAT_* (Voice / SFX / Music)
-  uint8_t  voiceSubcat;  // VOICE_SUB_*; VOICE_SUB_NONE for SFX/music
-  uint8_t  flags;        // AUDIO_FLAG_* bitmask
+  unsigned int trackNum;     // Tsunami track number (001..nnn on SD card)
+  byte  category;     // AUDIO_CAT_* (Voice / SFX / Music)
+  byte  voiceSubcat;  // VOICE_SUB_*; VOICE_SUB_NONE for SFX/music
+  byte  flags;        // AUDIO_FLAG_* bitmask
 };
 
 // Master list of all Tsunami tracks we care about.
@@ -365,30 +401,71 @@ const AudioTrackDef audioTracks[] = {
   { 32,        AUDIO_CAT_MUSIC, VOICE_SUB_NONE,         AUDIO_FLAG_LOOP }  // Attract mode music
 };
 
-const uint8_t NUM_AUDIO_TRACKS = (uint8_t)(sizeof(audioTracks) / sizeof(audioTracks[0]));
+const byte NUM_AUDIO_TRACKS = (byte)(sizeof(audioTracks) / sizeof(audioTracks[0]));
 
 // Index constants into audioTracks[] for commonly used sounds.
 // Keep these in sync with the ordering of audioTracks[] above.
-const uint8_t AUDIO_IDX_VOICE_GAME_START   = 0;  // "Let's ride Screamo"
-const uint8_t AUDIO_IDX_VOICE_PLAYER_UP    = 1;  // "Player 2, you're up"
-const uint8_t AUDIO_IDX_VOICE_BALL_SAVED_1 = 2;  // "Ball saved"
-const uint8_t AUDIO_IDX_VOICE_BALL_SAVED_2 = 3;  // alt "Ball saved"
-const uint8_t AUDIO_IDX_VOICE_BAD_PLAY_1   = 4;  // "That was terrible"
-const uint8_t AUDIO_IDX_VOICE_BAD_PLAY_2   = 5;  // alt bad-play quip
+const byte AUDIO_IDX_VOICE_GAME_START   = 0;  // "Let's ride Screamo"
+const byte AUDIO_IDX_VOICE_PLAYER_UP    = 1;  // "Player 2, you're up"
+const byte AUDIO_IDX_VOICE_BALL_SAVED_1 = 2;  // "Ball saved"
+const byte AUDIO_IDX_VOICE_BALL_SAVED_2 = 3;  // alt "Ball saved"
+const byte AUDIO_IDX_VOICE_BAD_PLAY_1   = 4;  // "That was terrible"
+const byte AUDIO_IDX_VOICE_BAD_PLAY_2   = 5;  // alt bad-play quip
 
-const uint8_t AUDIO_IDX_SFX_COASTER_CLIMB  = 6;  // track 20
-const uint8_t AUDIO_IDX_SFX_COASTER_DROP   = 7;  // track 21
-const uint8_t AUDIO_IDX_SFX_SCREAM         = 8;  // track 22
-const uint8_t AUDIO_IDX_SFX_GOBBLE         = 9;  // track 23
+const byte AUDIO_IDX_SFX_COASTER_CLIMB  = 6;  // track 20
+const byte AUDIO_IDX_SFX_COASTER_DROP   = 7;  // track 21
+const byte AUDIO_IDX_SFX_SCREAM         = 8;  // track 22
+const byte AUDIO_IDX_SFX_GOBBLE         = 9;  // track 23
 
-const uint8_t AUDIO_IDX_MUSIC_MAIN         = 10; // track 30
-const uint8_t AUDIO_IDX_MUSIC_MULTIBALL    = 11; // track 31
-const uint8_t AUDIO_IDX_MUSIC_ATTRACT      = 12; // track 32
+const byte AUDIO_IDX_MUSIC_MAIN         = 10; // track 30
+const byte AUDIO_IDX_MUSIC_MULTIBALL    = 11; // track 31
+const byte AUDIO_IDX_MUSIC_ATTRACT      = 12; // track 32
+
+
+
 
 // Simple per-category what's-currently-playing state (trackNum 0 == none)
-uint16_t audioCurrentVoiceTrack = 0;
-uint16_t audioCurrentSfxTrack   = 0;
-uint16_t audioCurrentMusicTrack = 0;
+unsigned int audioCurrentVoiceTrack = 0;
+unsigned int audioCurrentSfxTrack   = 0;
+unsigned int audioCurrentMusicTrack = 0;
+
+
+// Tsunami master gain settings (in dB)
+// Master gain can range from -40db to 0dB (full level); defaults to -10dB to allow some headroom.
+// Per-category RELATIVE gains are applied on top of master gain; can range from -40dB to +40dB but clamped within -40dB to 0dB overall.
+const int8_t TSUNAMI_GAIN_DB_DEFAULT = -10;  // Default Tsunami master gain in dB
+const int8_t TSUNAMI_GAIN_DB_MIN     = -40;  // Clamp range; adjust as needed
+const int8_t TSUNAMI_GAIN_DB_MAX     =   0;  // 0 dB = full level (example)
+
+int8_t tsunamiGainDb      = TSUNAMI_GAIN_DB_DEFAULT;  // Persisted Tsunami master gain
+// Per-category relative gains in dB (applied on top of master).
+// 0 == no change; negative to reduce that category, positive to boost (within clamp limits).
+int8_t tsunamiVoiceGainDb = 0;
+int8_t tsunamiSfxGainDb   = 0;
+int8_t tsunamiMusicGainDb = 0;
+
+// ********************************
+// ****** DIAGNOSTICS SETUP *******
+// ********************************
+
+void markDiagnosticsDisplayDirty(bool forceSuiteReset = false);  // Must forward declare since it has a default parm.
+
+byte diagnosticSuiteIdx  = 0;  // 0..NUM_DIAG_SUITES-1: which top-level suite selected
+byte diagnosticState     = 0;  // 0 = at suite menu, >0 = inside a suite (future use)
+
+const byte NUM_DIAG_SUITES = 4;
+const char* diagSuiteNames[NUM_DIAG_SUITES] = {
+  "LAMP TESTS",
+  "COIL/MOTOR TESTS",
+  "SWITCH TESTS",
+  "AUDIO TESTS"
+};
+
+const byte NUM_DIAG_BUTTONS = 4;
+byte diagButtonLastState[NUM_DIAG_BUTTONS] = { 0, 0, 0, 0 };
+bool attractDisplayDirty = true;
+bool diagDisplayDirty = true;
+byte diagLastRenderedSuite = 0xFF;
 
 // ********************************************************************************************************************
 // ********************************************************************************************************************
@@ -413,27 +490,8 @@ Tsunami* pTsunami = nullptr;  // Tsunami WAV player object pointer
 byte         modeCurrent      = MODE_ATTRACT;  // MODE_UNDEFINED;  Just to get going; maybe change to ATTRACT later.
 char         msgType          = ' ';
 
-void markDiagnosticsDisplayDirty(bool forceSuiteReset = false);  // Must forward declare since it has a default parm.
-
-byte diagnosticSuiteIdx  = 0;  // 0..NUM_DIAG_SUITES-1: which top-level suite selected
-byte diagnosticState     = 0;  // 0 = at suite menu, >0 = inside a suite (future use)
-
-const byte NUM_DIAG_SUITES = 4;
-const char* diagSuiteNames[NUM_DIAG_SUITES] = {
-  "LAMP TESTS",
-  "COIL/MOTOR TESTS",
-  "SWITCH TESTS",
-  "AUDIO TESTS"
-};
-
-const byte NUM_DIAG_BUTTONS = 4;
-byte diagButtonLastState[NUM_DIAG_BUTTONS] = { 0, 0, 0, 0 };
-bool attractDisplayDirty = true;
-bool diagDisplayDirty = true;
-byte diagLastRenderedSuite = 0xFF;
-
 // 10ms scheduler
-const uint16_t LOOP_TICK_MS = 10;
+const unsigned int LOOP_TICK_MS = 10;
 unsigned long loopNextMillis = 0;
 
 int currentScore = 0; // Current game score (0..999).
@@ -487,14 +545,70 @@ void setup() {
   pLCD2004->println(lcdString);  // Display app version, defined above.
 
   // *** INITIALIZE TSUNAMI WAV PLAYER OBJECT ***
-  // Files must be WAV format, 16-bit PCM, 44.1kHz, Stereo.  Details in Tsunami.h comments.
+ // Files must be WAV format, 16-bit PCM, 44.1kHz, Stereo.  Details in Tsunami.h comments.
   pTsunami = new Tsunami();  // Create Tsunami object on Serial3
   pTsunami->start();         // Start Tsunami WAV player
-  delay(10);               // Give Tsunami time to initialize
-  audioLoadMasterGain();     // Load saved master gain from EEPROM
-  audioApplyMasterGain();    // Apply to all outputs
+  delay(10);                 // Give Tsunami time to initialize
+  // Ensure Tsunami is in a clean state on any reset:
+  //  - stop any tracks that might have been left playing
+  //  - reload and apply master / category gains
+  //  - clear our "currently playing" state
+  audioResetTsunamiState();
 
   //tsunamiTest();             // Play test sound on startup to verify Tsunami is working.
+
+
+  if (pTsunami != nullptr) {
+    const int MUSIC_FADE_TIME_MS         = 500;
+    const int MUSIC_GAIN_DEFAULT_DB      = -5;
+    const int MUSIC_GAIN_FADE_DB         = -20;
+    const unsigned int TRACK_MODE_EXPLANATION = 35;
+    const unsigned int TRACK_MUSIC            = 36;
+    const unsigned int TRACK_TARGET_SFX       = 37;
+
+    audioResetTsunamiState();
+
+    // 1) Start looped music.
+    pTsunami->trackGain(TRACK_MUSIC, MUSIC_GAIN_DEFAULT_DB);
+    pTsunami->trackLoop(TRACK_MUSIC, true);
+    pTsunami->trackPlayPoly(TRACK_MUSIC, 0, false);
+    delay(5000);
+
+    // 2) Fade music down, then play the explanation.
+    pTsunami->trackFade(TRACK_MUSIC, MUSIC_GAIN_FADE_DB, MUSIC_FADE_TIME_MS, false);
+    delay(MUSIC_FADE_TIME_MS + 100);
+    pTsunami->trackPlayPoly(TRACK_MODE_EXPLANATION, 0, false);
+    delay(7000);
+
+    // 3) Bring the music back up and let it run 5 seconds.
+    pTsunami->trackFade(TRACK_MUSIC, MUSIC_GAIN_DEFAULT_DB, MUSIC_FADE_TIME_MS, false);
+    delay(MUSIC_FADE_TIME_MS + 100);
+    delay(5000);
+
+    // 4) Fire the target-hit SFX twice.
+    pTsunami->trackPlayPoly(TRACK_TARGET_SFX, 0, false);
+    delay(1000);
+    delay(3000);
+    pTsunami->trackPlayPoly(TRACK_TARGET_SFX, 0, false);
+    delay(5000);
+    // 5) Stop the music.
+    pTsunami->trackStop(TRACK_MUSIC);
+    delay(1000);
+
+    while (true) {
+      delay(1000);
+    }
+  }
+
+
+
+
+
+
+
+
+
+
 
   setGILamps(true);          // Turn on playfield G.I. lamps
   pMessage->sendMAStoSLVGILamp(true);  // Tell Slave to turn on its G.I. lamps as well
@@ -510,6 +624,7 @@ void setup() {
 // *****************************************************************************************
 
 void loop() {
+
   // Simple 10ms tick-based main loop. All game logic runs at this cadence.
   unsigned long now = millis();
   if ((long)(now - loopNextMillis) < 0) {
@@ -521,8 +636,8 @@ void loop() {
 
   // Fast path: handle flipper buttons immediately (always active)
   // NOTE: This is placeholder; real flipper handling will be added later.
-  // if (digitalRead(PIN_IN_BUTTON_FLIPPER_LEFT) == LOW) { /* handle left flipper */ }
-  // if (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == LOW) { /* handle right flipper */ }
+  // if (switchClosed(SWITCH_IDX_FLIPPER_LEFT_BUTTON)) { /* handle left flipper */ }
+  // if (switchClosed(SWITCH_IDX_FLIPPER_RIGHT_BUTTON)) { /* handle right flipper */ }
 
   // Update Centipede #2 switch snapshot once per tick (for non-flipper switches)
   for (int i = 0; i < 4; i++) {
@@ -651,6 +766,25 @@ bool switchClosed(byte t_switchIdx) {
   byte bitNum = pin % 16;       // 0..15
   // switch is active LOW on Centipede, so bit==0 means closed.
   return ((switchNewState[portIndex] & (1 << bitNum)) == 0);
+}
+
+bool switchClosedImmediate(byte t_switchIdx) {
+  if (t_switchIdx >= NUM_SWITCHES || pShiftRegister == nullptr) {
+    return false;
+  }
+  return pShiftRegister->digitalRead(switchParm[t_switchIdx].pinNum) == LOW;
+}
+
+void waitForSwitchClosedImmediate(byte t_switchIdx) {
+  while (!switchClosedImmediate(t_switchIdx)) {
+    delay(1);
+  }
+}
+
+void waitForSwitchOpenImmediate(byte t_switchIdx) {
+  while (switchClosedImmediate(t_switchIdx)) {
+    delay(1);
+  }
 }
 
 bool switchPressedEdge(byte t_switchIdx, byte* t_lastState) {
@@ -854,16 +988,12 @@ void tsunamiTest() {
 // ***** TSUNAMI GAIN / VOLUME    *****
 // ************************************
 
-const int8_t TSUNAMI_GAIN_DB_MIN = -40;  // Clamp range; adjust as needed
-const int8_t TSUNAMI_GAIN_DB_MAX =   0;  // 0 dB = full level (example)
-
+// Master gain applies to all outputs; category gains are applied per-track on top of master.
 void audioApplyMasterGain() {
   if (pTsunami == nullptr) {
     return;
   }
 
-  // Tsunami masterGain(out, gain) uses a signed 16-bit value.
-  // Here we treat tsunamiGainDb as a simple dB-like scalar and apply to all 8 outputs.
   int gain = (int)tsunamiGainDb;
 
   for (int out = 0; out < TSUNAMI_NUM_OUTPUTS; out++) {
@@ -873,11 +1003,11 @@ void audioApplyMasterGain() {
 
 void audioSaveMasterGain() {
   // Store tsunamiGainDb as a single signed byte
-  EEPROM.update(EEPROM_ADDR_TSUNAMI_GAIN, (uint8_t)tsunamiGainDb);
+  EEPROM.update(EEPROM_ADDR_TSUNAMI_GAIN, (byte)tsunamiGainDb);
 }
 
 void audioLoadMasterGain() {
-  uint8_t raw = EEPROM.read(EEPROM_ADDR_TSUNAMI_GAIN);
+  byte raw = EEPROM.read(EEPROM_ADDR_TSUNAMI_GAIN);
   int8_t val = (int8_t)raw;
 
   if (val < TSUNAMI_GAIN_DB_MIN || val > TSUNAMI_GAIN_DB_MAX) {
@@ -889,8 +1019,96 @@ void audioLoadMasterGain() {
   }
 }
 
+// Persist per-category relative gains in EEPROM.
+// These are smaller-range trims layered on top of tsunamiGainDb.
+void audioSaveCategoryGains() {
+  EEPROM.update(EEPROM_ADDR_TSUNAMI_GAIN_VOICE, (byte)tsunamiVoiceGainDb);
+  EEPROM.update(EEPROM_ADDR_TSUNAMI_GAIN_SFX, (byte)tsunamiSfxGainDb);
+  EEPROM.update(EEPROM_ADDR_TSUNAMI_GAIN_MUSIC, (byte)tsunamiMusicGainDb);
+}
+
+void audioLoadCategoryGains() {
+  int8_t v = (int8_t)EEPROM.read(EEPROM_ADDR_TSUNAMI_GAIN_VOICE);
+  int8_t s = (int8_t)EEPROM.read(EEPROM_ADDR_TSUNAMI_GAIN_SFX);
+  int8_t m = (int8_t)EEPROM.read(EEPROM_ADDR_TSUNAMI_GAIN_MUSIC);
+
+  // Use a modest range for category trims; these are relative to master.
+  const int8_t CAT_TRIM_MIN = -20;
+  const int8_t CAT_TRIM_MAX =  20;
+
+  if (v < CAT_TRIM_MIN || v > CAT_TRIM_MAX) {
+    v = 0;
+  }
+  if (s < CAT_TRIM_MIN || s > CAT_TRIM_MAX) {
+    s = 0;
+  }
+  if (m < CAT_TRIM_MIN || m > CAT_TRIM_MAX) {
+    m = 0;
+  }
+
+  tsunamiVoiceGainDb = v;
+  tsunamiSfxGainDb   = s;
+  tsunamiMusicGainDb = m;
+
+  // Optional: normalize stored values in case they were invalid.
+  audioSaveCategoryGains();
+}
+
+// Stop all playback on Tsunami and restore default/master/category gains.
+// Call once during setup after pTsunami->start().
+void audioResetTsunamiState() {
+  if (pTsunami == nullptr) {
+    return;
+  }
+
+  // Stop ALL tracks (Tsunami supports up to 4096, but we can cover what we use).
+  // trackStop(0) is typically "stop all", but we are explicit for safety.
+  for (int trk = 1; trk <= 256; trk++) {
+    pTsunami->trackStop(trk);
+  }
+
+  // Reload master and category gains from EEPROM (in case reset happened
+  // after changes but before they were persisted, or after a crash).
+  audioLoadMasterGain();
+  audioLoadCategoryGains();
+
+  // Reapply master gain to all outputs.
+  audioApplyMasterGain();
+
+  // Clear "currently playing" bookkeeping so mode code does not think
+  // something is active when Tsunami is now stopped.
+  audioCurrentVoiceTrack = 0;
+  audioCurrentSfxTrack   = 0;
+  audioCurrentMusicTrack = 0;
+}
+
+// Compute effective gain (in Tsunami units) for a given category,
+// combining master gain and relative category trim, and clamping to Tsunami range.
+int audioGetEffectiveGainDb(byte t_category) {
+  int base = (int)tsunamiGainDb;
+
+  if (t_category == AUDIO_CAT_VOICE) {
+    base += (int)tsunamiVoiceGainDb;
+  }
+  else if (t_category == AUDIO_CAT_SFX) {
+    base += (int)tsunamiSfxGainDb;
+  }
+  else if (t_category == AUDIO_CAT_MUSIC) {
+    base += (int)tsunamiMusicGainDb;
+  }
+
+  if (base < TSUNAMI_GAIN_DB_MIN) {
+    base = TSUNAMI_GAIN_DB_MIN;
+  }
+  else if (base > TSUNAMI_GAIN_DB_MAX) {
+    base = TSUNAMI_GAIN_DB_MAX;
+  }
+
+  return base;
+}
+
 void audioAdjustMasterGain(int8_t t_deltaDb) {
-  int16_t newVal = (int16_t)tsunamiGainDb + (int16_t)t_deltaDb;
+  int newVal = (int)tsunamiGainDb + (int)t_deltaDb;
   if (newVal < TSUNAMI_GAIN_DB_MIN) {
     newVal = TSUNAMI_GAIN_DB_MIN;
   }
@@ -912,45 +1130,75 @@ void audioAdjustMasterGain(int8_t t_deltaDb) {
   pLCD2004->println(lcdString);
 }
 
+// Adjust a specific category's relative gain (in dB) and persist.
+void audioAdjustCategoryGain(byte t_category, int8_t t_deltaDb) {
+  int8_t* pGain = nullptr;
+
+  switch (t_category) {
+  case AUDIO_CAT_VOICE: pGain = &tsunamiVoiceGainDb; break;
+  case AUDIO_CAT_SFX:   pGain = &tsunamiSfxGainDb;   break;
+  case AUDIO_CAT_MUSIC: pGain = &tsunamiMusicGainDb; break;
+  default:
+    return;
+  }
+
+  // Category trims use a smaller window than the absolute Tsunami range.
+  const int8_t CAT_TRIM_MIN = -20;
+  const int8_t CAT_TRIM_MAX =  20;
+
+  int newVal = (int)(*pGain) + (int)t_deltaDb;
+  if (newVal < CAT_TRIM_MIN) {
+    newVal = CAT_TRIM_MIN;
+  } else if (newVal > CAT_TRIM_MAX) {
+    newVal = CAT_TRIM_MAX;
+  }
+
+  if ((int8_t)newVal == *pGain) {
+    return;
+  }
+
+  *pGain = (int8_t)newVal;
+  audioSaveCategoryGains();
+
+  // Simple feedback; caller can decide when to show this.
+  sprintf(lcdString, "Cat %u %+3d dB", (unsigned)t_category, (int)(*pGain));
+  pLCD2004->println(lcdString);
+}
+
 // Internal: update per-category "now playing" state based on a track index.
-void audioSetCurrentFromIndex(uint8_t t_index, bool t_set) {
+void audioSetCurrentFromIndex(byte t_index, bool t_set) {
   if (t_index >= NUM_AUDIO_TRACKS) {
     return;
   }
 
   if (!t_set) {
-    uint16_t trackNum = audioTracks[t_index].trackNum;
-    uint8_t category = audioTracks[t_index].category;
+    unsigned int trackNum = audioTracks[t_index].trackNum;
+    byte category = audioTracks[t_index].category;
 
     if (category == AUDIO_CAT_VOICE && audioCurrentVoiceTrack == trackNum) {
       audioCurrentVoiceTrack = 0;
-    }
-    else if (category == AUDIO_CAT_SFX && audioCurrentSfxTrack == trackNum) {
+    } else if (category == AUDIO_CAT_SFX && audioCurrentSfxTrack == trackNum) {
       audioCurrentSfxTrack = 0;
-    }
-    else if (category == AUDIO_CAT_MUSIC && audioCurrentMusicTrack == trackNum) {
+    } else if (category == AUDIO_CAT_MUSIC && audioCurrentMusicTrack == trackNum) {
       audioCurrentMusicTrack = 0;
     }
     return;
   }
 
-  uint16_t trackNum = audioTracks[t_index].trackNum;
-  uint8_t category = audioTracks[t_index].category;
+  unsigned int trackNum = audioTracks[t_index].trackNum;
+  byte category = audioTracks[t_index].category;
 
   if (category == AUDIO_CAT_VOICE) {
     audioCurrentVoiceTrack = trackNum;
-  }
-  else if (category == AUDIO_CAT_SFX) {
+  } else if (category == AUDIO_CAT_SFX) {
     audioCurrentSfxTrack = trackNum;
-  }
-  else if (category == AUDIO_CAT_MUSIC) {
+  } else if (category == AUDIO_CAT_MUSIC) {
     audioCurrentMusicTrack = trackNum;
   }
 }
 
 // Core helper: start a specific track by index, using its metadata flags.
-// Core helper: start a specific track by index, using its metadata flags.
-void audioPlayTrackByIndex(uint8_t t_index) {
+void audioPlayTrackByIndex(byte t_index) {
   if (pTsunami == nullptr) {
     return;
   }
@@ -959,9 +1207,9 @@ void audioPlayTrackByIndex(uint8_t t_index) {
   }
 
   // Read fields directly from the table (no local struct, no &)
-  uint16_t trackNum = audioTracks[t_index].trackNum;
-  uint8_t  category = audioTracks[t_index].category;
-  uint8_t  flags    = audioTracks[t_index].flags;
+  unsigned int trackNum = audioTracks[t_index].trackNum;
+  byte  category = audioTracks[t_index].category;
+  byte  flags    = audioTracks[t_index].flags;
 
   // Handle NON_INTERRUPT flag: do not start if same category already playing.
   if (flags & AUDIO_FLAG_NON_INTERRUPT) {
@@ -975,6 +1223,12 @@ void audioPlayTrackByIndex(uint8_t t_index) {
       return;
     }
   }
+
+  // Compute effective gain for this category (master + per-category trim).
+  int gainDb = audioGetEffectiveGainDb(category);
+
+  // Apply per-track gain before playing.
+  pTsunami->trackGain((int)trackNum, gainDb);
 
   if (flags & AUDIO_FLAG_LOOP) {
     pTsunami->trackLoad((int)trackNum, 0, false);
@@ -990,14 +1244,14 @@ void audioPlayTrackByIndex(uint8_t t_index) {
 }
 
 // Stop a track by Tsunami track number (001..nnn).
-void audioStopTrack(uint16_t t_trackNum) {
+void audioStopTrack(unsigned int t_trackNum) {
   if (t_trackNum == 0 || pTsunami == nullptr) {
     return;
   }
   pTsunami->trackStop((int)t_trackNum);
 
   // Walk the table once to clear the appropriate "current" state if needed.
-  for (uint8_t i = 0; i < NUM_AUDIO_TRACKS; i++) {
+  for (byte i = 0; i < NUM_AUDIO_TRACKS; i++) {
     if (audioTracks[i].trackNum == t_trackNum) {
       audioSetCurrentFromIndex(i, false);
       break;
@@ -1006,11 +1260,11 @@ void audioStopTrack(uint16_t t_trackNum) {
 }
 
 // Convenience: play by raw Tsunami track number (only uses flags/category if it finds a match).
-void audioPlayTrack(uint16_t t_trackNum) {
+void audioPlayTrack(unsigned int t_trackNum) {
   if (pTsunami == nullptr || t_trackNum == 0) {
     return;
   }
-  for (uint8_t i = 0; i < NUM_AUDIO_TRACKS; i++) {
+  for (byte i = 0; i < NUM_AUDIO_TRACKS; i++) {
     if (audioTracks[i].trackNum == t_trackNum) {
       audioPlayTrackByIndex(i);
       return;
@@ -1038,15 +1292,15 @@ int audioRandomInt(int t_maxExclusive) {
   return (int)(millis() % (unsigned long)t_maxExclusive);
 }
 
-void audioPlayRandomVoice(uint8_t t_subcat) {
+void audioPlayRandomVoice(byte t_subcat) {
   if (pTsunami == nullptr) {
     return;
   }
 
-  uint8_t indices[NUM_AUDIO_TRACKS];
-  uint8_t count = 0;
+  byte indices[NUM_AUDIO_TRACKS];
+  byte count = 0;
 
-  for (uint8_t i = 0; i < NUM_AUDIO_TRACKS; i++) {
+  for (byte i = 0; i < NUM_AUDIO_TRACKS; i++) {
     if (audioTracks[i].category == AUDIO_CAT_VOICE &&
       audioTracks[i].voiceSubcat == t_subcat) {
       indices[count++] = i;
@@ -1058,7 +1312,7 @@ void audioPlayRandomVoice(uint8_t t_subcat) {
   }
 
   int pick = audioRandomInt(count);
-  uint8_t chosenIndex = indices[pick];
+  byte chosenIndex = indices[pick];
   audioPlayTrackByIndex(chosenIndex);
 }
 
@@ -1114,14 +1368,14 @@ void runBasicDiagnostics() {
   // void sendSLVtoMASScoreReport(const byte t_10K, const byte t_100K, const byte t_million);  // RS485_TYPE_SLV_TO_MAS_SCORE_REPORT
   // void getSLVtoMASScoreReport(byte* t_10K, byte* t_100K, byte* t_million);                  // RS485_TYPE_SLV_TO_MAS_SCORE_REPORT
 
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }  // Wait for right flipper button press to continue
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);  // Wait for right flipper button press to continue
   pMessage->sendMAStoSLVTiltLamp(false);
   delay(500);
   pMessage->sendMAStoSLVTiltLamp(true);
   delay(500);
   pMessage->sendMAStoSLVTiltLamp(false);
   delay(500);
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVGILamp(true);
   delay(500);
   pMessage->sendMAStoSLVGILamp(false);
@@ -1129,17 +1383,17 @@ void runBasicDiagnostics() {
   pMessage->sendMAStoSLVGILamp(true);
   delay(500);
 
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVCreditInc(3);
   delay(500);
 
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVCreditInc(1);
   pMessage->sendMAStoSLVCreditInc(1);
   pMessage->sendMAStoSLVCreditInc(1);
   delay(500);
 
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVCreditDec();
   pMessage->sendMAStoSLVCreditDec();
   pMessage->sendMAStoSLVCreditDec();
@@ -1148,7 +1402,7 @@ void runBasicDiagnostics() {
   pMessage->sendMAStoSLVCreditDec();
   delay(500);
 
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVBell10K();
   pMessage->sendMAStoSLVBell10K();
   pMessage->sendMAStoSLVBell10K();
@@ -1156,7 +1410,7 @@ void runBasicDiagnostics() {
   pMessage->sendMAStoSLVBell10K();
   delay(500);
 
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVBell100K();
   pMessage->sendMAStoSLVBell100K();
   pMessage->sendMAStoSLVBell100K();
@@ -1164,7 +1418,7 @@ void runBasicDiagnostics() {
   pMessage->sendMAStoSLVBell100K();
   delay(500);
 
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVBellSelect();
   pMessage->sendMAStoSLVBellSelect();
   pMessage->sendMAStoSLVBellSelect();
@@ -1172,7 +1426,7 @@ void runBasicDiagnostics() {
   pMessage->sendMAStoSLVBellSelect();
   delay(500);
 
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLV10KUnitPulse();
   pMessage->sendMAStoSLV10KUnitPulse();
   pMessage->sendMAStoSLV10KUnitPulse();
@@ -1180,7 +1434,7 @@ void runBasicDiagnostics() {
   pMessage->sendMAStoSLV10KUnitPulse();
   delay(500);
 
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVBell10K();
   pMessage->sendMAStoSLVBell100K();
   pMessage->sendMAStoSLVBellSelect();
@@ -1207,51 +1461,51 @@ void runBasicDiagnostics() {
   pMessage->sendMAStoSLV10KUnitPulse();
   delay(500);
 
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVScoreAbs(999);
   delay(500);
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVScoreReset();
   delay(500);
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVScoreAbs(121);
   delay(500);
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVScoreReset();
   delay(500);
 
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVScoreAbs(998);  // 9,980,000
   delay(500);
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVScoreInc10K(4);  // 9,990,000
   delay(500);
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVScoreInc10K(-4);  // 9,950,000
   delay(500);
 
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVScoreAbs(989);   // 9,890,000
   delay(500);
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVScoreInc10K(40);  // 9,990,000
   delay(500);
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVScoreInc10K(-40);  // 9,590,000
   delay(500);
 
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVScoreAbs(3);  // 30,000
   delay(500);
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVScoreInc10K(-8);  //  0
   delay(500);
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVScoreInc10K(4);  //  40,000
   delay(500);
 
   // Six 10K increments in a row with no pauses
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVScoreInc10K(1);
   pMessage->sendMAStoSLVScoreInc10K(1);
   pMessage->sendMAStoSLVScoreInc10K(1);
@@ -1261,13 +1515,13 @@ void runBasicDiagnostics() {
   delay(500);
 
   // Five, pause, one, pause, one 10K increments
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVScoreInc10K(6);
   pMessage->sendMAStoSLVScoreInc10K(1);
   delay(500);
 
   // Six negative 10K increments in a row with no pauses
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVScoreInc10K(-1);
   pMessage->sendMAStoSLVScoreInc10K(-1);
   pMessage->sendMAStoSLVScoreInc10K(-1);
@@ -1277,13 +1531,13 @@ void runBasicDiagnostics() {
   delay(500);
 
   // Five, pause, one, pause, one 10K decrements
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVScoreInc10K(-6);
   pMessage->sendMAStoSLVScoreInc10K(-1);
   delay(500);
 
   // Six 100K increments in a row with no pauses
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVScoreInc10K(10);
   pMessage->sendMAStoSLVScoreInc10K(10);
   pMessage->sendMAStoSLVScoreInc10K(10);
@@ -1293,13 +1547,13 @@ void runBasicDiagnostics() {
   delay(500);
 
   // Five, pause, one, pause, one 100K increments
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVScoreInc10K(60);
   pMessage->sendMAStoSLVScoreInc10K(10);
   delay(500);
 
   // Six negative 100K increments in a row with no pauses
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVScoreInc10K(-10);
   pMessage->sendMAStoSLVScoreInc10K(-10);
   pMessage->sendMAStoSLVScoreInc10K(-10);
@@ -1309,13 +1563,13 @@ void runBasicDiagnostics() {
   delay(500);
 
   // Five, pause, one, pause, one 100K decrements
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVScoreInc10K(-60);
   pMessage->sendMAStoSLVScoreInc10K(-10);
   delay(500);
 
   // 2, pause, 3, pause, 4, pause,  5, pause, 5, pause, 1 10K increments
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }  // Gives 14 single advances
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);  // Gives 14 single advances
   pMessage->sendMAStoSLVScoreInc10K(2);
   pMessage->sendMAStoSLVScoreInc10K(3);
   pMessage->sendMAStoSLVScoreInc10K(4);
@@ -1324,13 +1578,13 @@ void runBasicDiagnostics() {
   delay(500);
 
   // 5, pause, 5, pause, 1, pause, 1 10K increments
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }  // 5-5-4 as expected
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);  // 5-5-4 as expected
   pMessage->sendMAStoSLVScoreInc10K(11);
   pMessage->sendMAStoSLVScoreInc10K(1);
   delay(500);
 
   // 2, pause, 3, pause, 4, pause, 5, pause, 5, pause, 1 100K increments
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }  // Gives 14 single advances
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);  // Gives 14 single advances
   pMessage->sendMAStoSLVScoreInc10K(20);
   pMessage->sendMAStoSLVScoreInc10K(30);
   pMessage->sendMAStoSLVScoreInc10K(40);
@@ -1339,13 +1593,13 @@ void runBasicDiagnostics() {
   delay(500);
 
   // 2 @ 100K, pause, 3 @ 10K, pause, 5 @ 10K, pause, 5 @ 10K, pause, 2 @ 10K decrements
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }  // Works perfectly!
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);  // Works perfectly!
   pMessage->sendMAStoSLVScoreInc10K(20);
   pMessage->sendMAStoSLVScoreInc10K(3);
   pMessage->sendMAStoSLVScoreInc10K(-12);
   delay(500);
 
-  while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == HIGH) { }
+  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   pMessage->sendMAStoSLVScoreQuery();
   pMessage->sendMAStoSLVCreditStatusQuery();
 
@@ -1390,24 +1644,24 @@ void runRudimentarySwitchAndLampTests() {
     }
 
     // Check flipper buttons
-    if (digitalRead(PIN_IN_BUTTON_FLIPPER_LEFT) == LOW) {  // Fire the left flipper
+    if (switchClosed(SWITCH_IDX_FLIPPER_LEFT_BUTTON)) {  // Fire the left flipper
       analogWrite(deviceParm[DEV_IDX_FLIPPER_LEFT].pinNum, deviceParm[DEV_IDX_FLIPPER_LEFT].powerInitial);
       delay(deviceParm[DEV_IDX_FLIPPER_LEFT].timeOn * 10);
       analogWrite(deviceParm[DEV_IDX_FLIPPER_LEFT].pinNum, deviceParm[DEV_IDX_FLIPPER_LEFT].powerHold);
       delay(20);
-      while (digitalRead(PIN_IN_BUTTON_FLIPPER_LEFT) == LOW) {  // Keep holding the flipper while button is pressed
+      while (switchClosedImmediate(SWITCH_IDX_FLIPPER_LEFT_BUTTON)) {  // Keep holding the flipper while button is pressed
         delay(10);
       }
       analogWrite(deviceParm[DEV_IDX_FLIPPER_LEFT].pinNum, LOW);  // Turn OFF
       pMessage->sendMAStoSLVScoreFlash(400);  // Flash 4M
     }
 
-    if (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == LOW) {  // Fire the right flipper
+    if (switchClosed(SWITCH_IDX_FLIPPER_RIGHT_BUTTON)) {  // Fire the right flipper
       analogWrite(deviceParm[DEV_IDX_FLIPPER_RIGHT].pinNum, deviceParm[DEV_IDX_FLIPPER_RIGHT].powerInitial);
       delay(deviceParm[DEV_IDX_FLIPPER_RIGHT].timeOn * 10);
       analogWrite(deviceParm[DEV_IDX_FLIPPER_RIGHT].pinNum, deviceParm[DEV_IDX_FLIPPER_RIGHT].powerHold);
       delay(20);
-      while (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == LOW) {  // Keep holding the flipper while button is pressed
+      while (switchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON)) {  // Keep holding the flipper while button is pressed
         delay(10);
       }
       analogWrite(deviceParm[DEV_IDX_FLIPPER_RIGHT].pinNum, LOW);  // Turn OFF
@@ -1778,10 +2032,10 @@ while (true) {
 
     // Fast flipper polling (uses remaining time after other tasks)
     while (millis() - loopStart < 10) {
-      if (digitalRead(PIN_IN_BUTTON_FLIPPER_LEFT) == LOW) {
+      if (switchClosed(SWITCH_IDX_FLIPPER_LEFT_BUTTON)) {
         // Fire left flipper instantly
       }
-      if (digitalRead(PIN_IN_BUTTON_FLIPPER_RIGHT) == LOW) {
+      if (switchClosed(SWITCH_IDX_FLIPPER_RIGHT_BUTTON)) {
         // Fire right flipper instantly
       }
     }

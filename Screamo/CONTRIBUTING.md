@@ -11,7 +11,33 @@ Welcome to the Screamo project. This document defines mandatory contribution sta
 - Line Endings: Use CRLF or LF consistently per your environment; do not mix within a file.
 - Indentation: 2 spaces (no tabs) unless an existing file clearly uses a different width; maintain consistency within each file.
 - Max Line Length: Prefer <= 120 characters; wrap thoughtfully without breaking readability.
-- Braces: K&R style (opening brace on same line) as currently used in .ino files.
+- Braces:
+  - K&R style: opening brace on the same line as the control statement or function definition.
+- 'if' / 'else' layout:
+  - Place the 'else' or 'else if' on the **same line** as the closing brace of the previous 'if' / 'else' block.
+  - Preferred:
+
+    '''cpp
+    if (newVal < TSUNAMI_GAIN_DB_MIN) {
+      newVal = TSUNAMI_GAIN_DB_MIN;
+    } else if (newVal > TSUNAMI_GAIN_DB_MAX) {
+      newVal = TSUNAMI_GAIN_DB_MAX;
+    } else {
+      // default handling
+    }
+    '''
+
+  - Avoid:
+
+    '''cpp
+    if (newVal < TSUNAMI_GAIN_DB_MIN) {
+      newVal = TSUNAMI_GAIN_DB_MIN;
+    }
+    else if (newVal > TSUNAMI_GAIN_DB_MAX) {
+      newVal = TSUNAMI_GAIN_DB_MAX;
+    }
+    '''
+
 - Naming:
   - Constants: UPPER_SNAKE_CASE (e.g. SCORE_MOTOR_STEP_MS).
   - Globals: lowerCamelCase or descriptive snake_case consistent with existing code (e.g. currentScore, resetHighUnitsRemaining).
@@ -24,6 +50,12 @@ Welcome to the Screamo project. This document defines mandatory contribution sta
   - Use ASCII characters only; do not insert smart quotes, en/em dashes, approximate symbols, or other Unicode glyphs in source comments.
 - Testing: Describe any hardware dependencies or assumptions when submitting changes.
 
+## Project Practices
+- Keep behavior changes focused and well-documented in commit messages.
+- When adding new hardware interactions (coils, lamps, switches, audio tracks), prefer extending the existing tables/structs rather than introducing parallel mechanisms.
+- Diagnostics and test code should be clearly separated from production gameplay logic and guarded so it does not run in normal operation.
+- When in doubt, match the surrounding style and structure in the file you are editing.
+
 ## Project-specific C++ Usage Preferences
 
 These rules override general C++ style recommendations where they conflict.
@@ -32,7 +64,7 @@ These rules override general C++ style recommendations where they conflict.
 
 For indices, categories, and flags, prefer `const` integral values instead of C++ `enum` / `enum class`:
 
-- Use `const byte SOME_IDX = 0;` or `const uint8_t SOME_FLAG = 0x01;` for:
+- Use `const byte SOME_IDX = 0;` or `const byte SOME_FLAG = 0x01;` for:
   - Device indices (coils / motors)
   - Lamp indices and groups
   - Switch indices
@@ -49,7 +81,13 @@ Avoid C++ references in this project:
 
 - Do not introduce new function parameters or variables using `T&` or `const T&`.
 - Prefer:
-  - Plain values for small POD types (e.g. `uint8_t`, `int`, `bool`).
+  - Plain values for small POD types (e.g. `byte`, `int`, `bool`).
+  - Prefer 'byte' over 'uint8_t'
+  - Prefer 'char' over 'int8_t'
+  - Prefer 'unsigned int' over 'uint16_t'
+  - Prefer 'int' over 'int16_t'
+  - Prefer 'unsigned long' over 'uint32_t'
+  - Prefer 'long' over 'int32_t'
   - Raw pointers (`T*`, `const T*`) where shared objects are needed.
   - Existing globals where that matches current patterns (e.g. `pShiftRegister`, `pTsunami`, `pMessage`, `pLCD2004`).
 
@@ -73,8 +111,8 @@ Guidelines when formatting into `lcdString`:
 ## Arduino / AVR specifics
 
 - Be mindful of Arduino core and AVR constraints.
-- Prefer fixed-width integer types (`uint8_t`, `int16_t`, etc.) for values sent over the wire or stored in tables.
-- When using `sizeof` for array lengths, store the result in `const` variables (e.g. `const uint8_t NUM_ITEMS = (uint8_t)(sizeof(items) / sizeof(items[0]));`).
+- Prefer fixed-width integer types (`byte`, `int`, etc.) for values sent over the wire or stored in tables.
+- When using `sizeof` for array lengths, store the result in `const` variables (e.g. `const unsigned int NUM_ITEMS = (unsigned int)(sizeof(items) / sizeof(items[0]));`).
 
 ## Testing and Safety
 
@@ -86,7 +124,7 @@ Guidelines when formatting into `lcdString`:
 
 - Access table entries by index (`table[idx]`) using named `const` indices.
 - It is acceptable (and preferred) to read fields directly from the table into local scalars:
-  - Example: `uint16_t trackNum = audioTracks[idx].trackNum;`
+  - Example: `unsigned int trackNum = audioTracks[idx].trackNum;`
 - Avoid clever abstractions (templates, heavy OO, RAII wrappers) that make the control flow less obvious.
 
 ## Documentation

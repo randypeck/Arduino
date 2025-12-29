@@ -1,4 +1,4 @@
-// PINBALL_CONSTS.H Rev: 11/21/25.
+// PINBALL_CONSTS.H Rev: 12/28/25.
 
 #ifndef PINBALL_CONSTS_H
 #define PINBALL_CONSTS_H
@@ -54,28 +54,30 @@ const byte RS845_PAYLOAD_OFFSET =  4;        // fifth byte of message is the fir
 // Note also that the LAST byte of every message is a CRC8 checksum of all bytes except the last.
 
 // Here is a list of all RS485 message types (the 1-byte TYPE field):
-const byte RS485_TYPE_NO_MESSAGE                =  0;  // No message
-const byte RS485_TYPE_MAS_TO_SLV_MODE           =  1;  // Mode change.
-const byte RS485_TYPE_MAS_TO_SLV_COMMAND_RESET  =  2;  // Software reset.
+const byte RS485_TYPE_NO_MESSAGE                    =  0;  // No message
+const byte RS485_TYPE_MAS_TO_SLV_MODE               =  1;  // Mode change.
+const byte RS485_TYPE_MAS_TO_SLV_COMMAND_RESET      =  2;  // Software reset.
 // MODE_ORIGINAL/ENHANCED/IMPULSE starts new game; tilt off, GI on, revert score, but does not deduct a credit.
-const byte RS485_TYPE_MAS_TO_SLV_CREDIT_STATUS  =  3;  // Request if credits > zero
-const byte RS485_TYPE_SLV_TO_MAS_CREDIT_STATUS  =  4;  // Slave response to credit status request: credits zero or > zero
-const byte RS485_TYPE_MAS_TO_SLV_CREDIT_INC     =  5;  // Credit increment
-const byte RS485_TYPE_MAS_TO_SLV_CREDIT_DEC     =  6;  // Credit decrement (will not return error even if credits already zero)
-const byte RS485_TYPE_MAS_TO_SLV_SCORE_RESET    =  7;  // Reset score to zero
-const byte RS485_TYPE_MAS_TO_SLV_SCORE_ABS      =  8;  // Absolute score update (0.999 in 10,000s)
-const byte RS485_TYPE_MAS_TO_SLV_SCORE_FLASH    =  9;  // Flash score (used w/ 1M..4M to indicate player number 1..4)
-const byte RS485_TYPE_MAS_TO_SLV_SCORE_INC_10K  = 10;  // Increment score update (1..999in 10,000s)
-const byte RS485_TYPE_MAS_TO_SLV_SCORE_INC_100K = 11;  // Increment score update (1..999 in 100,000s)
-const byte RS485_TYPE_MAS_TO_SLV_SCORE_DEC_10K  = 12;  // Decrement score update (-999..-1 in 10,000s) (won't go below zero)
-const byte RS485_TYPE_MAS_TO_SLV_BELL_10K       = 13;  // Ring the 10K bell
-const byte RS485_TYPE_MAS_TO_SLV_BELL_100K      = 14;  // Ring the 100K bell
-const byte RS485_TYPE_MAS_TO_SLV_BELL_SELECT    = 15;  // Ring the Select bell
-const byte RS485_TYPE_MAS_TO_SLV_10K_UNIT       = 16;  // Pulse the 10K Unit coil (for testing)
-const byte RS485_TYPE_MAS_TO_SLV_SCORE_QUERY    = 17;  // Master requesting current score displayed by Slave (in 10,000s)
-const byte RS485_TYPE_SLV_TO_MAS_SCORE_REPORT   = 18;  // Slave reporting current score (in 10,000s)
-const byte RS485_TYPE_MAS_TO_SLV_GI_LAMP        = 19;  // Master command to turn G.I. lamps on or off
-const byte RS485_TYPE_MAS_TO_SLV_TILT_LAMP      = 20;  // Master command to turn Tilt lamp on or off
+const byte RS485_TYPE_MAS_TO_SLV_CREDIT_STATUS      =  3;  // Request if credits > zero
+const byte RS485_TYPE_SLV_TO_MAS_CREDIT_STATUS      =  4;  // Slave response to credit status request: credits zero or > zero
+const byte RS485_TYPE_MAS_TO_SLV_CREDIT_FULL_QUERY  =  5;  // Master requesting if credit unit full
+const byte RS485_TYPE_SLV_TO_MAS_CREDIT_FULL_STATUS =  6;  // Slave reporting if credit unit full
+const byte RS485_TYPE_MAS_TO_SLV_CREDIT_INC         =  7;  // Credit increment
+const byte RS485_TYPE_MAS_TO_SLV_CREDIT_DEC         =  8;  // Credit decrement (will not return error even if credits already zero)
+const byte RS485_TYPE_MAS_TO_SLV_SCORE_RESET        =  9;  // Reset score to zero
+const byte RS485_TYPE_MAS_TO_SLV_SCORE_ABS          = 10;  // Absolute score update (0.999 in 10,000s)
+const byte RS485_TYPE_MAS_TO_SLV_SCORE_FLASH        = 11;  // Flash score (used w/ 1M..4M to indicate player number 1..4)
+const byte RS485_TYPE_MAS_TO_SLV_SCORE_INC_10K      = 12;  // Increment score update (1..999in 10,000s)
+const byte RS485_TYPE_MAS_TO_SLV_SCORE_INC_100K     = 13;  // Increment score update (1..999 in 100,000s)
+const byte RS485_TYPE_MAS_TO_SLV_SCORE_DEC_10K      = 14;  // Decrement score update (-999..-1 in 10,000s) (won't go below zero)
+const byte RS485_TYPE_MAS_TO_SLV_BELL_10K           = 15;  // Ring the 10K bell
+const byte RS485_TYPE_MAS_TO_SLV_BELL_100K          = 16;  // Ring the 100K bell
+const byte RS485_TYPE_MAS_TO_SLV_BELL_SELECT        = 17;  // Ring the Select bell
+const byte RS485_TYPE_MAS_TO_SLV_10K_UNIT           = 18;  // Pulse the 10K Unit coil (for testing)
+const byte RS485_TYPE_MAS_TO_SLV_SCORE_QUERY        = 19;  // Master requesting current score displayed by Slave (in 10,000s)
+const byte RS485_TYPE_SLV_TO_MAS_SCORE_REPORT       = 20;  // Slave reporting current score (in 10,000s)
+const byte RS485_TYPE_MAS_TO_SLV_GI_LAMP            = 21;  // Master command to turn G.I. lamps on or off
+const byte RS485_TYPE_MAS_TO_SLV_TILT_LAMP          = 22;  // Master command to turn Tilt lamp on or off
 // RS-485 ERROR MESSAGE TYPES:
 // Error codes that available() can return instead of a message type
 const byte RS485_ERROR_BEGIN                    = 50;  // Error codes start here
@@ -85,14 +87,6 @@ const byte RS485_ERROR_MSG_TOO_SHORT            = 53;  // Message length < 3
 const byte RS485_ERROR_MSG_TOO_LONG             = 54;  // Message length > RS485_MAX_LEN
 const byte RS485_ERROR_CHECKSUM                 = 55;  // CRC checksum mismatch
 const byte SLAVE_SCORE_QUEUE_FULL               = 56;  // Slave score command queue full
-
-// NOTE REGARDING DIAGNOSTIC MODE:
-//   For LAMP TEST, in addition to G.I. and Tilt on/off, Master can send SCORE_ABS messages that will cycle through all
-//   27 score lamps on the Slave.
-// NOTE REGARDING MULTI-PLAYER GAMES:
-//   Master will store and recall scores, and send SCORE_ABS commands to Slave to update each players' score as needed.
-//   Along these lines, it might be best for Master to save previous score to EEPROM at game-over, rather than Slave,
-//   and simply transmite SCORE_ABS command to Slave at power-up to display last score.
 
 // *** ARDUINO PIN NUMBERS:
 // *** STANDARD I/O PORT PIN NUMBERS ***
@@ -124,58 +118,8 @@ const byte PIN_OUT_RS485_TX_ENABLE     = 22;  // Output: set HIGH when in RS485 
 
 const byte PIN_OUT_LED                 = 13;  // Built-in LED always pin 13
 
-// **************************************
-// ***** MASTER ARDUINO PIN NUMBERS *****
-// **************************************
-
-// MASTER ARDUINO CABINET DIRECT INPUT PIN NUMBERS (Buttons):
-// For minimum latency, flipper buttons will be DIRECT INPUTS to Arduino pins, rather than via CENTIPEDE SHIFT REGISTER (SR) input.
-// In the future, we may choose to also include the Pop Bumper Skirt and Slingshot switches to direct Arduino inputs.
-const byte PIN_IN_BUTTON_FLIPPER_LEFT                 = 30;
-const byte PIN_IN_BUTTON_FLIPPER_RIGHT                = 31;
-
-// MASTER ARDUINO PLAYFIELD SHIFT REGISTER OUTPUT PIN NUMBERS (Lamps):
-// Note Master Centipede output pins are connected to RELAYS that switch 6.3vac to the actual lamps.
-// However, we just need to know which Centipede pin controls which lamp, regardless of which relay it uses.
-const byte PIN_OUT_SR_LAMP_GI[8]                      =  { 0, 0, 0, 0, 0, 0, 0, 0 };  // 0..7 = lamps, top left to bottom right
-const byte PIN_OUT_SR_LAMP_BUMPER[7]                  =  { 0, 0, 0, 0, 0, 0, 0 };  // 0..6 = 'S', 'C', 'R', 'E', 'A', 'M', 'O'
-const byte PIN_OUT_SR_LAMP_SPECIAL                    =  0;  // Special When Lit above gobble hole
-const byte PIN_OUT_SR_LAMP_GOBBLE[5]                  =  { 0, 0, 0, 0, 0 };  // 0..4 = '1'..'5' BALLS IN HOLE
-const byte PIN_OUT_SR_LAMP_HAT_LEFT_TOP               =  0;  // 100K When Lit
-const byte PIN_OUT_SR_LAMP_HAT_LEFT_BOTTOM            =  0;  // 100K When Lit
-const byte PIN_OUT_SR_LAMP_HAT_RIGHT_TOP              =  0;  // 100K When Lit
-const byte PIN_OUT_SR_LAMP_HAT_RIGHT_BOTTOM           =  0;  // 100K When Lit
-const byte PIN_OUT_SR_LAMP_KICKOUT_LEFT               =  0;  // Spots number when lit
-const byte PIN_OUT_SR_LAMP_KICKOUT_RIGHT              =  0;  // Spots number when lit
-const byte PIN_OUT_SR_LAMP_WHITE[9]                   = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };  // AWARDED lamps 0..8 = '1'..'9'
-const byte PIN_OUT_SR_LAMP_RED[9]                     = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };  // SPOTTED lamps 0..8 = '1'..'9'
-const byte PIN_OUT_SR_LAMP_DRAIN_LEFT                 =  0;  // Spots number when lit
-const byte PIN_OUT_SR_LAMP_DRAIN_RIGHT                =  0;  // Spots number when lit
-
-// *************************************
-// ***** SLAVE ARDUINO PIN NUMBERS *****
-// *************************************
-
 // SLAVE ARDUINO HEAD DIRECT INPUT PIN NUMBERS (Switches):
 const byte PIN_IN_SWITCH_CREDIT_EMPTY       =  2;  // Input : Credit wheel "Empty" switch.  Pulled LOW when empty.
 const byte PIN_IN_SWITCH_CREDIT_FULL        =  3;  // Input : Credit wheel "Full" switch.  Pulled LOW when full.
-
-// SLAVE ARDUINO HEAD SHIFT REGISTER OUTPUT PIN NUMBERS (Lamps):
-//   Note Master Centipede output pins are connected to RELAYS that switch 6.3vac to the actual lamps.
-//   However, we just need to know which Centipede pin controls which lamp, regardless of which relay it uses.
-//   Centipede shift register pin-to-lamp mapping (not the relay numbers, but the lamps that they illuminate):
-//   Pin  0 =  20K   | Pin  8 = 600K  | Pin 16 = 900K  | Pin 24 = unused
-//   Pin  1 =  40K   | Pin  9 = 400K  | Pin 17 = 2M    | Pin 25 = G.I.  
-//   Pin  2 =  60K   | Pin 10 = 200K  | Pin 18 = 4M    | Pin 26 = 9M    
-//   Pin  3 =  80K   | Pin 11 =  90K  | Pin 19 = 6M    | Pin 27 = 7M    
-//   Pin  4 = 100K   | Pin 12 =  70K  | Pin 20 = 8M    | Pin 28 = 5M    
-//   Pin  5 = 300K   | Pin 13 =  50K  | Pin 21 = TILT  | Pin 29 = 3M    
-//   Pin  6 = 500K   | Pin 14 =  30K  | Pin 22 = unused| Pin 30 = 1M    
-//   Pin  7 = 700K   | Pin 15 =  10K  | Pin 23 = unused| Pin 31 = 800K  
-const byte PIN_OUT_SR_LAMP_10K[9]  = { 15,  0, 14,  1, 13,  2, 12,  3, 11 };  // 10K, 20K, ..., 90K
-const byte PIN_OUT_SR_LAMP_100K[9] = {  4, 10,  5,  9,  6,  8,  7, 31, 16 };  // 100K, 200K, ..., 900K
-const byte PIN_OUT_SR_LAMP_1M[9]   = { 30, 17, 29, 18, 28, 19, 27, 20, 26 };  // 1M, 2M, ..., 9M
-const byte PIN_OUT_SR_LAMP_HEAD_GI = 25;
-const byte PIN_OUT_SR_LAMP_TILT    = 21;
 
 #endif

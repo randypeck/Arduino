@@ -11,7 +11,7 @@
 #include "Arduino.h"
 #include <Wire.h>
 
-extern uint8_t CSDataArray[2];
+extern byte CSDataArray[2];
 
 class Pinball_Centipede
 {

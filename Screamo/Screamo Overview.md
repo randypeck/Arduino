@@ -154,6 +154,7 @@ Screamo runs in several modes. Unless otherwise noted, Master is mode authority 
 - Theme:
   - Roller-coaster / amusement park flavor.
   - Voice, music, and special effects.
+  - Musical theme can be toggled between Callipe/Circus music and Surf Rock (settable in Diagnostics Settings).
 - Features (planned / current):
   - Up to four players.
   - Special game modes and scoring goals (details to be specified separately).
@@ -200,22 +201,45 @@ Screamo runs in several modes. Unless otherwise noted, Master is mode authority 
 
 ### 4.6 Diagnostic Mode (Overview)
 
-- Diagnostic mode is not a normal gameplay mode but is entered from Game Over:
-  - When player presses the SELECT button during Game Over, Master enters Diagnostic mode.
+- Diagnostic mode is not a normal gameplay mode but is entered from Attract mode:
+  - When player presses the SELECT button during MODE_ATTRACT, Master enters Diagnostic mode.
 - There are four diagnostic buttons:
   - BACK (exit / go up a level).
-  - LEFT and RIGHT (navigate).
-  - SELECT (enter or trigger).
+  - LEFT and RIGHT (navigate or -/+ depending on context).
+  - SELECT (enter/toggle/trigger depending on context).
 - The Master LCD shows:
-  - Top row: Name of the current test or option.
-  - Next rows: Data and instructions.
+  - ROW 1: "*** DIAGNOSITICS ***"
+  - ROW 2: Name of the current test or option.
+  - ROW 3: Name of device or setting being tested/adjusted.
+  - ROW 4: Current value or instructions.
 - Diagnostic sub-tests:
-  - Lamp tests.
-  - Switch tests.
-  - Coil and motor tests.
-  - Audio tests.
-- While in play:
-  - During an active game (any mode), LEFT and RIGHT buttons are also used to send volume commands to the Tsunami WAV Trigger.
+  - "SETTINGS": LEFT and RIGHT buttons move through adjustable settings; must press SELECT to change a setting.
+    - VOL MAIN  : Tsunami main volume adjustment (-40dB to 0dB)       i.e. "VOL MAIN: -10dB"
+    - SFX OFFSET: Tsunami SFX volume offset (-40dB to +40dB)          i.e. "SFX OFFSET: -10dB"
+    - MUS OFFSET: Tsunami Music volume offset (-40dB to +40dB)        i.e. "MUS OFFSET: -10dB"
+    - COM OFFSET: Tsunami Commentary volume offset (-40dB to +40dB)   i.e. "COM OFFSET: -10dB"
+    - THEME: Calliope vs Surf Rock.                                   i.e. "THEME: CIRCUS" or "THEME: SURF"
+    - LAST SONG: Last played Tsunami track on exit.                   i.e. "LAST SONG: 005"
+    - BALL SAVE: Set ball save duration in Enhanced mode (in seconds) i.e. "BALL SAVE: 10s"
+    - HURRY UP 1-6: Set hurry-up times for Enhanced mode (in seconds) i.e. "HURRY UP 1: 15s"
+    - ORIG REPLAY 1-5: Set replay scores for Original mode (0.999)    i.e. "ORIG REPLAY 3: 350"
+    - ENH REPLAY 1-5: Set replay scores for Enhanced mode (0.999)     i.e. "ENH REPLAY 2: 500")
+  - "LAMP TESTS": LEFT and RIGHT buttons move to previous/next lamp, which is turned on, and previous selection turned back off.  SELECT button does nothing.
+    - Must include both playfield and head lamps.
+    - i.e. "08 BUMPER S"
+  - "SWITCH TESTS": LEFT and RIGHT buttons move to previous/next switch.  SELECT button does nothing.
+    - Must include both playfield and head switches.
+    - i.e. "37 FLIPPER L" (LCD line 3)
+    - When selected switch is closed, LCD line 4 shows "CLOSED" and speaker beeps continuously until released; when open, shows "OPEN".
+    - Current switch state shown as "OPEN" or "CLOSED".
+  - "COIL/MOTOR TESTS": LEFT and RIGHT buttons move to previous/next coil or motor.  SELECT button fires the coil briefly or runs the motor as long as the SELECT button is being pressed.
+    - Must include all coils and motors in cabinet and head.
+    - i.e. "03 POP BUMPER"
+  - "AUDIO TESTS": LEFT and RIGHT buttons move to previous/next Tsunami 4-digit audio track.  SELECT button plays the selected track once.
+    - Audio track descriptions are limited to 15 chars (to fit on LCD) and stored in a lookup table in PROGMEM.
+    - i.e. "0005 LETS PLAY SCRMO"
+
+- While in play: During an active game (ENHANCED mode), LEFT and RIGHT buttons are also used to change the Main Volume (and not the offset volumes).  The new value is applied immediately and stored at EEPROM_ADDR_TSUNAMI_GAIN for persistence across power cycles.
 
 ---
 
@@ -424,16 +448,15 @@ All controlled by Master via MOSFETs and PWM:
 
 ### 8.2 Cabinet Switches (via Centipede Inputs)
 
-Except flipper buttons, which are direct inputs:
+All cabinet switch closures, including the flipper buttons, now enter Master through Centipede #2 (switch indexes 64–127). Master still gives the flipper buttons a faster-processing path in software, but no longer wires them directly to Arduino GPIO pins.
 
-- 'PIN_IN_BUTTON_FLIPPER_LEFT' - Master Arduino digital input pin for Left flipper button.
-- 'PIN_IN_BUTTON_FLIPPER_RIGHT' - Master Arduino digital input pin for Right flipper button.
-- 'SWITCH_IDX_START_BUTTON' - Start button (supports single / double / triple tap detection).
-- 'SWITCH_IDX_DIAG_1' to 'SWITCH_IDX_DIAG_4' - Diagnostic buttons (BACK, LEFT, RIGHT, SELECT).
-- 'SWITCH_IDX_KNOCK_OFF' - Hidden knock-off switch; can add credits or other special functions.
-- 'SWITCH_IDX_COIN_MECH' - Coin mech switch; adds credits.
-- 'SWITCH_IDX_BALL_PRESENT' - New switch detecting ball at bottom of lift.
-- 'SWITCH_IDX_TILT_BOB' - Tilt bob switch.
+- 'SWITCH_IDX_START_BUTTON' – Start button (supports single / double / triple tap detection).
+- 'SWITCH_IDX_DIAG_1' to 'SWITCH_IDX_DIAG_4' – Diagnostic buttons (BACK, LEFT, RIGHT, SELECT).
+- 'SWITCH_IDX_KNOCK_OFF' – Hidden knock-off switch; can add credits or force reset.
+- 'SWITCH_IDX_COIN_MECH' – Coin mech switch; adds credits.
+- 'SWITCH_IDX_BALL_PRESENT' – New switch detecting ball at bottom of lift.
+- 'SWITCH_IDX_TILT_BOB' – Tilt bob switch.
+- 'SWITCH_IDX_FLIPPER_LEFT_BUTTON' / 'SWITCH_IDX_FLIPPER_RIGHT_BUTTON' – Flipper buttons routed through Centipede #2 (indices 37/38 in 'switchParm[]')
 
 ### 8.3 Playfield Switches (via Centipede Inputs)
 
@@ -582,6 +605,7 @@ Lamp groups and examples:
 
 ### 10.3 Enhanced Mode
 
+- Enhanced Mode is generally a superset of Original/Impulse mode; i.e. existing Original/Impulse features are preserved where possible, but new features are added.
 - Up to 4 players.
 - Uses:
   - Tsunami audio (voice, music, sound effects).

@@ -41,6 +41,10 @@ class Pinball_Message {
     void sendMAStoSLVCreditStatusQuery();                          // RS485_TYPE_MAS_TO_SLV_CREDIT_STATUS
     void sendSLVtoMASCreditStatus(const bool t_creditsAvailable);  // RS485_TYPE_SLV_TO_MAS_CREDIT_STATUS
     void getSLVtoMASCreditStatus(bool* t_creditsAvailable);        // RS485_TYPE_SLV_TO_MAS_CREDIT_STATUS
+    void sendMAStoSLVCreditFullQuery();                            // RS485_TYPE_MAS_TO_SLV_CREDIT_FULL_STATUS
+    void sendSLVtoMASCreditFullStatus(const bool t_creditsFull);   // RS485_TYPE_SLV_TO_MAS_CREDIT_FULL_STATUS
+    void getSLVtoMASCreditFullStatus(bool* t_creditsFull);         // RS485_TYPE_SLV_TO_MAS_CREDIT_FULL_STATUS
+
     void sendMAStoSLVCreditInc(const byte t_numCreditsToAdd);      // RS485_TYPE_MAS_TO_SLV_CREDIT_INC
     void getMAStoSLVCreditInc(byte* t_numCreditsToAdd);            // RS485_TYPE_MAS_TO_SLV_CREDIT_INC
     void sendMAStoSLVCreditDec();                                  // RS485_TYPE_MAS_TO_SLV_CREDIT_DEC

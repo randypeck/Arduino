@@ -9,7 +9,7 @@
 // **************************************************************
 void Tsunami::start(void) {
 
-uint8_t txbuf[5];
+byte txbuf[5];
 
 	versionRcvd = false;
 	sysinfoRcvd = false;
@@ -53,9 +53,9 @@ int i;
 void Tsunami::update(void) {
 
 int i;
-uint8_t dat;
-uint8_t voice;
-uint16_t track;
+byte dat;
+byte voice;
+unsigned int track;
 
 	rxMsgReady = false;
 	while (TsunamiSerial.available() > 0) {
@@ -155,10 +155,10 @@ uint16_t track;
 }
 
 // **************************************************************
-bool Tsunami::isTrackPlaying(int trk) {
+bool Tsunami::isTrackPlaying(unsigned int trk) {
 
-int i;
-bool fResult = false;
+  int i;
+  bool fResult = false;
 
 	update();
 	for (i = 0; i < MAX_NUM_VOICES; i++) {
@@ -171,9 +171,9 @@ bool fResult = false;
 // **************************************************************
 void Tsunami::masterGain(int out, int gain) {
 
-uint8_t txbuf[8];
+byte txbuf[8];
 unsigned short vol;
-uint8_t o;
+byte o;
 
 	o = out & 0x07;
 	txbuf[0] = SOM1;
@@ -182,8 +182,8 @@ uint8_t o;
 	txbuf[3] = CMD_MASTER_VOLUME;
 	txbuf[4] = o;
 	vol = (unsigned short)gain;
-	txbuf[5] = (uint8_t)vol;
-	txbuf[6] = (uint8_t)(vol >> 8);
+	txbuf[5] = (byte)vol;
+	txbuf[6] = (byte)(vol >> 8);
 	txbuf[7] = EOM;
 	TsunamiSerial.write(txbuf, 8);
 }
@@ -191,7 +191,7 @@ uint8_t o;
 // **************************************************************
 void Tsunami::inputGain(int gain) {
 
-	uint8_t txbuf[8];
+	byte txbuf[8];
 	unsigned short vol;
 
 	txbuf[0] = SOM1;
@@ -199,8 +199,8 @@ void Tsunami::inputGain(int gain) {
 	txbuf[2] = 0x07;
 	txbuf[3] = CMD_INPUT_GAIN;
 	vol = (unsigned short)gain;
-	txbuf[4] = (uint8_t)vol;
-	txbuf[5] = (uint8_t)(vol >> 8);
+	txbuf[4] = (byte)vol;
+	txbuf[5] = (byte)(vol >> 8);
 	txbuf[6] = EOM;
 	TsunamiSerial.write(txbuf, 7);
 }
@@ -208,7 +208,7 @@ void Tsunami::inputGain(int gain) {
 // **************************************************************
 void Tsunami::setReporting(bool enable) {
 
-uint8_t txbuf[6];
+byte txbuf[6];
 
 	txbuf[0] = SOM1;
 	txbuf[1] = SOM2;
@@ -305,19 +305,19 @@ void Tsunami::trackLoop(int trk, bool enable) {
 // **************************************************************
 void Tsunami::trackControl(int trk, int code, int out, int flags) {
   
-uint8_t txbuf[10];
-uint8_t o;
+byte txbuf[10];
+byte o;
 
 	o = out & 0x07;
 	txbuf[0] = SOM1;
 	txbuf[1] = SOM2;
 	txbuf[2] = 0x0a;
 	txbuf[3] = CMD_TRACK_CONTROL;
-	txbuf[4] = (uint8_t)code;
-	txbuf[5] = (uint8_t)trk;
-	txbuf[6] = (uint8_t)(trk >> 8);
-	txbuf[7] = (uint8_t)o;
-	txbuf[8] = (uint8_t)flags;
+	txbuf[4] = (byte)code;
+	txbuf[5] = (byte)trk;
+	txbuf[6] = (byte)(trk >> 8);
+	txbuf[7] = (byte)o;
+	txbuf[8] = (byte)flags;
 	txbuf[9] = EOM;
 	TsunamiSerial.write(txbuf, 10);
 }
@@ -325,7 +325,7 @@ uint8_t o;
 // **************************************************************
 void Tsunami::stopAllTracks(void) {
 
-uint8_t txbuf[5];
+byte txbuf[5];
 
 	txbuf[0] = SOM1;
 	txbuf[1] = SOM2;
@@ -338,7 +338,7 @@ uint8_t txbuf[5];
 // **************************************************************
 void Tsunami::resumeAllInSync(void) {
 
-uint8_t txbuf[5];
+byte txbuf[5];
 
 	txbuf[0] = SOM1;
 	txbuf[1] = SOM2;
@@ -351,18 +351,18 @@ uint8_t txbuf[5];
 // **************************************************************
 void Tsunami::trackGain(int trk, int gain) {
 
-uint8_t txbuf[9];
+byte txbuf[9];
 unsigned short vol;
 
 	txbuf[0] = SOM1;
 	txbuf[1] = SOM2;
 	txbuf[2] = 0x09;
 	txbuf[3] = CMD_TRACK_VOLUME;
-	txbuf[4] = (uint8_t)trk;
-	txbuf[5] = (uint8_t)(trk >> 8);
+	txbuf[4] = (byte)trk;
+	txbuf[5] = (byte)(trk >> 8);
 	vol = (unsigned short)gain;
-	txbuf[6] = (uint8_t)vol;
-	txbuf[7] = (uint8_t)(vol >> 8);
+	txbuf[6] = (byte)vol;
+	txbuf[7] = (byte)(vol >> 8);
 	txbuf[8] = EOM;
 	TsunamiSerial.write(txbuf, 9);
 }
@@ -370,20 +370,20 @@ unsigned short vol;
 // **************************************************************
 void Tsunami::trackFade(int trk, int gain, int time, bool stopFlag) {
 
-uint8_t txbuf[12];
+byte txbuf[12];
 unsigned short vol;
 
 	txbuf[0] = SOM1;
 	txbuf[1] = SOM2;
 	txbuf[2] = 0x0c;
 	txbuf[3] = CMD_TRACK_FADE;
-	txbuf[4] = (uint8_t)trk;
-	txbuf[5] = (uint8_t)(trk >> 8);
+	txbuf[4] = (byte)trk;
+	txbuf[5] = (byte)(trk >> 8);
 	vol = (unsigned short)gain;
-	txbuf[6] = (uint8_t)vol;
-	txbuf[7] = (uint8_t)(vol >> 8);
-	txbuf[8] = (uint8_t)time;
-	txbuf[9] = (uint8_t)(time >> 8);
+	txbuf[6] = (byte)vol;
+	txbuf[7] = (byte)(vol >> 8);
+	txbuf[8] = (byte)time;
+	txbuf[9] = (byte)(time >> 8);
 	txbuf[10] = stopFlag;
 	txbuf[11] = EOM;
 	TsunamiSerial.write(txbuf, 12);
@@ -392,19 +392,19 @@ unsigned short vol;
 // **************************************************************
 void Tsunami::samplerateOffset(int out, int offset) {
 
-uint8_t txbuf[8];
+byte txbuf[8];
 unsigned short off;
-uint8_t o;
+byte o;
 
 	o = out & 0x07;
 	txbuf[0] = SOM1;
 	txbuf[1] = SOM2;
 	txbuf[2] = 0x08;
 	txbuf[3] = CMD_SAMPLERATE_OFFSET;
-	txbuf[4] = (uint8_t)o;
+	txbuf[4] = (byte)o;
 	off = (unsigned short)offset;
-	txbuf[5] = (uint8_t)off;
-	txbuf[6] = (uint8_t)(off >> 8);
+	txbuf[5] = (byte)off;
+	txbuf[6] = (byte)(off >> 8);
 	txbuf[7] = EOM;
 	TsunamiSerial.write(txbuf, 8);
 }
@@ -412,13 +412,13 @@ uint8_t o;
 // **************************************************************
 void Tsunami::setTriggerBank(int bank) {
 
-	uint8_t txbuf[6];
+	byte txbuf[6];
 
 	txbuf[0] = SOM1;
 	txbuf[1] = SOM2;
 	txbuf[2] = 0x06;
 	txbuf[3] = CMD_SET_TRIGGER_BANK;
-	txbuf[4] = (uint8_t)bank;
+	txbuf[4] = (byte)bank;
 	txbuf[5] = EOM;
 	TsunamiSerial.write(txbuf, 6);
 }
@@ -426,13 +426,13 @@ void Tsunami::setTriggerBank(int bank) {
 // **************************************************************
 void Tsunami::setInputMix(int mix) {
 
-	uint8_t txbuf[6];
+	byte txbuf[6];
 
 	txbuf[0] = SOM1;
 	txbuf[1] = SOM2;
 	txbuf[2] = 0x06;
 	txbuf[3] = CMD_SET_INPUT_MIX;
-	txbuf[4] = (uint8_t)mix;
+	txbuf[4] = (byte)mix;
 	txbuf[5] = EOM;
 	TsunamiSerial.write(txbuf, 6);
 }
@@ -440,13 +440,13 @@ void Tsunami::setInputMix(int mix) {
 // **************************************************************
 void Tsunami::setMidiBank(int bank) {
 
-	uint8_t txbuf[6];
+	byte txbuf[6];
 
 	txbuf[0] = SOM1;
 	txbuf[1] = SOM2;
 	txbuf[2] = 0x06;
 	txbuf[3] = CMD_SET_MIDI_BANK;
-	txbuf[4] = (uint8_t)bank;
+	txbuf[4] = (byte)bank;
 	txbuf[5] = EOM;
 	TsunamiSerial.write(txbuf, 6);
 }

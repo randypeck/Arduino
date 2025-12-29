@@ -7,7 +7,7 @@
 
 #include <Pinball_Centipede.h>
 
-uint8_t CSDataArray[2] = {0};
+byte CSDataArray[2] = {0};
 
 #define CSAddress 0b0100000  // 0b010000 = 0x20, which is the address of the first (of 4 or 8) chips on the Centipede
 

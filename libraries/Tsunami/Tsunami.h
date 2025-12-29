@@ -73,6 +73,7 @@
 #define IMIX_OUT3 0x04
 #define IMIX_OUT4 0x08
 
+#include <Arduino.h>
 #include <HardwareSerial.h>
 #define TsunamiSerial Serial3
 #define __TSUNAMI_SERIAL_ASSIGNED__
@@ -88,7 +89,7 @@ public:
  void setReporting(bool enable);
  bool getVersion(char *pDst, int len);
  int getNumTracks(void);
- bool isTrackPlaying(int trk);
+ bool isTrackPlaying(unsigned int trk);
  void masterGain(int out, int gain);
  void inputGain(int gain);
  void stopAllTracks(void);
@@ -110,13 +111,13 @@ public:
 private:
  void trackControl(int trk, int code, int out, int flags);
 
- uint16_t voiceTable[MAX_NUM_VOICES];
- uint8_t rxMessage[MAX_MESSAGE_LEN];
+ unsigned int voiceTable[MAX_NUM_VOICES];
+ byte rxMessage[MAX_MESSAGE_LEN];
  char version[VERSION_STRING_LEN];
- uint16_t numTracks;
- uint8_t numVoices;
- uint8_t rxCount;
- uint8_t rxLen;
+ unsigned int numTracks;
+ byte numVoices;
+ byte rxCount;
+ byte rxLen;
  bool rxMsgReady;
  bool versionRcvd;
  bool sysinfoRcvd;

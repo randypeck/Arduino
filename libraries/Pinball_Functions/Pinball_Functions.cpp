@@ -9,10 +9,6 @@ extern Pinball_Centipede* pShiftRegister;
 
 void initScreamoMasterArduinoPins() {
 
-  // Set pin modes for all DIRECT INPUT pins
-  pinMode(PIN_IN_BUTTON_FLIPPER_LEFT, INPUT_PULLUP);           // Direct input into Arduino for faster response
-  pinMode(PIN_IN_BUTTON_FLIPPER_RIGHT, INPUT_PULLUP);          // Direct input into Arduino for faster response
-
   // Set pin modes for all OUTPUT pins
   digitalWrite(PIN_OUT_LED, LOW);                              // Built-in LED LOW=off
   pinMode(PIN_OUT_LED, OUTPUT);
@@ -82,8 +78,8 @@ void chirp() {  // BE AWARE THAT THIS TAKES 10ms TO PERFORM!  SO WHEN USED, IT M
 // versions because 1. Visual Studio gave me a warning that they may not be supported (they are, but I'd rather not have the
 // warning), and 2. because I prefer using functions versus "invisible" macros.
 // Here are the macro definitions found in arduino.h:
-// #define lowByte(w) ((uint8_t) ((w) & 0xff))
-// #define highByte(w) ((uint8_t) ((w) >> 8))
+// #define lowByte(w) ((byte) ((w) & 0xff))
+// #define highByte(w) ((byte) ((w) >> 8))
 // #define bitRead(value, bit) (((value) >> (bit)) & 0x01)
 // #define bitSet(value, bit) ((value) |= (1UL << (bit)))
 // #define bitClear(value, bit) ((value) &= ~(1UL << (bit)))

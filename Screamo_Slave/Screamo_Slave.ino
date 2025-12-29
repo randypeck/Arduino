@@ -1,4 +1,5 @@
-// Screamo_Slave.INO Rev: 12/12/25
+// Screamo_Slave.INO Rev: 12/28/25
+// 12/28/25: Updated SCORE_INC_10K and SCORE_RESET to remain silent (no bells or 10K unit) in Enhanced mode.
 
 #include <Arduino.h>
 #include <Pinball_Consts.h>
@@ -9,7 +10,7 @@
 const int EEPROM_ADDR_SCORE = 0;  // Address to store 16-bit score (uses addr 0 and 1)
 
 const byte THIS_MODULE = ARDUINO_SLV;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "SLAVE 12/12/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "SLAVE 12/28/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which effectively makes it a global.
 // No need to pass lcdString[] to any functions that use it!
 
@@ -100,6 +101,24 @@ DeviceParmStruct deviceParm[NUM_DEVS] = {
   { 11,  40,  0, 0, 0, 0 },  // LAMP SCORE (timeOn=0 -> no pulse timing).
   { 12,  40,  0, 0, 0, 0 }   // LAMP HEAD G.I./TILT (timeOn=0).
 };
+
+// SLAVE ARDUINO HEAD SHIFT REGISTER OUTPUT PIN NUMBERS (Lamps):
+//   Note Master Centipede output pins are connected to RELAYS that switch 6.3vac to the actual lamps.
+//   However, we just need to know which Centipede pin controls which lamp, regardless of which relay it uses.
+//   Centipede shift register pin-to-lamp mapping (not the relay numbers, but the lamps that they illuminate):
+//   Pin  0 =  20K   | Pin  8 = 600K  | Pin 16 = 900K  | Pin 24 = unused
+//   Pin  1 =  40K   | Pin  9 = 400K  | Pin 17 = 2M    | Pin 25 = G.I.  
+//   Pin  2 =  60K   | Pin 10 = 200K  | Pin 18 = 4M    | Pin 26 = 9M    
+//   Pin  3 =  80K   | Pin 11 =  90K  | Pin 19 = 6M    | Pin 27 = 7M    
+//   Pin  4 = 100K   | Pin 12 =  70K  | Pin 20 = 8M    | Pin 28 = 5M    
+//   Pin  5 = 300K   | Pin 13 =  50K  | Pin 21 = TILT  | Pin 29 = 3M    
+//   Pin  6 = 500K   | Pin 14 =  30K  | Pin 22 = unused| Pin 30 = 1M    
+//   Pin  7 = 700K   | Pin 15 =  10K  | Pin 23 = unused| Pin 31 = 800K  
+const byte PIN_OUT_SR_LAMP_10K[9]  = { 15,  0, 14,  1, 13,  2, 12,  3, 11 };  // 10K, 20K, ..., 90K
+const byte PIN_OUT_SR_LAMP_100K[9] = { 4, 10,  5,  9,  6,  8,  7, 31, 16 };  // 100K, 200K, ..., 900K
+const byte PIN_OUT_SR_LAMP_1M[9]   = { 30, 17, 29, 18, 28, 19, 27, 20, 26 };  // 1M, 2M, ..., 9M
+const byte PIN_OUT_SR_LAMP_HEAD_GI = 25;
+const byte PIN_OUT_SR_LAMP_TILT    = 21;
 
 // *** MISC CONSTANTS AND GLOBALS ***
 byte modeCurrent                 = MODE_UNDEFINED;
@@ -326,8 +345,7 @@ void loop() {
       flashShowOn = !flashShowOn;
       if (flashShowOn) {
         setScoreLampsDirect(flashScoreValue);
-      }
-      else {
+      } else {
         setScoreLampsDirect(0);
       }
     }
@@ -362,6 +380,14 @@ void processMessage(byte t_msgType) {
     sprintf(lcdString, "Credits %s", hasCredits() ? "avail" : "zero"); pLCD2004->println(lcdString);
     pMessage->sendSLVtoMASCreditStatus(hasCredits());
   } break;
+
+  case RS485_TYPE_MAS_TO_SLV_CREDIT_FULL_QUERY: {
+    // Master is asking if the credit unit full switch is closed
+    bool creditsFull = (digitalRead(PIN_IN_SWITCH_CREDIT_FULL) == LOW);  // Pin pulled LOW when full
+    sprintf(lcdString, "Credit full %s", creditsFull ? "YES" : "NO "); pLCD2004->println(lcdString);
+    pMessage->sendSLVtoMASCreditFullStatus(creditsFull);
+    break;
+  }
 
   case RS485_TYPE_MAS_TO_SLV_CREDIT_INC: {
     // Queue credit additions; coil driver enforces safe timing and switch limits.
@@ -438,8 +464,7 @@ void processMessage(byte t_msgType) {
       // Shortcut: behave like a no-op score change; stop flash and resume previous display.
       stopFlashScore();
       // No score change; displayScore() is already invoked in stopFlashScore().
-    }
-    else {
+    } else {
       startFlashScore(flashScore);
     }
   } break;
@@ -456,8 +481,7 @@ void processMessage(byte t_msgType) {
     // If we hit a boundary as a result of enqueue, remove same-direction queued work.
     if (targetScore == 999) {
       pruneQueuedAtBoundary(1);
-    }
-    else if (targetScore == 0) {
+    } else if (targetScore == 0) {
       pruneQueuedAtBoundary(-1);
     }
   } break;
@@ -611,13 +635,11 @@ void updateDeviceTimers() {
       if (ct == 0) {
         if (deviceParm[i].powerHold > 0) {
           analogWrite(deviceParm[i].pinNum, deviceParm[i].powerHold); // Hold steady
-        }
-        else {
+        } else {
           analogWrite(deviceParm[i].pinNum, LOW);
           if (deviceParm[i].timeOn > 0) {
             ct = COIL_REST_TICKS; // Enter rest
-          }
-          else {
+          } else {
             ct = 0;
           }
         }
@@ -632,8 +654,7 @@ void updateDeviceTimers() {
           deviceParm[i].queueCount--;
           analogWrite(deviceParm[i].pinNum, deviceParm[i].powerInitial);
           deviceParm[i].countdown = deviceParm[i].timeOn;
-        }
-        else if (i == DEV_IDX_CREDIT_UP) {
+        } else if (i == DEV_IDX_CREDIT_UP) {
           // Credit add blocked (already full) -> discard queued adds and notify Master.
           sprintf(lcdString, "Credit FULL %u", deviceParm[i].queueCount); pLCD2004->println(lcdString);
           deviceParm[i].queueCount = 0;
@@ -649,8 +670,7 @@ void updateDeviceTimers() {
         deviceParm[i].queueCount--;
         analogWrite(deviceParm[i].pinNum, deviceParm[i].powerInitial);
         deviceParm[i].countdown = deviceParm[i].timeOn;
-      }
-      else if (i == DEV_IDX_CREDIT_UP) {
+      } else if (i == DEV_IDX_CREDIT_UP) {
         // Discard queued adds if wheel is full while idle.
         sprintf(lcdString, "Credit FULL %u", deviceParm[i].queueCount); pLCD2004->println(lcdString);
         deviceParm[i].queueCount = 0;
@@ -805,8 +825,7 @@ void startBatchFromCmd(int cmd) {
     // Treat as hundreds (100K units)
     batchHundredsRemaining = magnitude / 10;
     batchTensRemaining     = 0;
-  }
-  else {
+  } else {
     // Treat as tens (10K units)
     batchHundredsRemaining = 0;
     batchTensRemaining     = magnitude;
@@ -828,13 +847,11 @@ void startBatchFromCmd(int cmd) {
     motorPersistent      = true;   // preserve motor pacing even if remainder == 1
     lastCommandWasMotor  = true;
     motorCycleStartMs    = millis();
-  }
-  else if (batchHundredsRemaining == 1) {
+  } else if (batchHundredsRemaining == 1) {
     // Single 100K -> single non-motor pulse
     lastCommandWasMotor  = false;
     motorCycleStartMs    = millis();
-  }
-  else if (batchTensRemaining > 1) {
+  } else if (batchTensRemaining > 1) {
     // Multi-ten batch -> motor-paced tens cycles
     scoreAdjustMotorMode = true;
     scoreCycleHundred    = false;
@@ -842,8 +859,7 @@ void startBatchFromCmd(int cmd) {
     motorPersistent      = true;   // preserve motor pacing even if remainder == 1
     lastCommandWasMotor  = true;
     motorCycleStartMs    = millis();
-  }
-  else {
+  } else {
     // Single 10K -> single non-motor pulse
     lastCommandWasMotor  = false;
     motorCycleStartMs    = millis();
@@ -887,9 +903,11 @@ void processScoreAdjust() {
     if (batchHundredsRemaining == 1) {
       int nextScore = constrain(currentScore + scoreCmdActiveDirection * 10, 0, 999);
       if (nextScore != currentScore) {
-        activateDevice(DEV_IDX_10K_UP);
-        activateDevice(DEV_IDX_10K_BELL);
-        activateDevice(DEV_IDX_100K_BELL);
+        if (noiseMakersEnabled()) {
+          activateDevice(DEV_IDX_10K_UP);
+          activateDevice(DEV_IDX_10K_BELL);
+          activateDevice(DEV_IDX_100K_BELL);
+        }
         currentScore = nextScore;
         displayScore(currentScore);
       }
@@ -900,10 +918,12 @@ void processScoreAdjust() {
     else if (batchHundredsRemaining == 0 && batchTensRemaining == 1) {
       int nextScore = constrain(currentScore + scoreCmdActiveDirection, 0, 999);
       if (nextScore != currentScore) {
-        activateDevice(DEV_IDX_10K_UP);
-        activateDevice(DEV_IDX_10K_BELL);
-        if ((nextScore % 10) == 0 || (scoreCmdActiveDirection < 0 && (currentScore % 10) == 0)) {
-          activateDevice(DEV_IDX_100K_BELL);
+        if (noiseMakersEnabled()) {
+          activateDevice(DEV_IDX_10K_UP);
+          activateDevice(DEV_IDX_10K_BELL);
+          if ((nextScore % 10) == 0 || (scoreCmdActiveDirection < 0 && (currentScore % 10) == 0)) {
+            activateDevice(DEV_IDX_100K_BELL);
+          }
         }
         currentScore = nextScore;
         displayScore(currentScore);
@@ -919,14 +939,12 @@ void processScoreAdjust() {
       scoreCycleHundred    = true;
       cycleActionLimit     = (byte)min(batchHundredsRemaining, 5);
       scoreAdjustCycleIndex = 0;
-    }
-    else if (batchHundredsRemaining == 0 && batchTensRemaining > 1) {
+    } else if (batchHundredsRemaining == 0 && batchTensRemaining > 1) {
       scoreAdjustMotorMode = true;
       scoreCycleHundred    = false;
       cycleActionLimit     = (byte)min(batchTensRemaining, 5);
       scoreAdjustCycleIndex = 0;
-    }
-    else if (batchHundredsRemaining == 0 && batchTensRemaining == 0) {
+    } else if (batchHundredsRemaining == 0 && batchTensRemaining == 0) {
       scoreAdjustFinishIfDone();
     }
     return;
@@ -938,12 +956,14 @@ void processScoreAdjust() {
       int stepUnits = scoreCycleHundred ? 10 : 1;
       int nextScore = constrain(currentScore + scoreCmdActiveDirection * stepUnits, 0, 999);
       if (nextScore != currentScore) {
-        activateDevice(DEV_IDX_10K_UP);
-        activateDevice(DEV_IDX_10K_BELL);
-        if (scoreCycleHundred ||
-          (nextScore % 10) == 0 ||
-          (scoreCmdActiveDirection < 0 && (currentScore % 10) == 0)) {
-          activateDevice(DEV_IDX_100K_BELL);
+        if (noiseMakersEnabled()) {
+          activateDevice(DEV_IDX_10K_UP);
+          activateDevice(DEV_IDX_10K_BELL);
+          if (scoreCycleHundred ||
+            (nextScore % 10) == 0 ||
+            (scoreCmdActiveDirection < 0 && (currentScore % 10) == 0)) {
+            activateDevice(DEV_IDX_100K_BELL);
+          }
         }
         currentScore = nextScore;
         displayScore(currentScore);
@@ -958,8 +978,7 @@ void processScoreAdjust() {
         // Saturation occurred mid-batch (boundary reached).
         if (scoreCycleHundred) {
           batchHundredsRemaining = 0;
-        }
-        else {
+        } else {
           batchTensRemaining = 0;
         }
       }
@@ -977,14 +996,12 @@ void processScoreAdjust() {
           scoreAdjustMotorMode = false;
           lastCommandWasMotor  = false;
           motorCycleStartMs    = millis();
-        }
-        else {
+        } else {
           scoreAdjustMotorMode = true;
           lastCommandWasMotor  = true;
           motorCycleStartMs    = millis();
         }
-      }
-      else {
+      } else {
         if (batchTensRemaining > 0) {
           scoreCycleHundred = false;
           cycleActionLimit = (byte)min(batchTensRemaining, (int)5);
@@ -992,37 +1009,31 @@ void processScoreAdjust() {
             scoreAdjustMotorMode = false;
             lastCommandWasMotor  = false;
             motorCycleStartMs    = millis();
-          }
-          else if (batchTensRemaining > 0) {
+          } else if (batchTensRemaining > 0) {
             scoreAdjustMotorMode = true;
             lastCommandWasMotor  = true;
             motorCycleStartMs    = millis();
-          }
-          else {
+          } else {
             scoreAdjustMotorMode = false;
             lastCommandWasMotor  = motorPersistent;
           }
-        }
-        else {
+        } else {
           scoreAdjustMotorMode = false;
         }
       }
-    }
-    else { // Tens cycles
+    } else { // Tens cycles
       if (batchTensRemaining > 0) {
         cycleActionLimit = (byte)min(batchTensRemaining, (int)5);
         if (batchTensRemaining == 1 && !motorPersistent) {
           scoreAdjustMotorMode = false;
           lastCommandWasMotor  = false;
           motorCycleStartMs    = millis();
-        }
-        else {
+        } else {
           scoreAdjustMotorMode = true;
           lastCommandWasMotor  = true;
           motorCycleStartMs    = millis();
         }
-      }
-      else {
+      } else {
         scoreAdjustMotorMode = false;
       }
     }
@@ -1184,12 +1195,14 @@ void processScoreReset() {
       int millions = (currentScore / 100) % 10;
       int newTensK = (tensK + 1) % 10;
       // At rollover (9->0) play the 100K bell but suppress lamp promotion of hundredK/millions during reset.
-      if (newTensK == 0) {
-        activateDevice(DEV_IDX_100K_BELL);
+      if (noiseMakersEnabled()) {
+        if (newTensK == 0) {
+          activateDevice(DEV_IDX_100K_BELL);
+        }
+        // Fire 10K unit and bell each advance.
+        activateDevice(DEV_IDX_10K_UP);
+        activateDevice(DEV_IDX_10K_BELL);
       }
-      // Fire 10K unit and bell each advance.
-      activateDevice(DEV_IDX_10K_UP);
-      activateDevice(DEV_IDX_10K_BELL);
 
       currentScore = millions * 100 + hundredK * 10 + newTensK;
       displayScore(currentScore);
@@ -1201,12 +1214,10 @@ void processScoreReset() {
       if (reset10KStepsRemaining == 0) {
         // All tensK increments done.
         resetPhase = SCORE_RESET_PHASE_DONE;
-      }
-      else if (!secondCycle) {
+      } else if (!secondCycle) {
         // Need a second tens cycle (total steps >5)
         resetPhase = SCORE_RESET_PHASE_10K_CYCLE2;
-      }
-      else {
+      } else {
         // Should not need more than two cycles (sanity fallback)
         resetPhase = SCORE_RESET_PHASE_DONE;
       }
@@ -1309,8 +1320,7 @@ void startFlashScore(int t_score) {
   if (t_score <= 0) {
     if (flashActive) {
       stopFlashScore();        // restores current display
-    }
-    else {
+    } else {
       displayScore(currentScore);
     }
     return;
@@ -1360,8 +1370,8 @@ void saveScoreToEEPROM(int t_score) {
   if (t_score > 999) {
     t_score = 999;
   }
-  uint16_t newVal = (uint16_t)t_score;
-  uint16_t oldVal = 0;
+  unsigned int newVal = (unsigned int)t_score;
+  unsigned int oldVal = 0;
   EEPROM.get(EEPROM_ADDR_SCORE, oldVal);
   if (oldVal != newVal) {
     EEPROM.put(EEPROM_ADDR_SCORE, newVal);
@@ -1370,9 +1380,9 @@ void saveScoreToEEPROM(int t_score) {
 }
 
 int recallScoreFromEEPROM() {
-  // Reads last persisted score (uint16_t) from EEPROM and clamps to 0..999.
+  // Reads last persisted score (unsigned int) from EEPROM and clamps to 0..999.
   // Returns 0 if stored value > 999 (treat as invalid).
-  uint16_t s = 0;
+  unsigned int s = 0;
   EEPROM.get(EEPROM_ADDR_SCORE, s);
   if (s > 999) {
     s = 0;
@@ -1387,6 +1397,19 @@ int recallScoreFromEEPROM() {
 bool hasCredits() {
   // Credit Empty switch LOW indicates at least one credit remains.
   return digitalRead(PIN_IN_SWITCH_CREDIT_EMPTY) == LOW;
+}
+
+bool noiseMakersEnabled() {
+  // Return true when mechanical score sounds (10K unit, bells in head; Selection, reset units in cabinet)
+  // should be used for *automatic* scoring behavior.
+  // Original and Impulse modes => authentic EM behavior: noise makers ON.
+  // Enhanced mode              => silent scoring: bells/10K unit suppressed for auto scoring.
+  // NOTE: This does NOT affect explicit "fire bell/10K unit" commands coming from Master.
+  //       Those commands still directly activate the devices regardless of mode.
+  if (modeCurrent == MODE_ENHANCED) {
+    return false;
+  }
+  return true;
 }
 
 void handleError(byte t_errorCode) {

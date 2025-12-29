@@ -214,6 +214,34 @@ void Pinball_Message::getSLVtoMASCreditStatus(bool* t_creditsAvailable) {
   return;
 }
 
+void Pinball_Message::sendMAStoSLVCreditFullQuery() {
+  int recLen = 5;
+  m_RS485Buf[RS485_LEN_OFFSET] = recLen;
+  m_RS485Buf[RS485_FROM_OFFSET] = ARDUINO_MAS;
+  m_RS485Buf[RS485_TO_OFFSET] = ARDUINO_SLV;
+  m_RS485Buf[RS485_TYPE_OFFSET] = RS485_TYPE_MAS_TO_SLV_CREDIT_FULL_QUERY;
+  m_RS485Buf[recLen - 1] = calcChecksumCRC8(m_RS485Buf, recLen - 1);
+  sendMessageRS485(m_RS485Buf);
+  return;
+}
+
+void Pinball_Message::sendSLVtoMASCreditFullStatus(const bool t_creditsFull) {
+  int recLen = 6;
+  m_RS485Buf[RS485_LEN_OFFSET] = recLen;
+  m_RS485Buf[RS485_FROM_OFFSET] = ARDUINO_SLV;
+  m_RS485Buf[RS485_TO_OFFSET] = ARDUINO_MAS;
+  m_RS485Buf[RS485_TYPE_OFFSET] = RS485_TYPE_SLV_TO_MAS_CREDIT_FULL_STATUS;
+  m_RS485Buf[RS845_PAYLOAD_OFFSET] = t_creditsFull ? 1 : 0;
+  m_RS485Buf[recLen - 1] = calcChecksumCRC8(m_RS485Buf, recLen - 1);
+  sendMessageRS485(m_RS485Buf);
+  return;
+}
+
+void Pinball_Message::getSLVtoMASCreditFullStatus(bool* t_creditsFull) {
+  *t_creditsFull = (m_RS485Buf[RS845_PAYLOAD_OFFSET] != 0);
+  return;
+}
+
 void Pinball_Message::sendMAStoSLVCreditInc(const byte t_numCreditsToAdd) {
   int recLen = 6;
   m_RS485Buf[RS485_LEN_OFFSET] = recLen;

@@ -38,8 +38,8 @@ void chirp();
 // I built functions based on the Arduino.h macros, because: 1. Visual Studio gave me a warning that they may not be supported
 // (they are, but I'd rather not have the warning), and 2. because I prefer using functions versus "invisible" macros.
 // Here are the macro definitions found in arduino.h:
-// #define lowByte(w) ((uint8_t) ((w) & 0xff))
-// #define highByte(w) ((uint8_t) ((w) >> 8))
+// #define lowByte(w) ((unsigned int) ((w) & 0xff))
+// #define highByte(w) ((unsigned int) ((w) >> 8))
 // #define bitRead(value, bit) (((value) >> (bit)) & 0x01)
 // #define bitSet(value, bit) ((value) |= (1UL << (bit)))
 // #define bitClear(value, bit) ((value) &= ~(1UL << (bit)))
