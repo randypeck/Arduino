@@ -54,7 +54,7 @@ const byte RS845_PAYLOAD_OFFSET =  4;        // fifth byte of message is the fir
 // Note also that the LAST byte of every message is a CRC8 checksum of all bytes except the last.
 
 // Here is a list of all RS485 message types (the 1-byte TYPE field):
-const byte RS485_TYPE_NO_MESSAGE                    =  0;  // No message
+const byte RS485_TYPE_NO_MESSAGE                    =  0;  // No message.
 const byte RS485_TYPE_MAS_TO_SLV_MODE               =  1;  // Mode change.
 const byte RS485_TYPE_MAS_TO_SLV_COMMAND_RESET      =  2;  // Software reset.
 // MODE_ORIGINAL/ENHANCED/IMPULSE starts new game; tilt off, GI on, revert score, but does not deduct a credit.

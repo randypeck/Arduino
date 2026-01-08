@@ -1,5 +1,5 @@
 # 1954 Williams Screamo - Modernized Control System Overview
-Rev: 12-05-25.
+Rev: 01-02-26.
 
 ## 1. Introduction
 
@@ -201,14 +201,16 @@ Screamo runs in several modes. Unless otherwise noted, Master is mode authority 
 
 ### 4.6 Diagnostic Mode (Overview)
 
-- Diagnostic mode is not a normal gameplay mode but is entered from Attract mode:
+- Diagnostic mode is not a normal game play mode but is entered from Attract mode:
   - When player presses the SELECT button during MODE_ATTRACT, Master enters Diagnostic mode.
+  - NOTE: String descriptions of all lamps, switches, coils, motors, and audio tracks are stored in PROGMEM to conserve RAM.
+- During an active ENHANCED mode game, LEFT and RIGHT buttons are also used to change the Main Volume (and not the offset volumes).  The new value is applied immediately and stored at EEPROM_ADDR_TSUNAMI_GAIN for persistence across power cycles.
 - There are four diagnostic buttons:
   - BACK (exit / go up a level).
   - LEFT and RIGHT (navigate or -/+ depending on context).
   - SELECT (enter/toggle/trigger depending on context).
 - The Master LCD shows:
-  - ROW 1: "*** DIAGNOSITICS ***"
+  - ROW 1: "*** DIAGNOSTICS ***"
   - ROW 2: Name of the current test or option.
   - ROW 3: Name of device or setting being tested/adjusted.
   - ROW 4: Current value or instructions.
@@ -216,30 +218,34 @@ Screamo runs in several modes. Unless otherwise noted, Master is mode authority 
   - "SETTINGS": LEFT and RIGHT buttons move through adjustable settings; must press SELECT to change a setting.
     - VOL MAIN  : Tsunami main volume adjustment (-40dB to 0dB)       i.e. "VOL MAIN: -10dB"
     - SFX OFFSET: Tsunami SFX volume offset (-40dB to +40dB)          i.e. "SFX OFFSET: -10dB"
-    - MUS OFFSET: Tsunami Music volume offset (-40dB to +40dB)        i.e. "MUS OFFSET: -10dB"
-    - COM OFFSET: Tsunami Commentary volume offset (-40dB to +40dB)   i.e. "COM OFFSET: -10dB"
+    - MUSIC OFFSET: Tsunami Music volume offset (-40dB to +40dB)      i.e. "MUSIC OFFSET: -10dB"
+    - VOICE OFFSET: Tsunami Commentary volume offset (-40dB to +40dB) i.e. "VOICE OFFSET: -10dB"
     - THEME: Calliope vs Surf Rock.                                   i.e. "THEME: CIRCUS" or "THEME: SURF"
-    - LAST SONG: Last played Tsunami track on exit.                   i.e. "LAST SONG: 005"
+    - LAST SONG: Most recent music track started on Tsunami.          i.e. "LAST SONG: 0005"
     - BALL SAVE: Set ball save duration in Enhanced mode (in seconds) i.e. "BALL SAVE: 10s"
     - HURRY UP 1-6: Set hurry-up times for Enhanced mode (in seconds) i.e. "HURRY UP 1: 15s"
     - ORIG REPLAY 1-5: Set replay scores for Original mode (0.999)    i.e. "ORIG REPLAY 3: 350"
-    - ENH REPLAY 1-5: Set replay scores for Enhanced mode (0.999)     i.e. "ENH REPLAY 2: 500")
+    - ENH REPLAY 1-5: Set replay scores for Enhanced mode (0.999)     i.e. "ENH REPLAY 2: 500"
   - "LAMP TESTS": LEFT and RIGHT buttons move to previous/next lamp, which is turned on, and previous selection turned back off.  SELECT button does nothing.
     - Must include both playfield and head lamps.
     - i.e. "08 BUMPER S"
+    - BACK button turns off current lamp and returns to main DIAGNOSTICS menu.
   - "SWITCH TESTS": LEFT and RIGHT buttons move to previous/next switch.  SELECT button does nothing.
     - Must include both playfield and head switches.
     - i.e. "37 FLIPPER L" (LCD line 3)
-    - When selected switch is closed, LCD line 4 shows "CLOSED" and speaker beeps continuously until released; when open, shows "OPEN".
+    - When selected switch is closed, LCD line 4 shows "CLOSED" and speaker plays continuous tone until released; when open, shows "OPEN".
     - Current switch state shown as "OPEN" or "CLOSED".
+    - BACK button returns to main DIAGNOSTICS menu.
   - "COIL/MOTOR TESTS": LEFT and RIGHT buttons move to previous/next coil or motor.  SELECT button fires the coil briefly or runs the motor as long as the SELECT button is being pressed.
     - Must include all coils and motors in cabinet and head.
     - i.e. "03 POP BUMPER"
-  - "AUDIO TESTS": LEFT and RIGHT buttons move to previous/next Tsunami 4-digit audio track.  SELECT button plays the selected track once.
-    - Audio track descriptions are limited to 15 chars (to fit on LCD) and stored in a lookup table in PROGMEM.
+    - BACK button returns to main DIAGNOSTICS menu.
+  - "AUDIO TESTS": LEFT and RIGHT buttons select between MUSIC, SFX, and VOICE; SELECT button selects one of these three options.
+    - SELECT button plays the selected track once.
+    - Audio track descriptions are limited to 15 chars (to fit on LCD w/ 4-digit track num) and stored in a lookup table in PROGMEM.
     - i.e. "0005 LETS PLAY SCRMO"
-
-- While in play: During an active game (ENHANCED mode), LEFT and RIGHT buttons are also used to change the Main Volume (and not the offset volumes).  The new value is applied immediately and stored at EEPROM_ADDR_TSUNAMI_GAIN for persistence across power cycles.
+    - BACK button cancels any track playing, and returns to AUDIO TESTS menu.
+    - BACK button returns to the main DIAGNOSTICS menu.
 
 ---
 
@@ -350,7 +356,7 @@ Planned or needed functionality:
 ### 6.3 Hardware Reset Behavior
 
 - At any time during gameplay, game over, or diagnostics:
-  - Pressing and holding the KNOCKOFF button for more than 1 second should trigger a hardware reset of both Master and Slave Arduinos:
+  - Pressing and holding the KNOCKOFF button for more than 1 second should trigger a software reset of both Master and Slave Arduinos:
     - Master sends a reset command to Slave via RS-485.
     - Master and Slave both immediately release all coils, stop all motors, turn off all lamps.
     - Perform software reset.  Result will be as if power had been recycled.

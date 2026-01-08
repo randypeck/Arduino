@@ -1,6 +1,7 @@
-// Screamo_Master.INO Rev: 12/29/25
+// Screamo_Master.INO Rev: 01/02/26
 // 11/12/25: Moved Right Kickout from pin 13 to pin 44 to avoid MOSFET firing twice on power-up.  Don't use MOSFET on pin 13.
 // 12/28/25: Changed flipper inputs from direct Arduino inputs to Centipede inputs.
+// 01/07/26: Added "5 Balls in Trough" switch to Centipede inputs. All switches tested and working.
 
 #include <Arduino.h>
 #include <Pinball_Consts.h>
@@ -10,16 +11,29 @@
 #include <EEPROM.h>               // For saving and recalling score, volume, etc., to persist between power cycles.
 #include <Pinball_Descriptions.h> 
 
+const byte THIS_MODULE = ARDUINO_MAS;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
+char lcdString[LCD_WIDTH + 1] = "MASTER 01/02/26";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+// The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which makes it a global.
+// And no need to pass lcdString[] to any functions that use it!
+
+// ******************************
+// ***** EEPROM ADDRESS MAP *****
+// ******************************
+
+const int EEPROM_ADDR_SCORE                =  0;  // 2-byte unsigned addr to store 0..999 score (uses addr 0 and 1)
+
 const int EEPROM_ADDR_TSUNAMI_GAIN         = 10;  // 1-byte signed: Overall gain (-40 to 0; default -10dB.)
 const int EEPROM_ADDR_TSUNAMI_GAIN_VOICE   = 11;  // 1-byte signed: Voice gain OFFSET +/- from overall. Default 0dB.
 const int EEPROM_ADDR_TSUNAMI_GAIN_SFX     = 12;  // 1-byte signed: SFX gain OFFSET +/- from overall. Default 0dB.
 const int EEPROM_ADDR_TSUNAMI_GAIN_MUSIC   = 13;  // 1-byte signed: Music gain OFFSET +/- from overall. Default 0dB.
+const int EEPROM_ADDR_TSUNAMI_DUCK_DB      = 14;  // 1-byte signed: Ducking gain OFFSET +/- from SFX and Music when Voice playing. Default -20dB.
 
 const int EEPROM_ADDR_THEME                = 20;  // 1-byte unsigned: Callipe or Surf Rock theme (music) selection
 const int EEPROM_ADDR_LAST_SONG_PLAYED     = 21;  // 1-byte unsigned: Last song number played (to avoid repeats)
+
 const int EEPROM_ADDR_BALL_SAVE_TIME       = 30;  // 1-byte unsigned: Ball save time (0=off, 1-30 seconds) from first point scored that ball.
 const int EEPROM_ADDR_HURRY_UP_1_TIME      = 31;  // 1-byte unsigned: Mode 1 time limit (in seconds)
-const int EEPROM_ADDR_HURRY_UP_2_TIME      = 32;  // 1-byte unsigned
+const int EEPROM_ADDR_HURRY_UP_2_TIME      = 32;  // 1-byte unsigned: i.e. "Roll-A-Ball" mode etc.
 const int EEPROM_ADDR_HURRY_UP_3_TIME      = 33;  // 1-byte unsigned
 const int EEPROM_ADDR_HURRY_UP_4_TIME      = 34;  // 1-byte unsigned
 const int EEPROM_ADDR_HURRY_UP_5_TIME      = 35;  // 1-byte unsigned
@@ -35,11 +49,6 @@ const int EEPROM_ADDR_ENHANCED_REPLAY_2    = 52;  // 2-byte unsigned
 const int EEPROM_ADDR_ENHANCED_REPLAY_3    = 54;  // 2-byte unsigned
 const int EEPROM_ADDR_ENHANCED_REPLAY_4    = 56;  // 2-byte unsigned
 const int EEPROM_ADDR_ENHANCED_REPLAY_5    = 58;  // 2-byte unsigned
-
-const byte THIS_MODULE = ARDUINO_MAS;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "MASTER 12/29/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
-// The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which effectively makes it a global.
-// No need to pass lcdString[] to any functions that use it!
 
 // **************************************
 // ***** LAMP STRUCTS AND CONSTANTS *****
@@ -197,43 +206,43 @@ const byte SWITCH_IDX_DIAG_3               =  3;  // Plus/Right
 const byte SWITCH_IDX_DIAG_4               =  4;  // Select
 const byte SWITCH_IDX_KNOCK_OFF            =  5;  // Quick press adds a credit; long press forces software reset (Slave and Master.)
 const byte SWITCH_IDX_COIN_MECH            =  6;
-const byte SWITCH_IDX_BALL_PRESENT         =  7;  // (New) Ball present at bottom of ball lift
-const byte SWITCH_IDX_TILT_BOB             =  8;
+const byte SWITCH_IDX_5_BALLS_IN_TROUGH    =  7;  // Detects if there are 5 balls present in the trough
+const byte SWITCH_IDX_BALL_IN_LIFT         =  8;  // (New) Ball present at bottom of ball lift
+const byte SWITCH_IDX_TILT_BOB             =  9;
 // PLAYFIELD SWITCHES:
-const byte SWITCH_IDX_BUMPER_S             =  9;  // 'S' bumper switch
-const byte SWITCH_IDX_BUMPER_C             = 10;  // 'C' bumper switch
-const byte SWITCH_IDX_BUMPER_R             = 11;  // 'R' bumper switch
-const byte SWITCH_IDX_BUMPER_E             = 12;  // 'E' bumper switch
-const byte SWITCH_IDX_BUMPER_A             = 13;  // 'A' bumper switch
-const byte SWITCH_IDX_BUMPER_M             = 14;  // 'M' bumper switch
-const byte SWITCH_IDX_BUMPER_O             = 15;  // 'O' bumper switch
-const byte SWITCH_IDX_KICKOUT_LEFT         = 16;
-const byte SWITCH_IDX_KICKOUT_RIGHT        = 17;
-const byte SWITCH_IDX_SLINGSHOT_LEFT       = 18;  // Two switches wired in parallel
-const byte SWITCH_IDX_SLINGSHOT_RIGHT      = 19;  // Two switches wired in parallel
-const byte SWITCH_IDX_HAT_LEFT_TOP         = 20;
-const byte SWITCH_IDX_HAT_LEFT_BOTTOM      = 21;
-const byte SWITCH_IDX_HAT_RIGHT_TOP        = 22;
-const byte SWITCH_IDX_HAT_RIGHT_BOTTOM     = 23;
+const byte SWITCH_IDX_BUMPER_S             = 10;  // 'S' bumper switch
+const byte SWITCH_IDX_BUMPER_C             = 11;  // 'C' bumper switch
+const byte SWITCH_IDX_BUMPER_R             = 12;  // 'R' bumper switch
+const byte SWITCH_IDX_BUMPER_E             = 13;  // 'E' bumper switch
+const byte SWITCH_IDX_BUMPER_A             = 14;  // 'A' bumper switch
+const byte SWITCH_IDX_BUMPER_M             = 15;  // 'M' bumper switch
+const byte SWITCH_IDX_BUMPER_O             = 16;  // 'O' bumper switch
+const byte SWITCH_IDX_KICKOUT_LEFT         = 17;
+const byte SWITCH_IDX_KICKOUT_RIGHT        = 18;
+const byte SWITCH_IDX_SLINGSHOT_LEFT       = 19;  // Two switches wired in parallel
+const byte SWITCH_IDX_SLINGSHOT_RIGHT      = 20;  // Two switches wired in parallel
+const byte SWITCH_IDX_HAT_LEFT_TOP         = 21;
+const byte SWITCH_IDX_HAT_LEFT_BOTTOM      = 22;
+const byte SWITCH_IDX_HAT_RIGHT_TOP        = 23;
+const byte SWITCH_IDX_HAT_RIGHT_BOTTOM     = 24;
 // Note that there is no "LEFT_SIDE_TARGET_1" on the playfield; starting left side targets at 2 so they match right-side target numbers.
-const byte SWITCH_IDX_LEFT_SIDE_TARGET_2   = 24;  // Long narrow side target near top left
-const byte SWITCH_IDX_LEFT_SIDE_TARGET_3   = 25;  // Upper switch above left kickout
-const byte SWITCH_IDX_LEFT_SIDE_TARGET_4   = 26;  // Lower switch above left kickout
-const byte SWITCH_IDX_LEFT_SIDE_TARGET_5   = 27;  // Below left kickout
-const byte SWITCH_IDX_RIGHT_SIDE_TARGET_1  = 28;  // Top right just below ball gate
-const byte SWITCH_IDX_RIGHT_SIDE_TARGET_2  = 29;  // Long narrow side target near top right
-const byte SWITCH_IDX_RIGHT_SIDE_TARGET_3  = 30;  // Upper switch above right kickout
-const byte SWITCH_IDX_RIGHT_SIDE_TARGET_4  = 31;  // Lower switch above right kickout
-const byte SWITCH_IDX_RIGHT_SIDE_TARGET_5  = 32;  // Below right kickout
-const byte SWITCH_IDX_GOBBLE               = 33;
-const byte SWITCH_IDX_DRAIN_LEFT           = 34;  // Left drain switch index in Centipede input shift register
-const byte SWITCH_IDX_DRAIN_CENTER         = 35;  // Center drain switch index in Centipede input shift register
-const byte SWITCH_IDX_DRAIN_RIGHT          = 36;  // Right drain switch index in Centipede input shift register
+const byte SWITCH_IDX_LEFT_SIDE_TARGET_2   = 25;  // Long narrow side target near top left
+const byte SWITCH_IDX_LEFT_SIDE_TARGET_3   = 26;  // Upper switch above left kickout
+const byte SWITCH_IDX_LEFT_SIDE_TARGET_4   = 27;  // Lower switch above left kickout
+const byte SWITCH_IDX_LEFT_SIDE_TARGET_5   = 28;  // Below left kickout
+const byte SWITCH_IDX_RIGHT_SIDE_TARGET_1  = 29;  // Top right just below ball gate
+const byte SWITCH_IDX_RIGHT_SIDE_TARGET_2  = 30;  // Long narrow side target near top right
+const byte SWITCH_IDX_RIGHT_SIDE_TARGET_3  = 31;  // Upper switch above right kickout
+const byte SWITCH_IDX_RIGHT_SIDE_TARGET_4  = 32;  // Lower switch above right kickout
+const byte SWITCH_IDX_RIGHT_SIDE_TARGET_5  = 33;  // Below right kickout
+const byte SWITCH_IDX_GOBBLE               = 34;
+const byte SWITCH_IDX_DRAIN_LEFT           = 35;  // Left drain switch index in Centipede input shift register
+const byte SWITCH_IDX_DRAIN_CENTER         = 36;  // Center drain switch index in Centipede input shift register
+const byte SWITCH_IDX_DRAIN_RIGHT          = 37;  // Right drain switch index in Centipede input shift register
 // Flipper buttons now arrive via Centipede inputs (entries at the end of switchParm[]).
-const byte SWITCH_IDX_FLIPPER_LEFT_BUTTON  = 37;
-const byte SWITCH_IDX_FLIPPER_RIGHT_BUTTON = 38;
-
-const byte NUM_SWITCHES = 39;
+const byte SWITCH_IDX_FLIPPER_LEFT_BUTTON  = 38;
+const byte SWITCH_IDX_FLIPPER_RIGHT_BUTTON = 39;
+const byte NUM_SWITCHES = 40;
 
 // Store Centipede #2 pin numbers (64..127) for switches (original pins + 64)
 SwitchParmStruct switchParm[NUM_SWITCHES] = {
@@ -244,38 +253,39 @@ SwitchParmStruct switchParm[NUM_SWITCHES] = {
   { 116,  0,  0 },  // SWITCH_IDX_DIAG_4               =  4  (52 + 64)
   { 127,  0,  0 },  // SWITCH_IDX_KNOCK_OFF            =  5  (63 + 64)
   { 117,  0,  0 },  // SWITCH_IDX_COIN_MECH            =  6  (53 + 64)
-  { 114,  0,  0 },  // SWITCH_IDX_BALL_PRESENT         =  7  (50 + 64)
-  { 119,  0,  0 },  // SWITCH_IDX_TILT_BOB             =  8  (55 + 64)
-  { 104,  0,  0 },  // SWITCH_IDX_BUMPER_S             =  9  (40 + 64)
-  {  90,  0,  0 },  // SWITCH_IDX_BUMPER_C             = 10  (26 + 64)
-  {  87,  0,  0 },  // SWITCH_IDX_BUMPER_R             = 11  (23 + 64)
-  {  80,  0,  0 },  // SWITCH_IDX_BUMPER_E             = 12  (16 + 64)
-  { 110,  0,  0 },  // SWITCH_IDX_BUMPER_A             = 13  (46 + 64)
-  { 107,  0,  0 },  // SWITCH_IDX_BUMPER_M             = 14  (43 + 64)
-  {  88,  0,  0 },  // SWITCH_IDX_BUMPER_O             = 15  (24 + 64)
-  { 105,  0,  0 },  // SWITCH_IDX_KICKOUT_LEFT         = 16  (41 + 64)
-  {  83,  0,  0 },  // SWITCH_IDX_KICKOUT_RIGHT        = 17  (19 + 64)
-  {  84,  0,  0 },  // SWITCH_IDX_SLINGSHOT_LEFT       = 18  (20 + 64)
-  {  98,  0,  0 },  // SWITCH_IDX_SLINGSHOT_RIGHT      = 19  (34 + 64)
-  {  99,  0,  0 },  // SWITCH_IDX_HAT_LEFT_TOP         = 20  (35 + 64)
-  {  81,  0,  0 },  // SWITCH_IDX_HAT_LEFT_BOTTOM      = 21  (17 + 64)
-  {  89,  0,  0 },  // SWITCH_IDX_HAT_RIGHT_TOP        = 22  (25 + 64)
-  {  92,  0,  0 },  // SWITCH_IDX_HAT_RIGHT_BOTTOM     = 23  (28 + 64)
-  {  86,  0,  0 },  // SWITCH_IDX_LEFT_SIDE_TARGET_2   = 24  (22 + 64)
-  { 108,  0,  0 },  // SWITCH_IDX_LEFT_SIDE_TARGET_3   = 25  (44 + 64)
-  {  85,  0,  0 },  // SWITCH_IDX_LEFT_SIDE_TARGET_4   = 26  (21 + 64)
-  {  96,  0,  0 },  // SWITCH_IDX_LEFT_SIDE_TARGET_5   = 27  (32 + 64)
-  {  82,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_1  = 28  (18 + 64)
-  { 111,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_2  = 29  (47 + 64)
-  {  94,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_3  = 30  (30 + 64)
-  {  95,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_4  = 31  (31 + 64)
-  {  91,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_5  = 32  (27 + 64)
-  { 109,  0,  0 },  // SWITCH_IDX_GOBBLE               = 33  (45 + 64)
-  { 106,  0,  0 },  // SWITCH_IDX_DRAIN_LEFT           = 34  (42 + 64)
-  {  97,  0,  0 },  // SWITCH_IDX_DRAIN_CENTER         = 35  (33 + 64)
-  {  93,  0,  0 },  // SWITCH_IDX_DRAIN_RIGHT          = 36  (29 + 64)
-  { 125,  0,  0 },  // SWITCH_IDX_FLIPPER_LEFT_BUTTON  = 37  (61 + 64)
-  { 126,  0,  0 }   // SWITCH_IDX_FLIPPER_RIGHT_BUTTON = 38  (62 + 64)
+  { 126,  0,  0 },  // SWITCH_IDX_5_BALLS_IN_TROUGH    =  7  (62 + 64)
+  { 114,  0,  0 },  // SWITCH_IDX_BALL_IN_LIFT         =  8  (50 + 64)
+  { 119,  0,  0 },  // SWITCH_IDX_TILT_BOB             =  9  (55 + 64)
+  { 104,  0,  0 },  // SWITCH_IDX_BUMPER_S             = 10  (40 + 64)
+  {  90,  0,  0 },  // SWITCH_IDX_BUMPER_C             = 11  (26 + 64)
+  {  87,  0,  0 },  // SWITCH_IDX_BUMPER_R             = 12  (23 + 64)
+  {  80,  0,  0 },  // SWITCH_IDX_BUMPER_E             = 13  (16 + 64)
+  { 110,  0,  0 },  // SWITCH_IDX_BUMPER_A             = 14  (46 + 64)
+  { 107,  0,  0 },  // SWITCH_IDX_BUMPER_M             = 15  (43 + 64)
+  {  88,  0,  0 },  // SWITCH_IDX_BUMPER_O             = 16  (24 + 64)
+  { 105,  0,  0 },  // SWITCH_IDX_KICKOUT_LEFT         = 17  (41 + 64)
+  {  83,  0,  0 },  // SWITCH_IDX_KICKOUT_RIGHT        = 18  (19 + 64)
+  {  84,  0,  0 },  // SWITCH_IDX_SLINGSHOT_LEFT       = 19  (20 + 64)
+  {  98,  0,  0 },  // SWITCH_IDX_SLINGSHOT_RIGHT      = 20  (34 + 64)
+  {  99,  0,  0 },  // SWITCH_IDX_HAT_LEFT_TOP         = 21  (35 + 64)
+  {  81,  0,  0 },  // SWITCH_IDX_HAT_LEFT_BOTTOM      = 22  (17 + 64)
+  {  89,  0,  0 },  // SWITCH_IDX_HAT_RIGHT_TOP        = 23  (25 + 64)
+  {  92,  0,  0 },  // SWITCH_IDX_HAT_RIGHT_BOTTOM     = 24  (28 + 64)
+  {  86,  0,  0 },  // SWITCH_IDX_LEFT_SIDE_TARGET_2   = 25  (22 + 64)
+  { 108,  0,  0 },  // SWITCH_IDX_LEFT_SIDE_TARGET_3   = 26  (44 + 64)
+  {  85,  0,  0 },  // SWITCH_IDX_LEFT_SIDE_TARGET_4   = 27  (21 + 64)
+  {  96,  0,  0 },  // SWITCH_IDX_LEFT_SIDE_TARGET_5   = 28  (32 + 64)
+  {  82,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_1  = 29  (18 + 64)
+  { 111,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_2  = 30  (47 + 64)
+  {  94,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_3  = 31  (30 + 64)
+  {  95,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_4  = 32  (31 + 64)
+  {  91,  0,  0 },  // SWITCH_IDX_RIGHT_SIDE_TARGET_5  = 33  (27 + 64)
+  { 109,  0,  0 },  // SWITCH_IDX_GOBBLE               = 34  (45 + 64)
+  { 106,  0,  0 },  // SWITCH_IDX_DRAIN_LEFT           = 35  (42 + 64)
+  {  97,  0,  0 },  // SWITCH_IDX_DRAIN_CENTER         = 36  (33 + 64)
+  {  93,  0,  0 },  // SWITCH_IDX_DRAIN_RIGHT          = 37  (29 + 64)
+  { 125,  0,  0 },  // SWITCH_IDX_FLIPPER_LEFT_BUTTON  = 38  (60 + 64)
+  { 124,  0,  0 }   // SWITCH_IDX_FLIPPER_RIGHT_BUTTON = 39  (61 + 64)
 };
 
 // ************************************************
@@ -340,7 +350,7 @@ DeviceParmStruct deviceParm[NUM_DEVS] = {
   { 25, 255,  0,   0, 0, 0 }   // MOTOR_SCORE         = 13, A/C SSR; on/off only; NOT PWM.
 };
 
-const byte MOTOR_SHAKER_POWER_MIN =  70;  // Minimum power to start shaker motor
+const byte MOTOR_SHAKER_POWER_MIN =  70;  // Minimum power needed to start shaker motor; less will stall and overheat
 const byte MOTOR_SHAKER_POWER_MAX = 140;  // Maximum power before hats trigger
 
 
@@ -348,17 +358,45 @@ const byte MOTOR_SHAKER_POWER_MAX = 140;  // Maximum power before hats trigger
 // ***** AUDIO TRACK METADATA *****
 // ********************************
 
+// Separate structs for MUSIC, SFX, and VOICE tracks due to different parameters needed.
 
+struct AudioVoiceTrackDef {
+  unsigned int trackNum;     // Tsunami file number (0001..4095)
+  byte  eventId;             // VOICE_EVENT_* (what is this used for?)
+  byte  priority;            // VOICE_PRIORITY_HIGH/MED/LOW
+  byte  lengthTenths;        // Track length in 0.1s (for ducking)
+  byte  minPlayers;          // 0 = any, else 1..4
+  byte  maxPlayers;          // 0 = any
+  byte  requiredPlayerIndex; // 0 = any, 1..4 = specific player
+  byte  phaseMask;           // Bitfield: game start, ball start, hurry-up, game over, etc.
+  byte  flags;               // AUDIO_FLAG_* (loop, non-interrupt, etc.)
+};
 
+struct AudioSfxTrackDef {
+  unsigned int trackNum;
+  byte  eventId;       // SFX_EVENT_*
+  byte  lengthTenths;  // For optional timing/overlap management
+  byte  flags;         // AUDIO_FLAG_LOOP, etc.
+};
 
-
-
+struct AudioMusicTrackDef {  // This may not even be needed, except for diagnostic purposes.
+  unsigned int trackNum;     // Tsunami track number (0001..4095 on SD card)
+  unsigned int EEPROMStringNum;  // Identifies the string stored in EEPROM that describes this music track
+  byte  themeId;  // MUSIC_THEME_CIRCUS / MUSIC_THEME_SURF
+  byte  role;     // MUSIC_ROLE_MAIN / MUSIC_ROLE_MULTIBALL / MUSIC_ROLE_ATTRACT
+  byte  flags;    // AUDIO_FLAG_LOOP (always set for most music)
+};
 
 
 // Audio categories (use consts instead of enums)
 const byte AUDIO_CAT_VOICE = 0;
 const byte AUDIO_CAT_SFX   = 1;
 const byte AUDIO_CAT_MUSIC = 2;
+
+// Voice priority levels
+const byte VOICE_PRIORITY_HIGH = 3;  // Highest priority i.e. urgent voice such as "Here's another ball; shoot again!"
+const byte VOICE_PRIORITY_MED  = 2;  // Medium priority i.e. important voice such as mode instructions
+const byte VOICE_PRIORITY_LOW  = 1;  // Low priority i.e. non-urgent voice such as "Good luck!"
 
 // Voice subcategories (for random selection within an event type)
 const byte VOICE_SUB_NONE        = 0;
@@ -373,16 +411,10 @@ const byte AUDIO_FLAG_LOOP          = 0x01;  // Track should loop until explicit
 const byte AUDIO_FLAG_NON_INTERRUPT = 0x02;  // Do not start if another same-category track playing
 const byte AUDIO_FLAG_DUCK_OTHERS   = 0x04;  // Future: lower volume on other categories while this plays
 
-struct AudioTrackDef {
-  unsigned int trackNum;     // Tsunami track number (001..nnn on SD card)
-  byte  category;     // AUDIO_CAT_* (Voice / SFX / Music)
-  byte  voiceSubcat;  // VOICE_SUB_*; VOICE_SUB_NONE for SFX/music
-  byte  flags;        // AUDIO_FLAG_* bitmask
-};
 
 // Master list of all Tsunami tracks we care about.
 // NOTE: Track numbers here must match the Tsunami SD card filenames.
-const AudioTrackDef audioTracks[] = {
+const AudioMusicTrackDef audioTracks[] = {
   // trackNum, category,        voiceSubcat,            flags
   {  1,        AUDIO_CAT_VOICE, VOICE_SUB_GAME_START,   0 },               // "Let's ride Screamo"
   {  2,        AUDIO_CAT_VOICE, VOICE_SUB_PLAYER_UP,    0 },               // "Player 2, you're up"
@@ -453,11 +485,12 @@ void markDiagnosticsDisplayDirty(bool forceSuiteReset = false);  // Must forward
 byte diagnosticSuiteIdx  = 0;  // 0..NUM_DIAG_SUITES-1: which top-level suite selected
 byte diagnosticState     = 0;  // 0 = at suite menu, >0 = inside a suite (future use)
 
-const byte NUM_DIAG_SUITES = 4;
+const byte NUM_DIAG_SUITES = 5;
 const char* diagSuiteNames[NUM_DIAG_SUITES] = {
+  "VOLUME",
   "LAMP TESTS",
-  "COIL/MOTOR TESTS",
   "SWITCH TESTS",
+  "COIL/MOTOR TESTS",
   "AUDIO TESTS"
 };
 
@@ -543,6 +576,16 @@ void setup() {
   pLCD2004 = new Pinball_LCD(&Serial1, SERIAL1_SPEED);  // Instantiate the object and assign the global pointer.
   pLCD2004->begin();  // 20-char x 4-line LCD display via Serial 1.
   pLCD2004->println(lcdString);  // Display app version, defined above.
+
+
+
+
+  // Temporary: test switch wiring after hardware changes
+  testSwitchWiring();
+
+
+
+
 
   // *** INITIALIZE TSUNAMI WAV PLAYER OBJECT ***
  // Files must be WAV format, 16-bit PCM, 44.1kHz, Stereo.  Details in Tsunami.h comments.
@@ -676,6 +719,72 @@ void loop() {
 // ********************************************************************************************************************************
 // ******************************************************** DIAGNOSTICS ***********************************************************
 // ********************************************************************************************************************************
+
+// Temporary function to test/verify switch wiring after hardware changes.
+// Call this near the end of setup() to enter an interactive switch test mode.
+// Close each switch on the playfield and verify the displayed index matches expectations.
+void testSwitchWiring() {
+  sprintf(lcdString, "Switch Test Mode");
+  pLCD2004->println(lcdString);
+  sprintf(lcdString, "Close switches...");
+  pLCD2004->println(lcdString);
+  delay(2000);
+
+  byte lastClosedSwitch = 0xFF;  // Track last reported switch to avoid spam
+  unsigned long lastCheckMillis = 0;
+
+  while (true) {
+
+    // Read all Centipede #2 inputs (16 bits at a time)
+    for (int i = 0; i < 4; i++) {
+      switchNewState[i] = pShiftRegister->portRead(4 + i);  // ports 4..7 => Centipede #2 inputs
+    }
+
+    // Scan all switches to find the most recent closure
+    byte closedSwitch = 0xFF;
+    for (byte sw = 0; sw < NUM_SWITCHES; sw++) {
+      if (switchClosed(sw)) {
+        closedSwitch = sw;
+        break;  // Report first closed switch found
+      }
+    }
+
+    // Display if different from last reported
+    if (closedSwitch != lastClosedSwitch) {
+      if (closedSwitch == 0xFF) {
+        sprintf(lcdString, "No switches closed");
+        pLCD2004->println(lcdString);
+        Serial.println(lcdString);
+      } else {
+        // Display switch index and Centipede pin number
+        byte centPin = switchParm[closedSwitch].pinNum;
+        sprintf(lcdString, "SW%02d Pin%03d", closedSwitch, centPin);
+        pLCD2004->println(lcdString);
+        Serial.println(lcdString);
+
+        // Also show name if available
+        if (closedSwitch < NUM_DIAG_SWITCHES) {
+          char swName[18];
+          diagCopyProgmemString(diagSwitchNames, closedSwitch, swName, sizeof(swName));
+          sprintf(lcdString, "%s", swName);
+          pLCD2004->println(lcdString);
+          Serial.println(lcdString);
+        }
+      }
+      lastClosedSwitch = closedSwitch;
+    }
+
+    // Exit test mode with DIAG_4 (Select) button
+    if (switchClosed(SWITCH_IDX_DIAG_4)) {
+      sprintf(lcdString, "Exiting test mode");
+      pLCD2004->println(lcdString);
+      delay(1000);
+      break;
+    }
+
+    delay(10);  // Small delay to prevent tight loop
+  }
+}
 
 // Handles top-level diagnostic button navigation. Returns true when we should exit diagnostics.
 static bool handleDiagnosticsMenuButtons() {
@@ -1170,7 +1279,7 @@ void audioSetCurrentFromIndex(byte t_index, bool t_set) {
   if (t_index >= NUM_AUDIO_TRACKS) {
     return;
   }
-
+/*
   if (!t_set) {
     unsigned int trackNum = audioTracks[t_index].trackNum;
     byte category = audioTracks[t_index].category;
@@ -1195,6 +1304,7 @@ void audioSetCurrentFromIndex(byte t_index, bool t_set) {
   } else if (category == AUDIO_CAT_MUSIC) {
     audioCurrentMusicTrack = trackNum;
   }
+*/
 }
 
 // Core helper: start a specific track by index, using its metadata flags.
@@ -1202,7 +1312,7 @@ void audioPlayTrackByIndex(byte t_index) {
   if (pTsunami == nullptr) {
     return;
   }
-  if (t_index >= NUM_AUDIO_TRACKS) {
+/*  if (t_index >= NUM_AUDIO_TRACKS) {
     return;
   }
 
@@ -1241,6 +1351,7 @@ void audioPlayTrackByIndex(byte t_index) {
   }
 
   audioSetCurrentFromIndex(t_index, true);
+*/
 }
 
 // Stop a track by Tsunami track number (001..nnn).
@@ -1296,7 +1407,7 @@ void audioPlayRandomVoice(byte t_subcat) {
   if (pTsunami == nullptr) {
     return;
   }
-
+/*
   byte indices[NUM_AUDIO_TRACKS];
   byte count = 0;
 
@@ -1314,6 +1425,7 @@ void audioPlayRandomVoice(byte t_subcat) {
   int pick = audioRandomInt(count);
   byte chosenIndex = indices[pick];
   audioPlayTrackByIndex(chosenIndex);
+*/
 }
 
 // Finally, some named wrappers for specific SFX/music use cases:
@@ -1922,7 +2034,7 @@ void runRudimentarySwitchAndLampTests() {
       delay(200);
       pShiftRegister->digitalWrite(lampParm[LAMP_IDX_WHITE_7].pinNum, HIGH);
     }
-    if (switchClosed(SWITCH_IDX_BALL_PRESENT)) {
+    if (switchClosed(SWITCH_IDX_BALL_IN_LIFT)) {
       pShiftRegister->digitalWrite(lampParm[LAMP_IDX_RED_9].pinNum, LOW);
       delay(200);
       pShiftRegister->digitalWrite(lampParm[LAMP_IDX_RED_9].pinNum, HIGH);
