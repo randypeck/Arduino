@@ -1,4 +1,5 @@
-// PINBALL_LCD.CPP Rev: 12/06/20.
+// PINBALL_LCD.CPP Rev: 01/14/26.
+
 #include "Pinball_LCD.h"
 
 Pinball_LCD::Pinball_LCD(HardwareSerial * t_hdwrSerial, long unsigned int t_baud):DigoleSerialDisp(t_hdwrSerial, t_baud) {
@@ -60,6 +61,16 @@ void Pinball_LCD::println(const char t_nextLine[]) {
   DigoleSerialDisp::print(lineD);
   delay(1);
   return;
+}
+
+void Pinball_LCD::clearScreen() {
+  // Clear all four line buffers and the physical display
+  memset(lineA, ' ', LCD_WIDTH); lineA[LCD_WIDTH] = '\0';
+  memset(lineB, ' ', LCD_WIDTH); lineB[LCD_WIDTH] = '\0';
+  memset(lineC, ' ', LCD_WIDTH); lineC[LCD_WIDTH] = '\0';
+  memset(lineD, ' ', LCD_WIDTH); lineD[LCD_WIDTH] = '\0';
+  DigoleSerialDisp::clearScreen();
+  delay(100);  // Required after CLS at 115200 baud
 }
 
 void Pinball_LCD::printRowCol(const byte row, const byte col, const char t_nextLine[]) {

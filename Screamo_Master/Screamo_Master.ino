@@ -1,4 +1,4 @@
-// Screamo_Master.INO Rev: 01/02/26
+// Screamo_Master.INO Rev: 01/14/26
 // 11/12/25: Moved Right Kickout from pin 13 to pin 44 to avoid MOSFET firing twice on power-up.  Don't use MOSFET on pin 13.
 // 12/28/25: Changed flipper inputs from direct Arduino inputs to Centipede inputs.
 // 01/07/26: Added "5 Balls in Trough" switch to Centipede inputs. All switches tested and working.
@@ -12,13 +12,15 @@
 #include <Pinball_Descriptions.h> 
 
 const byte THIS_MODULE = ARDUINO_MAS;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "MASTER 01/02/26";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "MASTER 01/14/26";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which makes it a global.
 // And no need to pass lcdString[] to any functions that use it!
 
 // ******************************
 // ***** EEPROM ADDRESS MAP *****
 // ******************************
+
+// NEED ADDITIONAL for both Circus and Surf last song played
 
 const int EEPROM_ADDR_SCORE                =  0;  // 2-byte unsigned addr to store 0..999 score (uses addr 0 and 1)
 
@@ -29,7 +31,7 @@ const int EEPROM_ADDR_TSUNAMI_GAIN_MUSIC   = 13;  // 1-byte signed: Music gain O
 const int EEPROM_ADDR_TSUNAMI_DUCK_DB      = 14;  // 1-byte signed: Ducking gain OFFSET +/- from SFX and Music when Voice playing. Default -20dB.
 
 const int EEPROM_ADDR_THEME                = 20;  // 1-byte unsigned: Callipe or Surf Rock theme (music) selection
-const int EEPROM_ADDR_LAST_SONG_PLAYED     = 21;  // 1-byte unsigned: Last song number played (to avoid repeats)
+const int EEPROM_ADDR_LAST_SONG_PLAYED     = 21;  // 1-byte unsigned: Last song number played (to avoid repeats) **************************** NEED FOR BOTH CIRCUS AND SURF
 
 const int EEPROM_ADDR_BALL_SAVE_TIME       = 30;  // 1-byte unsigned: Ball save time (0=off, 1-30 seconds) from first point scored that ball.
 const int EEPROM_ADDR_HURRY_UP_1_TIME      = 31;  // 1-byte unsigned: Mode 1 time limit (in seconds)
@@ -346,135 +348,474 @@ DeviceParmStruct deviceParm[NUM_DEVS] = {
   // 230ms is just enough time for ball to get 1/2 way past post and momentum carries it so it won't get pinned by the post.
   // The post springs back fully extended before the next ball hits it, regardless of how many balls are stacked above it.
   { 12,   0,  0,   0, 0, 0 },  // MOTOR_SHAKER        = 11, PWM MOSFET. Range is 70 to 140. Below won't start; above triggers hats.
-  { 26, 200,  4,   0, 0, 0 },  // KNOCKER             = 12, Non-PWM MOSFET; on/off only.
+  { 26, 255,  5,   0, 0, 0 },  // KNOCKER             = 12, Non-PWM MOSFET; on/off only.
   { 25, 255,  0,   0, 0, 0 }   // MOTOR_SCORE         = 13, A/C SSR; on/off only; NOT PWM.
 };
 
 const byte MOTOR_SHAKER_POWER_MIN =  70;  // Minimum power needed to start shaker motor; less will stall and overheat
 const byte MOTOR_SHAKER_POWER_MAX = 140;  // Maximum power before hats trigger
 
+// ******************************************
+// ***** AUDIO TRACK STRUCTS AND CONSTS *****
+// ******************************************
 
-// ********************************
-// ***** AUDIO TRACK METADATA *****
-// ********************************
+// *** STRUCTURE DEFINITIONS ***
 
-// Separate structs for MUSIC, SFX, and VOICE tracks due to different parameters needed.
-
-struct AudioVoiceTrackDef {
-  unsigned int trackNum;     // Tsunami file number (0001..4095)
-  byte  eventId;             // VOICE_EVENT_* (what is this used for?)
-  byte  priority;            // VOICE_PRIORITY_HIGH/MED/LOW
-  byte  lengthTenths;        // Track length in 0.1s (for ducking)
-  byte  minPlayers;          // 0 = any, else 1..4
-  byte  maxPlayers;          // 0 = any
-  byte  requiredPlayerIndex; // 0 = any, 1..4 = specific player
-  byte  phaseMask;           // Bitfield: game start, ball start, hurry-up, game over, etc.
-  byte  flags;               // AUDIO_FLAG_* (loop, non-interrupt, etc.)
+// COM (Voice/Speech) tracks - need length for ducking timing, priority for preemption
+struct AudioComTrackDef {
+  unsigned int trackNum;
+  byte         lengthTenths;  // 0.1s units (16 = 1.6s, max 255 = 25.5s)
+  byte         priority;      // AUDIO_PRIORITY_LOW/MED/HIGH
 };
 
+// SFX tracks - no length needed (except special cases handled separately)
 struct AudioSfxTrackDef {
   unsigned int trackNum;
-  byte  eventId;       // SFX_EVENT_*
-  byte  lengthTenths;  // For optional timing/overlap management
-  byte  flags;         // AUDIO_FLAG_LOOP, etc.
+  byte         flags;  // AUDIO_FLAG_LOOP, etc.
 };
 
-struct AudioMusicTrackDef {  // This may not even be needed, except for diagnostic purposes.
-  unsigned int trackNum;     // Tsunami track number (0001..4095 on SD card)
-  unsigned int EEPROMStringNum;  // Identifies the string stored in EEPROM that describes this music track
-  byte  themeId;  // MUSIC_THEME_CIRCUS / MUSIC_THEME_SURF
-  byte  role;     // MUSIC_ROLE_MAIN / MUSIC_ROLE_MULTIBALL / MUSIC_ROLE_ATTRACT
-  byte  flags;    // AUDIO_FLAG_LOOP (always set for most music)
+// MUS (Music) tracks - need length for sequencing to next song
+struct AudioMusTrackDef {
+  unsigned int trackNum;
+  byte         lengthSeconds;  // seconds (max 255 = 4m15s)
 };
 
+// *** COM TRACK ARRAYS ***
+// Organized by category for easy maintenance
 
-// Audio categories (use consts instead of enums)
-const byte AUDIO_CAT_VOICE = 0;
-const byte AUDIO_CAT_SFX   = 1;
-const byte AUDIO_CAT_MUSIC = 2;
-
-// Voice priority levels
-const byte VOICE_PRIORITY_HIGH = 3;  // Highest priority i.e. urgent voice such as "Here's another ball; shoot again!"
-const byte VOICE_PRIORITY_MED  = 2;  // Medium priority i.e. important voice such as mode instructions
-const byte VOICE_PRIORITY_LOW  = 1;  // Low priority i.e. non-urgent voice such as "Good luck!"
-
-// Voice subcategories (for random selection within an event type)
-const byte VOICE_SUB_NONE        = 0;
-const byte VOICE_SUB_GAME_START  = 1;
-const byte VOICE_SUB_PLAYER_UP   = 2;
-const byte VOICE_SUB_BALL_SAVED  = 3;
-const byte VOICE_SUB_BAD_PLAY    = 4;
-const byte VOICE_SUB_GAME_OVER   = 5;
-// Add more as needed.
-// Bit flags controlling behavior
-const byte AUDIO_FLAG_LOOP          = 0x01;  // Track should loop until explicitly stopped
-const byte AUDIO_FLAG_NON_INTERRUPT = 0x02;  // Do not start if another same-category track playing
-const byte AUDIO_FLAG_DUCK_OTHERS   = 0x04;  // Future: lower volume on other categories while this plays
-
-
-// Master list of all Tsunami tracks we care about.
-// NOTE: Track numbers here must match the Tsunami SD card filenames.
-const AudioMusicTrackDef audioTracks[] = {
-  // trackNum, category,        voiceSubcat,            flags
-  {  1,        AUDIO_CAT_VOICE, VOICE_SUB_GAME_START,   0 },               // "Let's ride Screamo"
-  {  2,        AUDIO_CAT_VOICE, VOICE_SUB_PLAYER_UP,    0 },               // "Player 2, you're up"
-  {  3,        AUDIO_CAT_VOICE, VOICE_SUB_BALL_SAVED,   0 },               // "Ball saved"
-  {  4,        AUDIO_CAT_VOICE, VOICE_SUB_BALL_SAVED,   0 },               // alternate "Ball saved"
-  {  5,        AUDIO_CAT_VOICE, VOICE_SUB_BAD_PLAY,     0 },               // "That was terrible"
-  {  6,        AUDIO_CAT_VOICE, VOICE_SUB_BAD_PLAY,     0 },               // alternate bad-play quip
-
-  { 20,        AUDIO_CAT_SFX,   VOICE_SUB_NONE,         AUDIO_FLAG_LOOP }, // Coaster clicking up hill
-  { 21,        AUDIO_CAT_SFX,   VOICE_SUB_NONE,         0 },               // Coaster roaring down hill
-  { 22,        AUDIO_CAT_SFX,   VOICE_SUB_NONE,         0 },               // Girl scream, short
-  { 23,        AUDIO_CAT_SFX,   VOICE_SUB_NONE,         0 },               // Gobble hole thud / roar
-
-  { 30,        AUDIO_CAT_MUSIC, VOICE_SUB_NONE,         AUDIO_FLAG_LOOP }, // Main background music
-  { 31,        AUDIO_CAT_MUSIC, VOICE_SUB_NONE,         AUDIO_FLAG_LOOP }, // Multiball music
-  { 32,        AUDIO_CAT_MUSIC, VOICE_SUB_NONE,         AUDIO_FLAG_LOOP }  // Attract mode music
+// DIAG COM tracks (101-102, 111-117)
+const AudioComTrackDef comTracksDiag[] = {
+  { 101, 15, AUDIO_PRIORITY_MED },   // Entering diagnostics
+  { 102, 17, AUDIO_PRIORITY_MED },   // Exiting diagnostics
+  { 111,  6, AUDIO_PRIORITY_MED },   // Lamps
+  { 112,  7, AUDIO_PRIORITY_MED },   // Switches
+  { 113,  7, AUDIO_PRIORITY_MED },   // Coils
+  { 114,  7, AUDIO_PRIORITY_MED },   // Motors
+  { 115,  7, AUDIO_PRIORITY_MED },   // Music
+  { 116, 12, AUDIO_PRIORITY_MED },   // Sound Effects
+  { 117,  7, AUDIO_PRIORITY_MED }    // Comments
 };
+const byte NUM_COM_DIAG = sizeof(comTracksDiag) / sizeof(comTracksDiag[0]);
 
-const byte NUM_AUDIO_TRACKS = (byte)(sizeof(audioTracks) / sizeof(audioTracks[0]));
+// TILT WARNING COM tracks (201-205)
+const AudioComTrackDef comTracksTiltWarning[] = {
+  { 201, 26, AUDIO_PRIORITY_HIGH },  // Shake it again...
+  { 202, 15, AUDIO_PRIORITY_HIGH },  // Easy there, Hercules
+  { 203, 21, AUDIO_PRIORITY_HIGH },  // Whoa there, King Kong
+  { 204,  6, AUDIO_PRIORITY_HIGH },  // Careful
+  { 205,  6, AUDIO_PRIORITY_HIGH }   // Watch it
+};
+const byte NUM_COM_TILT_WARNING = sizeof(comTracksTiltWarning) / sizeof(comTracksTiltWarning[0]);
 
-// Index constants into audioTracks[] for commonly used sounds.
-// Keep these in sync with the ordering of audioTracks[] above.
-const byte AUDIO_IDX_VOICE_GAME_START   = 0;  // "Let's ride Screamo"
-const byte AUDIO_IDX_VOICE_PLAYER_UP    = 1;  // "Player 2, you're up"
-const byte AUDIO_IDX_VOICE_BALL_SAVED_1 = 2;  // "Ball saved"
-const byte AUDIO_IDX_VOICE_BALL_SAVED_2 = 3;  // alt "Ball saved"
-const byte AUDIO_IDX_VOICE_BAD_PLAY_1   = 4;  // "That was terrible"
-const byte AUDIO_IDX_VOICE_BAD_PLAY_2   = 5;  // alt bad-play quip
+// TILT COM tracks (212-216)
+const AudioComTrackDef comTracksTilt[] = {
+  { 212, 28, AUDIO_PRIORITY_HIGH },  // Nice goin Hercules...
+  { 213, 32, AUDIO_PRIORITY_HIGH },  // Congratulations King Kong...
+  { 214, 19, AUDIO_PRIORITY_HIGH },  // Ya broke it ya big palooka
+  { 215, 27, AUDIO_PRIORITY_HIGH },  // This aint the bumper cars...
+  { 216, 29, AUDIO_PRIORITY_HIGH }   // Tilt! Thats what ya get...
+};
+const byte NUM_COM_TILT = sizeof(comTracksTilt) / sizeof(comTracksTilt[0]);
 
-const byte AUDIO_IDX_SFX_COASTER_CLIMB  = 6;  // track 20
-const byte AUDIO_IDX_SFX_COASTER_DROP   = 7;  // track 21
-const byte AUDIO_IDX_SFX_SCREAM         = 8;  // track 22
-const byte AUDIO_IDX_SFX_GOBBLE         = 9;  // track 23
+// BALL MISSING COM tracks (301-304)
+const AudioComTrackDef comTracksBallMissing[] = {
+  { 301, 55, AUDIO_PRIORITY_MED },   // Theres a ball missing...
+  { 302, 53, AUDIO_PRIORITY_MED },   // Press the ball lift rod...
+  { 303, 46, AUDIO_PRIORITY_MED },   // Shoot any balls...
+  { 304, 41, AUDIO_PRIORITY_MED }    // Theres still a ball missing...
+};
+const byte NUM_COM_BALL_MISSING = sizeof(comTracksBallMissing) / sizeof(comTracksBallMissing[0]);
 
-const byte AUDIO_IDX_MUSIC_MAIN         = 10; // track 30
-const byte AUDIO_IDX_MUSIC_MULTIBALL    = 11; // track 31
-const byte AUDIO_IDX_MUSIC_ATTRACT      = 12; // track 32
+// START REJECT COM tracks (312-330)
+const AudioComTrackDef comTracksStartReject[] = {
+  { 312, 36, AUDIO_PRIORITY_MED },   // No free admission today...
+  { 313, 19, AUDIO_PRIORITY_MED },   // Go ask yer mommy...
+  { 314, 19, AUDIO_PRIORITY_MED },   // I told yas ta SCRAM
+  { 315, 18, AUDIO_PRIORITY_MED },   // Ya aint gettin in...
+  { 316, 19, AUDIO_PRIORITY_MED },   // Any o yous kids got a cigarette
+  { 317, 19, AUDIO_PRIORITY_MED },   // Go shake down da couch...
+  { 318, 28, AUDIO_PRIORITY_MED },   // When Is a kid...
+  { 319, 26, AUDIO_PRIORITY_MED },   // This aint a charity...
+  { 320, 25, AUDIO_PRIORITY_MED },   // Whadda I look like...
+  { 321, 27, AUDIO_PRIORITY_MED },   // No ticket, no tumblin...
+  { 322, 30, AUDIO_PRIORITY_MED },   // Quit pressin buttons...
+  { 323, 33, AUDIO_PRIORITY_MED },   // Im losin money...
+  { 324, 21, AUDIO_PRIORITY_MED },   // Ya broke, go sell a balloon
+  { 325, 24, AUDIO_PRIORITY_MED },   // Step right up, after ya pay
+  { 326, 30, AUDIO_PRIORITY_MED },   // Dis aint da soup kitchen...
+  { 327, 24, AUDIO_PRIORITY_MED },   // Beat it kid...
+  { 328, 21, AUDIO_PRIORITY_MED },   // Yas tryin ta sneak in...
+  { 329, 26, AUDIO_PRIORITY_MED },   // Come back when yas got...
+  { 330, 21, AUDIO_PRIORITY_MED }    // No coin, no joyride
+};
+const byte NUM_COM_START_REJECT = sizeof(comTracksStartReject) / sizeof(comTracksStartReject[0]);
 
+// START COM tracks (351-357, 402)
+const AudioComTrackDef comTracksStart[] = {
+  { 351, 17, AUDIO_PRIORITY_MED },   // Okay kid, youre in
+  { 352, 46, AUDIO_PRIORITY_MED },   // Press start again for a wilder ride...
+  { 353, 36, AUDIO_PRIORITY_MED },   // Keep pressin Start...
+  { 354, 19, AUDIO_PRIORITY_MED },   // Second guest, cmon in
+  { 355, 18, AUDIO_PRIORITY_MED },   // Third guest, youre in
+  { 356, 22, AUDIO_PRIORITY_MED },   // Fourth guest, through the turnstile
+  { 357, 25, AUDIO_PRIORITY_MED },   // The parks full...
+  { 402, 35, AUDIO_PRIORITY_MED }    // Hey Gang, Lets Ride the Screamo
+};
+const byte NUM_COM_START = sizeof(comTracksStart) / sizeof(comTracksStart[0]);
 
+// PLAYER COM tracks (451-454)
+const AudioComTrackDef comTracksPlayer[] = {
+  { 451, 11, AUDIO_PRIORITY_MED },   // Guest 1
+  { 452, 13, AUDIO_PRIORITY_MED },   // Guest 2
+  { 453, 13, AUDIO_PRIORITY_MED },   // Guest 3
+  { 454, 13, AUDIO_PRIORITY_MED }    // Guest 4
+};
+const byte NUM_COM_PLAYER = sizeof(comTracksPlayer) / sizeof(comTracksPlayer[0]);
 
+// BALL COM tracks (461-465)
+const AudioComTrackDef comTracksBall[] = {
+  { 461, 11, AUDIO_PRIORITY_MED },   // Ball 1
+  { 462, 10, AUDIO_PRIORITY_MED },   // Ball 2
+  { 463, 11, AUDIO_PRIORITY_MED },   // Ball 3
+  { 464, 12, AUDIO_PRIORITY_MED },   // Ball 4
+  { 465, 12, AUDIO_PRIORITY_MED }    // Ball 5
+};
+const byte NUM_COM_BALL = sizeof(comTracksBall) / sizeof(comTracksBall[0]);
 
-// Simple per-category what's-currently-playing state (trackNum 0 == none)
-unsigned int audioCurrentVoiceTrack = 0;
-unsigned int audioCurrentSfxTrack   = 0;
-unsigned int audioCurrentMusicTrack = 0;
+// BALL 1 COMMENT COM tracks (511-519) - for P2-P4 first ball
+const AudioComTrackDef comTracksBall1Comment[] = {
+  { 511, 11, AUDIO_PRIORITY_LOW },   // Climb aboard
+  { 512, 14, AUDIO_PRIORITY_LOW },   // Explore the park
+  { 513, 14, AUDIO_PRIORITY_LOW },   // Fire away
+  { 514,  9, AUDIO_PRIORITY_LOW },   // Launch it
+  { 515, 17, AUDIO_PRIORITY_LOW },   // Lets find a ride
+  { 516, 18, AUDIO_PRIORITY_LOW },   // Show em how its done
+  { 517,  8, AUDIO_PRIORITY_LOW },   // Youre up
+  { 518, 16, AUDIO_PRIORITY_LOW },   // Your turn to ride
+  { 519, 13, AUDIO_PRIORITY_LOW }    // Lets ride
+};
+const byte NUM_COM_BALL1_COMMENT = sizeof(comTracksBall1Comment) / sizeof(comTracksBall1Comment[0]);
 
+// BALL 5 COMMENT COM tracks (531-540)
+const AudioComTrackDef comTracksBall5Comment[] = {
+  { 531, 18, AUDIO_PRIORITY_LOW },   // Dont embarrass yourself
+  { 532, 16, AUDIO_PRIORITY_LOW },   // Its now or never
+  { 533, 17, AUDIO_PRIORITY_LOW },   // Last ride of the day
+  { 534, 12, AUDIO_PRIORITY_LOW },   // Make it flashy
+  { 535, 10, AUDIO_PRIORITY_LOW },   // No pressure
+  { 536, 17, AUDIO_PRIORITY_LOW },   // This ball decides it
+  { 537, 17, AUDIO_PRIORITY_LOW },   // This is it
+  { 538, 15, AUDIO_PRIORITY_LOW },   // This is your last ticket
+  { 539, 11, AUDIO_PRIORITY_LOW },   // Last ball
+  { 540, 11, AUDIO_PRIORITY_LOW }    // Make it count
+};
+const byte NUM_COM_BALL5_COMMENT = sizeof(comTracksBall5Comment) / sizeof(comTracksBall5Comment[0]);
 
-// Tsunami master gain settings (in dB)
-// Master gain can range from -40db to 0dB (full level); defaults to -10dB to allow some headroom.
-// Per-category RELATIVE gains are applied on top of master gain; can range from -40dB to +40dB but clamped within -40dB to 0dB overall.
-const int8_t TSUNAMI_GAIN_DB_DEFAULT = -10;  // Default Tsunami master gain in dB
-const int8_t TSUNAMI_GAIN_DB_MIN     = -40;  // Clamp range; adjust as needed
-const int8_t TSUNAMI_GAIN_DB_MAX     =   0;  // 0 dB = full level (example)
+// GAME OVER COM tracks (551-577)
+const AudioComTrackDef comTracksGameOver[] = {
+  { 551, 17, AUDIO_PRIORITY_MED },   // End of the ride, thrillseeker
+  { 552, 25, AUDIO_PRIORITY_MED },   // Hope you enjoyed the ride...
+  { 553, 15, AUDIO_PRIORITY_MED },   // Its curtains for you, pal
+  { 554, 19, AUDIO_PRIORITY_MED },   // Its game over for you, dude
+  { 555, 30, AUDIO_PRIORITY_MED },   // No more rides for you...
+  { 556, 17, AUDIO_PRIORITY_MED },   // No more tickets for this ride
+  { 557, 20, AUDIO_PRIORITY_MED },   // Pack it up...
+  { 558, 47, AUDIO_PRIORITY_MED },   // Randy warned me...
+  { 559, 17, AUDIO_PRIORITY_MED },   // Rides over, move along
+  { 560, 35, AUDIO_PRIORITY_MED },   // Screamo is now closed, but please...
+  { 561, 31, AUDIO_PRIORITY_MED },   // Step right down...
+  { 562, 18, AUDIO_PRIORITY_MED },   // Thats all she wrote...
+  { 563, 33, AUDIO_PRIORITY_MED },   // The fat lady has sung...
+  { 564, 22, AUDIO_PRIORITY_MED },   // Screamo is now closed, pal
+  { 565, 15, AUDIO_PRIORITY_MED },   // Youre out of the running...
+  { 566, 20, AUDIO_PRIORITY_MED },   // The shows over for you...
+  { 567, 16, AUDIO_PRIORITY_MED },   // Youre out of tickets...
+  { 568, 40, AUDIO_PRIORITY_MED },   // Thats the end of the line...
+  { 569, 36, AUDIO_PRIORITY_MED },   // The Park is Now Closed...
+  { 570, 34, AUDIO_PRIORITY_MED },   // Screamo is parked...
+  { 571, 27, AUDIO_PRIORITY_MED },   // Youve hit the brakes...
+  { 572, 39, AUDIO_PRIORITY_MED },   // Youve reached the end...
+  { 573, 28, AUDIO_PRIORITY_MED },   // You gave it a whirl...
+  { 574, 32, AUDIO_PRIORITY_MED },   // Your Ride is Over Park Now Closed
+  { 575, 26, AUDIO_PRIORITY_MED },   // Your tickets punched...
+  { 576, 42, AUDIO_PRIORITY_MED },   // Your Ride is Over Safety Bar
+  { 577, 27, AUDIO_PRIORITY_MED }    // Your ride is over; better luck...
+};
+const byte NUM_COM_GAME_OVER = sizeof(comTracksGameOver) / sizeof(comTracksGameOver[0]);
+
+// SHOOT COM tracks (611-620)
+const AudioComTrackDef comTracksShoot[] = {
+  { 611, 37, AUDIO_PRIORITY_LOW },   // Press the Ball Lift rod...
+  { 612, 28, AUDIO_PRIORITY_LOW },   // This ride will be a lot more fun...
+  { 613, 26, AUDIO_PRIORITY_LOW },   // I recommend you consider...
+  { 614, 28, AUDIO_PRIORITY_LOW },   // Dont be afraid of the ride...
+  { 615, 23, AUDIO_PRIORITY_LOW },   // For Gods sake shoot the ball
+  { 616, 25, AUDIO_PRIORITY_LOW },   // No dilly dallying...
+  { 617, 25, AUDIO_PRIORITY_LOW },   // Now would be a good time...
+  { 618, 29, AUDIO_PRIORITY_LOW },   // Now would be an excellent time...
+  { 619, 13, AUDIO_PRIORITY_LOW },   // Shoot the Ball
+  { 620, 35, AUDIO_PRIORITY_LOW }    // This would be an excellent time... (annoyed)
+};
+const byte NUM_COM_SHOOT = sizeof(comTracksShoot) / sizeof(comTracksShoot[0]);
+
+// BALL SAVED COM tracks (631-636, 641)
+const AudioComTrackDef comTracksBallSaved[] = {
+  { 631, 25, AUDIO_PRIORITY_MED },   // Ball saved, launch again
+  { 632, 24, AUDIO_PRIORITY_MED },   // Heres another ball keep shooting
+  { 633, 20, AUDIO_PRIORITY_MED },   // Keep going shoot again
+  { 634, 21, AUDIO_PRIORITY_MED },   // Ball saved, ride again
+  { 635, 18, AUDIO_PRIORITY_MED },   // Ball saved, shoot again
+  { 636, 25, AUDIO_PRIORITY_MED },   // Ball saved; get back on the ride
+  { 641, 25, AUDIO_PRIORITY_MED }    // Heres your ball back... (mode end)
+};
+const byte NUM_COM_BALL_SAVED = sizeof(comTracksBallSaved) / sizeof(comTracksBallSaved[0]);
+
+// BALL SAVED URGENT COM tracks (651-662)
+const AudioComTrackDef comTracksBallSavedUrgent[] = {
+  { 651, 20, AUDIO_PRIORITY_MED },   // Heres another ball; send it
+  { 652, 25, AUDIO_PRIORITY_MED },   // Heres another ball; fire at will
+  { 653, 22, AUDIO_PRIORITY_MED },   // Heres a new ball; fire away
+  { 654, 21, AUDIO_PRIORITY_MED },   // Heres a new ball; quick, shoot it
+  { 655, 21, AUDIO_PRIORITY_MED },   // Heres another ball; shoot it now
+  { 656, 18, AUDIO_PRIORITY_MED },   // Hurry, shoot another ball
+  { 657, 15, AUDIO_PRIORITY_MED },   // Quick, shoot again
+  { 658, 21, AUDIO_PRIORITY_MED },   // Keep going; shoot another ball
+  { 659, 26, AUDIO_PRIORITY_MED },   // Its still your turn; keep shooting
+  { 660, 10, AUDIO_PRIORITY_MED },   // Shoot again
+  { 661, 24, AUDIO_PRIORITY_MED },   // For Gods sake shoot another ball
+  { 662, 18, AUDIO_PRIORITY_MED }    // Quick shoot another ball
+};
+const byte NUM_COM_BALL_SAVED_URGENT = sizeof(comTracksBallSavedUrgent) / sizeof(comTracksBallSavedUrgent[0]);
+
+// MULTIBALL COM tracks (671-675)
+const AudioComTrackDef comTracksMultiball[] = {
+  { 671, 34, AUDIO_PRIORITY_HIGH },  // First ball locked...
+  { 672, 36, AUDIO_PRIORITY_HIGH },  // Second ball locked...
+  { 673, 14, AUDIO_PRIORITY_HIGH },  // Multiball
+  { 674, 33, AUDIO_PRIORITY_HIGH },  // Multiball; all rides are running
+  { 675, 34, AUDIO_PRIORITY_HIGH }   // Every bumper is worth double...
+};
+const byte NUM_COM_MULTIBALL = sizeof(comTracksMultiball) / sizeof(comTracksMultiball[0]);
+
+// COMPLIMENT COM tracks (701-714)
+const AudioComTrackDef comTracksCompliment[] = {
+  { 701,  9, AUDIO_PRIORITY_LOW },   // Good shot
+  { 702, 20, AUDIO_PRIORITY_LOW },   // Awesome great work
+  { 703, 10, AUDIO_PRIORITY_LOW },   // Great job
+  { 704, 13, AUDIO_PRIORITY_LOW },   // Great shot
+  { 705, 10, AUDIO_PRIORITY_LOW },   // Youve done it
+  { 706, 15, AUDIO_PRIORITY_LOW },   // Mission accomplished
+  { 707,  9, AUDIO_PRIORITY_LOW },   // Youve done it
+  { 708, 13, AUDIO_PRIORITY_LOW },   // You did it
+  { 709, 11, AUDIO_PRIORITY_LOW },   // Amazing
+  { 710, 12, AUDIO_PRIORITY_LOW },   // Great job
+  { 711, 27, AUDIO_PRIORITY_LOW },   // Great shot nicely done
+  { 712, 11, AUDIO_PRIORITY_LOW },   // Well done
+  { 713, 11, AUDIO_PRIORITY_LOW },   // Great work
+  { 714, 20, AUDIO_PRIORITY_LOW }    // You did it great shot
+};
+const byte NUM_COM_COMPLIMENT = sizeof(comTracksCompliment) / sizeof(comTracksCompliment[0]);
+
+// DRAIN COM tracks (721-739)
+const AudioComTrackDef comTracksDrain[] = {
+  { 721, 23, AUDIO_PRIORITY_LOW },   // Did you forget where the flipper buttons are
+  { 722, 19, AUDIO_PRIORITY_LOW },   // Gravity called and you answered
+  { 723, 19, AUDIO_PRIORITY_LOW },   // Have you been to an eye doctor lately
+  { 724, 20, AUDIO_PRIORITY_LOW },   // Ill Pretend I Didnt See That
+  { 725, 11, AUDIO_PRIORITY_LOW },   // Gravity wins
+  { 726, 19, AUDIO_PRIORITY_LOW },   // Im So Sorry For Your Loss
+  { 727,  9, AUDIO_PRIORITY_LOW },   // That was quick
+  { 728, 36, AUDIO_PRIORITY_LOW },   // Maybe try playing with your eyes open...
+  { 729, 29, AUDIO_PRIORITY_LOW },   // Nice drain, was that part of your strategy
+  { 730, 20, AUDIO_PRIORITY_LOW },   // Oh I Didnt See That Coming
+  { 731, 14, AUDIO_PRIORITY_LOW },   // Oh Thats Humiliating
+  { 732, 11, AUDIO_PRIORITY_LOW },   // So long, ball
+  { 733, 12, AUDIO_PRIORITY_LOW },   // Thats gotta hurt
+  { 734, 23, AUDIO_PRIORITY_LOW },   // Thats The Saddest Thing Ive Ever Seen
+  { 735,  7, AUDIO_PRIORITY_LOW },   // Yikes
+  { 736, 17, AUDIO_PRIORITY_LOW },   // Oh that hurt to watch
+  { 737, 17, AUDIO_PRIORITY_LOW },   // That Was Just Terrible
+  { 738, 39, AUDIO_PRIORITY_LOW },   // Your ball saw the drain...
+  { 739, 11, AUDIO_PRIORITY_LOW }    // Whoopsie daisy
+};
+const byte NUM_COM_DRAIN = sizeof(comTracksDrain) / sizeof(comTracksDrain[0]);
+
+// AWARD COM tracks (811-842)
+const AudioComTrackDef comTracksAward[] = {
+  { 811, 15, AUDIO_PRIORITY_HIGH },  // Special is lit
+  { 812, 19, AUDIO_PRIORITY_HIGH },  // Reeee-plaaay
+  { 821, 32, AUDIO_PRIORITY_HIGH },  // You lit three in a row, replay
+  { 822, 44, AUDIO_PRIORITY_HIGH },  // You lit all four corners, five replays
+  { 823, 46, AUDIO_PRIORITY_HIGH },  // You lit one, two and three, twenty replays
+  { 824, 40, AUDIO_PRIORITY_HIGH },  // Five balls in the Gobble Hole - replay
+  { 831, 18, AUDIO_PRIORITY_HIGH },  // You spelled SCREAMO
+  { 841, 19, AUDIO_PRIORITY_HIGH },  // EXTRA BALL
+  { 842, 20, AUDIO_PRIORITY_HIGH }   // Heres another ball; send it
+};
+const byte NUM_COM_AWARD = sizeof(comTracksAward) / sizeof(comTracksAward[0]);
+
+// MODE COM tracks (1002-1003, 1005, 1101, 1111, 1201, 1211, 1301, 1311)
+const AudioComTrackDef comTracksMode[] = {
+  { 1002,  8, AUDIO_PRIORITY_HIGH },  // Jackpot
+  { 1003, 13, AUDIO_PRIORITY_HIGH },  // Ten seconds left
+  { 1005,  8, AUDIO_PRIORITY_HIGH },  // Time
+  { 1101, 82, AUDIO_PRIORITY_HIGH },  // Lets ride the Bumper Cars
+  { 1111, 18, AUDIO_PRIORITY_MED },   // Keep smashing the bumpers
+  { 1201, 82, AUDIO_PRIORITY_HIGH },  // Lets play Roll-A-Ball
+  { 1211, 18, AUDIO_PRIORITY_MED },   // Keep rolling over the hats
+  { 1301, 71, AUDIO_PRIORITY_HIGH },  // Lets visit the Shooting Gallery
+  { 1311, 19, AUDIO_PRIORITY_MED }    // Keep shooting at the Gobble Hole
+};
+const byte NUM_COM_MODE = sizeof(comTracksMode) / sizeof(comTracksMode[0]);
+
+// *** SFX TRACK ARRAY ***
+const AudioSfxTrackDef sfxTracks[] = {
+  // DIAG SFX
+  { 103, AUDIO_FLAG_NONE },   // Diagnostics continuous tone
+  { 104, AUDIO_FLAG_NONE },   // Switch Close 1000hz
+  { 105, AUDIO_FLAG_NONE },   // Switch Open 500hz
+  // TILT SFX
+  { 211, AUDIO_FLAG_NONE },   // Buzzer
+  // START SFX
+  { 311, AUDIO_FLAG_NONE },   // Car honk aoooga
+  { 401, AUDIO_FLAG_NONE },   // Scream player 1
+  { 403, AUDIO_FLAG_LOOP },   // Lift, loopable (120s)
+  { 404, AUDIO_FLAG_NONE },   // First drop multi-screams
+  // MODE COMMON SFX
+  { 1001, AUDIO_FLAG_NONE },  // School Bell stinger start
+  { 1004, AUDIO_FLAG_NONE },  // Timer countdown
+  { 1006, AUDIO_FLAG_NONE },  // Factory whistle stinger end
+  // MODE BUMPER CAR HIT SFX (1121-1133)
+  { 1121, AUDIO_FLAG_NONE },  // Car honk
+  { 1122, AUDIO_FLAG_NONE },  // Car honk la cucaracha
+  { 1123, AUDIO_FLAG_NONE },  // Car honk 2x
+  { 1124, AUDIO_FLAG_NONE },  // Car honk 2x
+  { 1125, AUDIO_FLAG_NONE },  // Car honk 2x
+  { 1126, AUDIO_FLAG_NONE },  // Car honk 2x
+  { 1127, AUDIO_FLAG_NONE },  // Car honk 2x
+  { 1128, AUDIO_FLAG_NONE },  // Car honk 2x rubber
+  { 1129, AUDIO_FLAG_NONE },  // Car honk 2x rubber
+  { 1130, AUDIO_FLAG_NONE },  // Car honk aoooga
+  { 1131, AUDIO_FLAG_NONE },  // Car honk diesel train
+  { 1132, AUDIO_FLAG_NONE },  // Car honk
+  { 1133, AUDIO_FLAG_NONE },  // Car honk truck air horn
+  // MODE BUMPER CAR MISS SFX (1141-1148)
+  { 1141, AUDIO_FLAG_NONE },  // Car crash
+  { 1142, AUDIO_FLAG_NONE },  // Car crash
+  { 1143, AUDIO_FLAG_NONE },  // Car crash
+  { 1144, AUDIO_FLAG_NONE },  // Car crash
+  { 1145, AUDIO_FLAG_NONE },  // Car crash x
+  { 1146, AUDIO_FLAG_NONE },  // Cat screech
+  { 1147, AUDIO_FLAG_NONE },  // Car crash x
+  { 1148, AUDIO_FLAG_NONE },  // Car crash x
+  // MODE BUMPER CAR ACHIEVED SFX
+  { 1197, AUDIO_FLAG_NONE },  // Bell ding ding ding
+  // MODE ROLL-A-BALL HIT SFX (1221-1225)
+  { 1221, AUDIO_FLAG_NONE },  // Bowling strike
+  { 1222, AUDIO_FLAG_NONE },  // Bowling strike
+  { 1223, AUDIO_FLAG_NONE },  // Bowling strike
+  { 1224, AUDIO_FLAG_NONE },  // Bowling strike
+  { 1225, AUDIO_FLAG_NONE },  // Bowling strike
+  // MODE ROLL-A-BALL MISS SFX (1241-1254)
+  { 1241, AUDIO_FLAG_NONE },  // Glass
+  { 1242, AUDIO_FLAG_NONE },  // Glass
+  { 1243, AUDIO_FLAG_NONE },  // Glass
+  { 1244, AUDIO_FLAG_NONE },  // Glass
+  { 1245, AUDIO_FLAG_NONE },  // Glass
+  { 1246, AUDIO_FLAG_NONE },  // Glass
+  { 1247, AUDIO_FLAG_NONE },  // Glass
+  { 1248, AUDIO_FLAG_NONE },  // Glass
+  { 1249, AUDIO_FLAG_NONE },  // Glass
+  { 1250, AUDIO_FLAG_NONE },  // Glass
+  { 1251, AUDIO_FLAG_NONE },  // Glass
+  { 1252, AUDIO_FLAG_NONE },  // Glass
+  { 1253, AUDIO_FLAG_NONE },  // Glass
+  { 1254, AUDIO_FLAG_NONE },  // Goat sound
+  // MODE ROLL-A-BALL ACHIEVED SFX
+  { 1297, AUDIO_FLAG_NONE },  // Ta da
+  // MODE GOBBLE HOLE HIT SFX
+  { 1321, AUDIO_FLAG_NONE },  // Slide whistle down
+  // MODE GOBBLE HOLE MISS SFX (1341-1348)
+  { 1341, AUDIO_FLAG_NONE },  // Ricochet
+  { 1342, AUDIO_FLAG_NONE },  // Ricochet
+  { 1343, AUDIO_FLAG_NONE },  // Ricochet
+  { 1344, AUDIO_FLAG_NONE },  // Ricochet
+  { 1345, AUDIO_FLAG_NONE },  // Ricochet
+  { 1346, AUDIO_FLAG_NONE },  // Ricochet
+  { 1347, AUDIO_FLAG_NONE },  // Ricochet
+  { 1348, AUDIO_FLAG_NONE },  // Ricochet
+  // MODE GOBBLE HOLE ACHIEVED SFX
+  { 1397, AUDIO_FLAG_NONE }   // Applause mixed
+};
+const byte NUM_SFX_TRACKS = sizeof(sfxTracks) / sizeof(sfxTracks[0]);
+
+// *** MUSIC TRACK ARRAYS ***
+// CIRCUS music (2001-2019)
+const AudioMusTrackDef musTracksCircus[] = {
+  { 2001, 147 },  // Barnum and Baileys Favorite (2m27s)
+  { 2002, 156 },  // Rensaz Race March (2m36s)
+  { 2003,  77 },  // Twelfth Street Rag (1m17s)
+  { 2004, 195 },  // Chariot Race, Ben Hur March (3m15s)
+  { 2005,  58 },  // Organ Grinders Serenade (0m58s)
+  { 2006, 155 },  // Hands Across the Sea (2m35s)
+  { 2007, 132 },  // Field Artillery March (2m12s)
+  { 2008, 102 },  // You Flew Over (1m42s)
+  { 2009,  65 },  // Unter dem Doppeladler (1m5s)
+  { 2010, 100 },  // Ragtime Cowboy Joe (1m40s)
+  { 2011, 183 },  // Billboard March (3m3s)
+  { 2012, 110 },  // El capitan (1m50s)
+  { 2013, 119 },  // Smiles (1m59s)
+  { 2014, 151 },  // Spirit of St. Louis March (2m31s)
+  { 2015, 115 },  // The Free Lance (1m55s)
+  { 2016, 139 },  // The Roxy March (2m19s)
+  { 2017, 119 },  // The Stars and Stripes Forever (1m59s)
+  { 2018, 141 },  // The Washington Post (2m21s)
+  { 2019, 154 }   // Bombasto (2m34s)
+};
+const byte NUM_MUS_CIRCUS = sizeof(musTracksCircus) / sizeof(musTracksCircus[0]);
+
+// SURF music (2051-2068)
+const AudioMusTrackDef musTracksSurf[] = {
+  { 2051, 134 },  // Miserlou (2m14s)
+  { 2052, 191 },  // Bumble Bee Stomp (3m11s)
+  { 2053, 177 },  // Wipe Out (2m57s)
+  { 2054, 103 },  // Banzai Washout (1m43s)
+  { 2055, 120 },  // Hava Nagila (2m0s)
+  { 2056, 130 },  // Sabre Dance (2m10s)
+  { 2057, 143 },  // Malaguena (2m23s)
+  { 2058, 129 },  // Wildfire (2m9s)
+  { 2059, 116 },  // The Wedge (1m56s)
+  { 2060, 112 },  // Exotic (1m52s)
+  { 2061, 182 },  // The Victor (3m2s)
+  { 2062, 116 },  // Mr. Eliminator (1m56s)
+  { 2063,  93 },  // Night Rider (1m33s)
+  { 2064,  97 },  // The Jester (1m37s)
+  { 2065, 131 },  // Pressure (2m11s)
+  { 2066, 110 },  // Shootin Beavers (1m50s)
+  { 2067, 129 },  // Riders in the Sky (2m9s)
+  { 2068, 114 }   // Bumble Bee Boogie (1m54s)
+};
+const byte NUM_MUS_SURF = sizeof(musTracksSurf) / sizeof(musTracksSurf[0]);
+
+// *** AUDIO PLAYBACK STATE ***
+unsigned int audioCurrentComTrack   = 0;  // Currently playing COM track (0 = none)
+unsigned int audioCurrentSfxTrack   = 0;  // Currently playing SFX track (0 = none)
+unsigned int audioCurrentMusicTrack = 0;  // Currently playing MUS track (0 = none)
+unsigned long audioComEndMillis     = 0;  // When current COM track ends
+unsigned long audioMusicEndMillis   = 0;  // When current music track ends
+unsigned long audioLiftLoopStartMillis = 0;  // When lift loop started (for re-loop)
+
+// *** TSUNAMI GAIN SETTINGS ***
+// Master gain can range from -40dB to 0dB (full level); defaults to -10dB to allow some headroom.
+const int8_t TSUNAMI_GAIN_DB_DEFAULT = -10;
+const int8_t TSUNAMI_GAIN_DB_MIN     = -40;
+const int8_t TSUNAMI_GAIN_DB_MAX     =   0;
 
 int8_t tsunamiGainDb      = TSUNAMI_GAIN_DB_DEFAULT;  // Persisted Tsunami master gain
-// Per-category relative gains in dB (applied on top of master).
-// 0 == no change; negative to reduce that category, positive to boost (within clamp limits).
-int8_t tsunamiVoiceGainDb = 0;
-int8_t tsunamiSfxGainDb   = 0;
-int8_t tsunamiMusicGainDb = 0;
+int8_t tsunamiVoiceGainDb = 0;  // Per-category relative gain (COM/Voice)
+int8_t tsunamiSfxGainDb   = 0;  // Per-category relative gain (SFX)
+int8_t tsunamiMusicGainDb = 0;  // Per-category relative gain (Music)
+int8_t tsunamiDuckingDb = -20;  // Ducking gain offset (default -20dB)
 
 // ********************************
 // ****** DIAGNOSTICS SETUP *******
@@ -577,88 +918,22 @@ void setup() {
   pLCD2004->begin();  // 20-char x 4-line LCD display via Serial 1.
   pLCD2004->println(lcdString);  // Display app version, defined above.
 
-
-
-
-  // Temporary: test switch wiring after hardware changes
-  testSwitchWiring();
-
-
-
-
-
   // *** INITIALIZE TSUNAMI WAV PLAYER OBJECT ***
  // Files must be WAV format, 16-bit PCM, 44.1kHz, Stereo.  Details in Tsunami.h comments.
   pTsunami = new Tsunami();  // Create Tsunami object on Serial3
   pTsunami->start();         // Start Tsunami WAV player
-  delay(10);                 // Give Tsunami time to initialize
+  delay(10);                 // Give Tsunami time to initialize  // *************************** Change to 1000 if 10ms is insufficient **********************
+  pTsunami->stopAllTracks(); // Clear any leftover playback
+  delay(50);
   // Ensure Tsunami is in a clean state on any reset:
   //  - stop any tracks that might have been left playing
   //  - reload and apply master / category gains
   //  - clear our "currently playing" state
   audioResetTsunamiState();
 
-  //tsunamiTest();             // Play test sound on startup to verify Tsunami is working.
-
-
-  if (pTsunami != nullptr) {
-    const int MUSIC_FADE_TIME_MS         = 500;
-    const int MUSIC_GAIN_DEFAULT_DB      = -5;
-    const int MUSIC_GAIN_FADE_DB         = -20;
-    const unsigned int TRACK_MODE_EXPLANATION = 35;
-    const unsigned int TRACK_MUSIC            = 36;
-    const unsigned int TRACK_TARGET_SFX       = 37;
-
-    audioResetTsunamiState();
-
-    // 1) Start looped music.
-    pTsunami->trackGain(TRACK_MUSIC, MUSIC_GAIN_DEFAULT_DB);
-    pTsunami->trackLoop(TRACK_MUSIC, true);
-    pTsunami->trackPlayPoly(TRACK_MUSIC, 0, false);
-    delay(5000);
-
-    // 2) Fade music down, then play the explanation.
-    pTsunami->trackFade(TRACK_MUSIC, MUSIC_GAIN_FADE_DB, MUSIC_FADE_TIME_MS, false);
-    delay(MUSIC_FADE_TIME_MS + 100);
-    pTsunami->trackPlayPoly(TRACK_MODE_EXPLANATION, 0, false);
-    delay(7000);
-
-    // 3) Bring the music back up and let it run 5 seconds.
-    pTsunami->trackFade(TRACK_MUSIC, MUSIC_GAIN_DEFAULT_DB, MUSIC_FADE_TIME_MS, false);
-    delay(MUSIC_FADE_TIME_MS + 100);
-    delay(5000);
-
-    // 4) Fire the target-hit SFX twice.
-    pTsunami->trackPlayPoly(TRACK_TARGET_SFX, 0, false);
-    delay(1000);
-    delay(3000);
-    pTsunami->trackPlayPoly(TRACK_TARGET_SFX, 0, false);
-    delay(5000);
-    // 5) Stop the music.
-    pTsunami->trackStop(TRACK_MUSIC);
-    delay(1000);
-
-    while (true) {
-      delay(1000);
-    }
-  }
-
-
-
-
-
-
-
-
-
-
-
   setGILamps(true);          // Turn on playfield G.I. lamps
   pMessage->sendMAStoSLVGILamp(true);  // Tell Slave to turn on its G.I. lamps as well
-
-  // runBasicDiagnostics();
-
-  // runRudimentarySwitchAndLampTests();
+  setAttractLamps();
 
 }  // End of setup()
 
@@ -720,72 +995,6 @@ void loop() {
 // ******************************************************** DIAGNOSTICS ***********************************************************
 // ********************************************************************************************************************************
 
-// Temporary function to test/verify switch wiring after hardware changes.
-// Call this near the end of setup() to enter an interactive switch test mode.
-// Close each switch on the playfield and verify the displayed index matches expectations.
-void testSwitchWiring() {
-  sprintf(lcdString, "Switch Test Mode");
-  pLCD2004->println(lcdString);
-  sprintf(lcdString, "Close switches...");
-  pLCD2004->println(lcdString);
-  delay(2000);
-
-  byte lastClosedSwitch = 0xFF;  // Track last reported switch to avoid spam
-  unsigned long lastCheckMillis = 0;
-
-  while (true) {
-
-    // Read all Centipede #2 inputs (16 bits at a time)
-    for (int i = 0; i < 4; i++) {
-      switchNewState[i] = pShiftRegister->portRead(4 + i);  // ports 4..7 => Centipede #2 inputs
-    }
-
-    // Scan all switches to find the most recent closure
-    byte closedSwitch = 0xFF;
-    for (byte sw = 0; sw < NUM_SWITCHES; sw++) {
-      if (switchClosed(sw)) {
-        closedSwitch = sw;
-        break;  // Report first closed switch found
-      }
-    }
-
-    // Display if different from last reported
-    if (closedSwitch != lastClosedSwitch) {
-      if (closedSwitch == 0xFF) {
-        sprintf(lcdString, "No switches closed");
-        pLCD2004->println(lcdString);
-        Serial.println(lcdString);
-      } else {
-        // Display switch index and Centipede pin number
-        byte centPin = switchParm[closedSwitch].pinNum;
-        sprintf(lcdString, "SW%02d Pin%03d", closedSwitch, centPin);
-        pLCD2004->println(lcdString);
-        Serial.println(lcdString);
-
-        // Also show name if available
-        if (closedSwitch < NUM_DIAG_SWITCHES) {
-          char swName[18];
-          diagCopyProgmemString(diagSwitchNames, closedSwitch, swName, sizeof(swName));
-          sprintf(lcdString, "%s", swName);
-          pLCD2004->println(lcdString);
-          Serial.println(lcdString);
-        }
-      }
-      lastClosedSwitch = closedSwitch;
-    }
-
-    // Exit test mode with DIAG_4 (Select) button
-    if (switchClosed(SWITCH_IDX_DIAG_4)) {
-      sprintf(lcdString, "Exiting test mode");
-      pLCD2004->println(lcdString);
-      delay(1000);
-      break;
-    }
-
-    delay(10);  // Small delay to prevent tight loop
-  }
-}
-
 // Handles top-level diagnostic button navigation. Returns true when we should exit diagnostics.
 static bool handleDiagnosticsMenuButtons() {
   if (diagButtonPressed(0)) {
@@ -793,21 +1002,19 @@ static bool handleDiagnosticsMenuButtons() {
     resetDiagButtonStates();
     markAttractDisplayDirty();
     markDiagnosticsDisplayDirty(true);
-    sprintf(lcdString, "Exit Diagnostics");
-    pLCD2004->println(lcdString);
+    lcdClear();  // Clear display before showing exit message
+    lcdShowDiagScreen("Exit Diagnostics", "", "", "");
+    delay(1000);  // Brief pause to show message
     return true;
   }
-
   if (diagButtonPressed(1)) {
     if (diagnosticSuiteIdx == 0) {
       diagnosticSuiteIdx = NUM_DIAG_SUITES - 1;
-    }
-    else {
+    } else {
       diagnosticSuiteIdx--;
     }
     markDiagnosticsDisplayDirty();
   }
-
   if (diagButtonPressed(2)) {
     diagnosticSuiteIdx++;
     if (diagnosticSuiteIdx >= NUM_DIAG_SUITES) {
@@ -815,14 +1022,10 @@ static bool handleDiagnosticsMenuButtons() {
     }
     markDiagnosticsDisplayDirty();
   }
-
   if (diagButtonPressed(3)) {
-    sprintf(lcdString, "Running Tests");
-    pLCD2004->println(lcdString);
-    markDiagnosticsDisplayDirty();
-  }
-
-  return false;
+    diagEnterSelectedSuite();
+    return false;  // Stay in diagnostics mode after suite exits
+  }  return false;
 }
 
 void runDiagnosticsLoop() {
@@ -833,16 +1036,732 @@ void runDiagnosticsLoop() {
   // DIAG_2: Previous suite
   // DIAG_3: Next suite
   // DIAG_4: Select current suite (future expansion)
-
   if (diagnosticState != 0) {
     diagnosticState = 0;
   }
-
   if (handleDiagnosticsMenuButtons()) {
     return;
   }
-
   renderDiagnosticsMenuIfNeeded();
+}
+
+// ********************************************************************************************************************************
+// *********************************************** DIAGNOSTIC SUITE HANDLERS ******************************************************
+// ********************************************************************************************************************************
+
+// Diagnostic suite indices (must match diagSuiteNames[] order)
+const byte DIAG_SUITE_VOLUME      = 0;
+const byte DIAG_SUITE_LAMPS       = 1;
+const byte DIAG_SUITE_SWITCHES    = 2;
+const byte DIAG_SUITE_COILS       = 3;
+const byte DIAG_SUITE_AUDIO       = 4;
+
+// Called when user presses SELECT on a suite
+void diagEnterSelectedSuite() {
+  lcdClear();
+  switch (diagnosticSuiteIdx) {
+  case DIAG_SUITE_VOLUME:
+    diagRunVolume();
+    break;
+  case DIAG_SUITE_LAMPS:
+    diagRunLamps();
+    break;
+  case DIAG_SUITE_SWITCHES:
+    diagRunSwitches();
+    break;
+  case DIAG_SUITE_COILS:
+    diagRunCoils();
+    break;
+  case DIAG_SUITE_AUDIO:
+    diagRunAudio();
+    break;
+  default:
+    break;
+  }
+  // After suite exits, refresh the menu display
+  lcdClear();
+  markDiagnosticsDisplayDirty(true);
+}
+
+// *** VOLUME SUITE ***
+void diagRunVolume() {
+  // Two-level navigation:
+  // Level 1: Select parameter with +/-, press SEL to enter adjustment mode
+  // Level 2: Adjust value with +/-, press BACK to return to parameter selection
+  byte paramIdx = 0;  // 0=Master, 1=Voice, 2=SFX, 3=Music, 4=Ducking
+  const byte NUM_PARAMS = 5;
+  const char* paramNames[NUM_PARAMS] = {
+    "Master",
+    "Voice Offset",
+    "SFX Offset",
+    "Music Offset",
+    "Duck Offset"
+  };
+
+  bool adjusting = false;  // false = selecting param, true = adjusting value
+  char buf[LCD_WIDTH + 1];
+
+  while (true) {
+    // Get current value for selected parameter
+    int8_t currentVal = 0;
+    switch (paramIdx) {
+    case 0: currentVal = tsunamiGainDb; break;
+    case 1: currentVal = tsunamiVoiceGainDb; break;
+    case 2: currentVal = tsunamiSfxGainDb; break;
+    case 3: currentVal = tsunamiMusicGainDb; break;
+    case 4: currentVal = tsunamiDuckingDb; break;
+    }
+
+    // Display current state
+    if (!adjusting) {
+      // Level 1: Parameter selection
+      lcdShowDiagScreen(
+        "VOLUME ADJUST",
+        paramNames[paramIdx],
+        "-/+ param SEL=enter",
+        "BACK=exit"
+      );
+      sprintf(buf, "Value: %4d dB", (int)currentVal);
+      lcdPrintRow(3, buf);
+    } else {
+      // Level 2: Value adjustment
+      lcdShowDiagScreen(
+        "VOLUME ADJUST",
+        paramNames[paramIdx],
+        "-/+ value",
+        "BACK=done"
+      );
+      sprintf(buf, "Value: %4d dB", (int)currentVal);
+      lcdPrintRow(3, buf);
+    }
+
+    // Button handling loop
+    while (true) {
+      for (int i = 0; i < 4; i++) {
+        switchOldState[i] = switchNewState[i];
+        switchNewState[i] = pShiftRegister->portRead(4 + i);
+      }
+
+      if (diagButtonPressed(0)) {  // BACK
+        if (adjusting) {
+          // Stop any test audio when exiting adjustment mode
+          if (pTsunami != nullptr) {
+            pTsunami->stopAllTracks();
+          }
+          adjusting = false;
+          break;  // Refresh display
+        } else {
+          // Exit volume suite entirely
+          return;
+        }
+      }
+
+      if (diagButtonPressed(1)) {  // Minus
+        if (!adjusting) {
+          // Navigate to previous parameter
+          if (paramIdx == 0) {
+            paramIdx = NUM_PARAMS - 1;
+          } else {
+            paramIdx--;
+          }
+          break;  // Refresh display
+        } else {
+          // Decrease current parameter value
+          switch (paramIdx) {
+          case 0:  // Master gain
+            audioAdjustMasterGain(-1);
+            if (pTsunami != nullptr) {
+              pTsunami->stopAllTracks();
+              delay(20);
+            }
+            audioPlayTrack(2001);  // Play music snippet for feedback
+            break;
+          case 1:  // Voice offset
+            tsunamiVoiceGainDb = constrain(tsunamiVoiceGainDb - 1, -20, 20);
+            audioSaveCategoryGains();
+            if (pTsunami != nullptr) {
+              pTsunami->stopAllTracks();
+              delay(20);
+            }
+            audioPlayTrackWithCategory(351, 0);  // Play voice with voice offset
+            break;
+          case 2:  // SFX offset
+            tsunamiSfxGainDb = constrain(tsunamiSfxGainDb - 1, -20, 20);
+            audioSaveCategoryGains();
+            if (pTsunami != nullptr) {
+              pTsunami->stopAllTracks();
+              delay(20);
+            }
+            audioPlayTrackWithCategory(1121, 1);  // Play SFX with SFX offset
+            break;
+          case 3:  // Music offset
+            tsunamiMusicGainDb = constrain(tsunamiMusicGainDb - 1, -20, 20);
+            audioSaveCategoryGains();
+            if (pTsunami != nullptr) {
+              pTsunami->stopAllTracks();
+              delay(20);
+            }
+            audioPlayTrackWithCategory(2001, 2);  // Play music with music offset
+            break;
+          case 4:  // Ducking offset
+            tsunamiDuckingDb = constrain(tsunamiDuckingDb - 1, -40, 0);
+            audioSaveDucking();
+            if (pTsunami != nullptr) {
+              pTsunami->stopAllTracks();
+              delay(20);
+            }
+            // Demonstrate ducking: music with ducking applied, then voice at full
+            audioPlayTrackWithCategory(2001, 2);  // Music with music offset
+            // Apply additional ducking to music
+            int duckGain = (int)tsunamiGainDb + (int)tsunamiMusicGainDb + (int)tsunamiDuckingDb;
+            if (duckGain < -70) duckGain = -70;
+            pTsunami->trackGain(2001, duckGain);
+            delay(100);
+            audioPlayTrackWithCategory(351, 0);   // Voice at full volume (voice offset applied)
+            break;
+          }
+          break;  // Refresh display
+        }
+      }
+
+      if (diagButtonPressed(2)) {  // Plus
+        if (!adjusting) {
+          // Navigate to next parameter
+          paramIdx++;
+          if (paramIdx >= NUM_PARAMS) {
+            paramIdx = 0;
+          }
+          break;  // Refresh display
+        }
+        else {
+          // Increase current parameter value
+          switch (paramIdx) {
+          case 0:  // Master gain
+            audioAdjustMasterGain(+1);
+            if (pTsunami != nullptr) {
+              pTsunami->stopAllTracks();
+              delay(20);
+            }
+            audioPlayTrack(2001);  // Play music snippet for feedback
+            break;
+          case 1:  // Voice offset
+            tsunamiVoiceGainDb = constrain(tsunamiVoiceGainDb + 1, -20, 20);
+            audioSaveCategoryGains();
+            if (pTsunami != nullptr) {
+              pTsunami->stopAllTracks();
+              delay(20);
+            }
+            audioPlayTrack(351);  // Play voice snippet
+            break;
+          case 2:  // SFX offset
+            tsunamiSfxGainDb = constrain(tsunamiSfxGainDb + 1, -20, 20);
+            audioSaveCategoryGains();
+            if (pTsunami != nullptr) {
+              pTsunami->stopAllTracks();
+              delay(20);
+            }
+            audioPlayTrack(1121);  // Play SFX: car honk
+            break;
+          case 3:  // Music offset
+            tsunamiMusicGainDb = constrain(tsunamiMusicGainDb + 1, -20, 20);
+            audioSaveCategoryGains();
+            if (pTsunami != nullptr) {
+              pTsunami->stopAllTracks();
+              delay(20);
+            }
+            audioPlayTrack(2001);  // Play music snippet
+            break;
+          case 4:  // Ducking offset
+            tsunamiDuckingDb = constrain(tsunamiDuckingDb + 1, -40, 0);
+            audioSaveDucking();
+            if (pTsunami != nullptr) {
+              pTsunami->stopAllTracks();
+              delay(20);
+            }
+            // Demonstrate ducking: play music first, then voice over it
+            audioPlayTrack(2001);  // Start music
+            delay(100);  // Brief delay to let music start
+            audioPlayTrack(351);   // Play voice over music
+            break;
+          }
+          break;  // Refresh display
+        }
+      }
+
+      if (diagButtonPressed(3)) {  // SELECT
+        if (!adjusting) {
+          // Enter adjustment mode for selected parameter
+          adjusting = true;
+          break;  // Refresh display
+        }
+        // Ignore SELECT while adjusting (only BACK exits adjustment mode)
+      }
+
+      delay(10);
+    }
+  }
+}
+
+// New helper function to set attract lamp state
+void setAttractLamps() {
+  // Turn on GI lamps (both Master playfield and Slave head)
+  setGILamps(true);
+  pMessage->sendMAStoSLVGILamp(true);
+
+  // Turn on all 7 bumper lamps (S-C-R-E-A-M-O)
+  for (byte i = LAMP_IDX_S; i <= LAMP_IDX_O; i++) {
+    pShiftRegister->digitalWrite(lampParm[i].pinNum, LOW);  // ON
+  }
+
+  // Turn off everything else on Master
+  for (byte i = 0; i < NUM_LAMPS; i++) {
+    if (lampParm[i].groupNum != LAMP_GROUP_GI &&
+      lampParm[i].groupNum != LAMP_GROUP_BUMPER) {
+      pShiftRegister->digitalWrite(lampParm[i].pinNum, HIGH);  // OFF
+    }
+  }
+
+  // Turn off Slave score and tilt lamps
+  pMessage->sendMAStoSLVScoreAbs(0);
+  pMessage->sendMAStoSLVTiltLamp(false);
+}
+
+// *** LAMP SUITE ***
+void diagRunLamps() {
+  // On entry: turn ALL lamps off for clean testing
+  for (byte i = 0; i < NUM_LAMPS; i++) {
+    pShiftRegister->digitalWrite(lampParm[i].pinNum, HIGH);
+  }
+  pMessage->sendMAStoSLVScoreAbs(0);
+  pMessage->sendMAStoSLVGILamp(false);
+  pMessage->sendMAStoSLVTiltLamp(false);
+
+  const byte NUM_SLAVE_LAMPS = 29;
+  const byte NUM_TOTAL_LAMPS = NUM_LAMPS + NUM_SLAVE_LAMPS;
+  byte lampIdx = 0;
+  char buf[LCD_WIDTH + 1];
+
+  // Turn on first lamp immediately
+  if (lampIdx < NUM_LAMPS) {
+    pShiftRegister->digitalWrite(lampParm[lampIdx].pinNum, LOW);
+  }
+
+  while (true) {
+    // Line 1: Title
+    lcdPrintRow(1, "LAMP TEST");
+
+    // Line 2: Lamp ID + name
+    if (lampIdx < NUM_LAMPS) {
+      char lampName[17];
+      diagCopyProgmemString(diagLampNames, lampIdx, lampName, sizeof(lampName));
+      sprintf(buf, "M%02d: %.15s", lampIdx, lampName);
+    }
+    else {
+      byte slaveLampIdx = lampIdx - NUM_LAMPS;
+      if (slaveLampIdx < 9) {
+        sprintf(buf, "S%02d: %dK", slaveLampIdx, (slaveLampIdx + 1) * 10);
+      }
+      else if (slaveLampIdx < 18) {
+        sprintf(buf, "S%02d: %dK", slaveLampIdx, (slaveLampIdx - 8) * 100);
+      }
+      else if (slaveLampIdx < 27) {
+        sprintf(buf, "S%02d: %dM", slaveLampIdx, (slaveLampIdx - 17));
+      }
+      else if (slaveLampIdx == 27) {
+        sprintf(buf, "S27: GI");
+      }
+      else {
+        sprintf(buf, "S28: TILT");
+      }
+    }
+    lcdPrintRow(2, buf);
+
+    // Lines 3-4: Status/info (no button instructions)
+    sprintf(buf, "Lamp %d of %d", lampIdx + 1, NUM_TOTAL_LAMPS);
+    lcdPrintRow(3, buf);
+    lcdPrintRow(4, "ON");
+
+    while (true) {
+      for (int i = 0; i < 4; i++) {
+        switchOldState[i] = switchNewState[i];
+        switchNewState[i] = pShiftRegister->portRead(4 + i);
+      }
+
+      if (diagButtonPressed(0)) {  // BACK
+        if (lampIdx < NUM_LAMPS) {
+          pShiftRegister->digitalWrite(lampParm[lampIdx].pinNum, HIGH);
+        }
+        else {
+          byte slaveLampIdx = lampIdx - NUM_LAMPS;
+          if (slaveLampIdx < 27) {
+            pMessage->sendMAStoSLVScoreAbs(0);
+          }
+          else if (slaveLampIdx == 27) {
+            pMessage->sendMAStoSLVGILamp(false);
+          }
+          else {
+            pMessage->sendMAStoSLVTiltLamp(false);
+          }
+        }
+        setAttractLamps();
+        return;
+      }
+
+      if (diagButtonPressed(1)) {  // Prev
+        if (lampIdx < NUM_LAMPS) {
+          pShiftRegister->digitalWrite(lampParm[lampIdx].pinNum, HIGH);
+        }
+        else {
+          byte slaveLampIdx = lampIdx - NUM_LAMPS;
+          if (slaveLampIdx < 27) {
+            pMessage->sendMAStoSLVScoreAbs(0);
+          }
+          else if (slaveLampIdx == 27) {
+            pMessage->sendMAStoSLVGILamp(false);
+          }
+          else {
+            pMessage->sendMAStoSLVTiltLamp(false);
+          }
+        }
+
+        if (lampIdx == 0) lampIdx = NUM_TOTAL_LAMPS - 1;
+        else lampIdx--;
+
+        if (lampIdx < NUM_LAMPS) {
+          pShiftRegister->digitalWrite(lampParm[lampIdx].pinNum, LOW);
+        }
+        else {
+          byte slaveLampIdx = lampIdx - NUM_LAMPS;
+          if (slaveLampIdx < 9) {
+            pMessage->sendMAStoSLVScoreAbs(slaveLampIdx + 1);
+          }
+          else if (slaveLampIdx < 18) {
+            pMessage->sendMAStoSLVScoreAbs((slaveLampIdx - 8) * 10);
+          }
+          else if (slaveLampIdx < 27) {
+            pMessage->sendMAStoSLVScoreAbs((slaveLampIdx - 17) * 100);
+          }
+          else if (slaveLampIdx == 27) {
+            pMessage->sendMAStoSLVGILamp(true);
+          }
+          else {
+            pMessage->sendMAStoSLVTiltLamp(true);
+          }
+        }
+        break;
+      }
+
+      if (diagButtonPressed(2)) {  // Next
+        if (lampIdx < NUM_LAMPS) {
+          pShiftRegister->digitalWrite(lampParm[lampIdx].pinNum, HIGH);
+        }
+        else {
+          byte slaveLampIdx = lampIdx - NUM_LAMPS;
+          if (slaveLampIdx < 27) {
+            pMessage->sendMAStoSLVScoreAbs(0);
+          }
+          else if (slaveLampIdx == 27) {
+            pMessage->sendMAStoSLVGILamp(false);
+          }
+          else {
+            pMessage->sendMAStoSLVTiltLamp(false);
+          }
+        }
+
+        lampIdx++;
+        if (lampIdx >= NUM_TOTAL_LAMPS) lampIdx = 0;
+
+        if (lampIdx < NUM_LAMPS) {
+          pShiftRegister->digitalWrite(lampParm[lampIdx].pinNum, LOW);
+        }
+        else {
+          byte slaveLampIdx = lampIdx - NUM_LAMPS;
+          if (slaveLampIdx < 9) {
+            pMessage->sendMAStoSLVScoreAbs(slaveLampIdx + 1);
+          }
+          else if (slaveLampIdx < 18) {
+            pMessage->sendMAStoSLVScoreAbs((slaveLampIdx - 8) * 10);
+          }
+          else if (slaveLampIdx < 27) {
+            pMessage->sendMAStoSLVScoreAbs((slaveLampIdx - 17) * 100);
+          }
+          else if (slaveLampIdx == 27) {
+            pMessage->sendMAStoSLVGILamp(true);
+          }
+          else {
+            pMessage->sendMAStoSLVTiltLamp(true);
+          }
+        }
+        break;
+      }
+
+      delay(10);
+    }
+  }
+}
+
+// *** SWITCH SUITE ***
+void diagRunSwitches() {
+  byte lastSwitch = 0xFF;
+  bool lastSwitchWasClosed = false;
+  char buf[LCD_WIDTH + 1];
+
+  lcdPrintRow(1, "SWITCH TEST");
+  lcdPrintRow(2, "Waiting...");
+  lcdPrintRow(3, "");
+  lcdPrintRow(4, "");
+
+  while (true) {
+    for (int i = 0; i < 4; i++) {
+      switchOldState[i] = switchNewState[i];
+      switchNewState[i] = pShiftRegister->portRead(4 + i);
+    }
+
+    if (diagButtonPressed(0)) {
+      return;
+    }
+
+    byte closedSwitch = 0xFF;
+    for (byte sw = 0; sw < NUM_SWITCHES; sw++) {
+      if (switchClosed(sw)) {
+        closedSwitch = sw;
+        break;
+      }
+    }
+
+    if (closedSwitch != lastSwitch) {
+      if (closedSwitch == 0xFF) {
+        if (lastSwitchWasClosed) {
+          audioPlayTrack(105);
+          lastSwitchWasClosed = false;
+        }
+        lcdPrintRow(2, "Waiting...");
+        lcdPrintRow(3, "");
+        lcdPrintRow(4, "");
+      }
+      else {
+        char swName[17];
+        diagCopyProgmemString(diagSwitchNames, closedSwitch, swName, sizeof(swName));
+        sprintf(buf, "SW%02d: %.14s", closedSwitch, swName);
+        lcdPrintRow(2, buf);
+        sprintf(buf, "Switch %d of %d", closedSwitch + 1, NUM_SWITCHES);
+        lcdPrintRow(3, buf);
+        sprintf(buf, "Pin: %d", switchParm[closedSwitch].pinNum);
+        lcdPrintRow(4, buf);
+        audioPlayTrack(104);
+        lastSwitchWasClosed = true;
+      }
+      lastSwitch = closedSwitch;
+    }
+    delay(10);
+  }
+}
+
+// *** COIL/MOTOR SUITE ***
+void diagRunCoils() {
+  const byte NUM_SLAVE_DEVS = 6;
+  const byte NUM_TOTAL_DEVS = NUM_DEVS + NUM_SLAVE_DEVS;
+  byte devIdx = 0;
+  char buf[LCD_WIDTH + 1];
+  bool motorRunning = false;
+
+  while (true) {
+    // Line 1: Title
+    lcdPrintRow(1, "COIL/MOTOR TEST");
+
+    // Line 2: Device ID + name
+    if (devIdx < NUM_DEVS) {
+      char devName[17];
+      diagCopyProgmemString(diagCoilNames, devIdx, devName, sizeof(devName));
+      sprintf(buf, "M%02d: %.15s", devIdx, devName);
+    }
+    else {
+      byte slaveDevIdx = devIdx - NUM_DEVS;
+      const char* slaveDevNames[6] = {
+        "Credit Up", "Credit Down", "10K Up", "10K Bell", "100K Bell", "Select Bell"
+      };
+      sprintf(buf, "S%02d: %.13s", slaveDevIdx, slaveDevNames[slaveDevIdx]);
+    }
+    lcdPrintRow(2, buf);
+
+    // Line 3: Device counter
+    sprintf(buf, "Device %d of %d", devIdx + 1, NUM_TOTAL_DEVS);
+    lcdPrintRow(3, buf);
+
+    // Line 4: Status
+    if (motorRunning) {
+      lcdPrintRow(4, "RUNNING");
+    }
+    else {
+      lcdPrintRow(4, "Ready");
+    }
+
+    while (true) {
+      for (int i = 0; i < 4; i++) {
+        switchOldState[i] = switchNewState[i];
+        switchNewState[i] = pShiftRegister->portRead(4 + i);
+      }
+
+      if (diagButtonPressed(0)) {  // BACK
+        if (motorRunning) {
+          if (devIdx == DEV_IDX_MOTOR_SHAKER) {
+            analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, 0);
+          }
+          else if (devIdx == DEV_IDX_MOTOR_SCORE) {
+            digitalWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, LOW);
+          }
+          motorRunning = false;
+        }
+        return;
+      }
+
+      if (diagButtonPressed(1)) {  // Prev
+        if (motorRunning) {
+          if (devIdx == DEV_IDX_MOTOR_SHAKER) {
+            analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, 0);
+          }
+          else if (devIdx == DEV_IDX_MOTOR_SCORE) {
+            digitalWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, LOW);
+          }
+          motorRunning = false;
+        }
+        if (devIdx == 0) devIdx = NUM_TOTAL_DEVS - 1;
+        else devIdx--;
+        break;
+      }
+
+      if (diagButtonPressed(2)) {  // Next
+        if (motorRunning) {
+          if (devIdx == DEV_IDX_MOTOR_SHAKER) {
+            analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, 0);
+          }
+          else if (devIdx == DEV_IDX_MOTOR_SCORE) {
+            digitalWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, LOW);
+          }
+          motorRunning = false;
+        }
+        devIdx++;
+        if (devIdx >= NUM_TOTAL_DEVS) devIdx = 0;
+        break;
+      }
+
+      if (diagButtonPressed(3)) {  // Fire/Start motor
+        if (devIdx == DEV_IDX_MOTOR_SHAKER) {
+          analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, MOTOR_SHAKER_POWER_MIN);
+          motorRunning = true;
+        }
+        else if (devIdx == DEV_IDX_MOTOR_SCORE) {
+          digitalWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, HIGH);
+          motorRunning = true;
+        }
+        else if (devIdx < NUM_DEVS) {
+          analogWrite(deviceParm[devIdx].pinNum, deviceParm[devIdx].powerInitial);
+          delay(deviceParm[devIdx].timeOn * 10);
+          analogWrite(deviceParm[devIdx].pinNum, 0);
+        }
+        else {
+          byte slaveDevIdx = devIdx - NUM_DEVS;
+          switch (slaveDevIdx) {
+          case 0: pMessage->sendMAStoSLVCreditInc(1); break;
+          case 1: pMessage->sendMAStoSLVCreditDec(); break;
+          case 2: pMessage->sendMAStoSLV10KUnitPulse(); break;
+          case 3: pMessage->sendMAStoSLVBell10K(); break;
+          case 4: pMessage->sendMAStoSLVBell100K(); break;
+          case 5: pMessage->sendMAStoSLVBellSelect(); break;
+          }
+        }
+      }
+
+      if (motorRunning && !switchClosed(SWITCH_IDX_DIAG_4)) {
+        if (devIdx == DEV_IDX_MOTOR_SHAKER) {
+          analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, 0);
+        }
+        else if (devIdx == DEV_IDX_MOTOR_SCORE) {
+          digitalWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, LOW);
+        }
+        motorRunning = false;
+      }
+
+      delay(10);
+    }
+  }
+}
+
+// *** AUDIO SUITE *** (Enhanced with descriptions)
+void diagRunAudio() {
+  unsigned int trackIdx = 0;
+  char buf[LCD_WIDTH + 1];
+  char line1[21];
+  char line2[21];
+
+  while (true) {
+    // Get actual track number from PROGMEM
+    unsigned int testTrack = pgm_read_word(&diagAudioTrackNums[trackIdx]);
+
+    // Get track descriptions from PROGMEM (should match trackIdx position)
+    diagCopyProgmemString(diagAudioLine1, trackIdx, line1, sizeof(line1));
+    diagCopyProgmemString(diagAudioLine2, trackIdx, line2, sizeof(line2));
+
+    // Line 1: Track number + category
+    lcdPrintRow(1, line1);
+
+    // Line 2: Description
+    lcdPrintRow(2, line2);
+
+    // Line 3: Track counter
+    sprintf(buf, "Track %d of %d", trackIdx + 1, NUM_DIAG_AUDIO_TRACKS);
+    lcdPrintRow(3, buf);
+
+    // Line 4: Show actual track number for verification
+    lcdPrintRow(4, "Ready");
+
+    while (true) {
+      for (int i = 0; i < 4; i++) {
+        switchOldState[i] = switchNewState[i];
+        switchNewState[i] = pShiftRegister->portRead(4 + i);
+      }
+
+      if (diagButtonPressed(0)) {  // BACK
+        if (pTsunami != nullptr) {
+          pTsunami->stopAllTracks();
+        }
+        return;
+      }
+
+      if (diagButtonPressed(1)) {  // Prev track
+        if (trackIdx > 0) {
+          trackIdx--;
+        }
+        else {
+          trackIdx = NUM_DIAG_AUDIO_TRACKS - 1;
+        }
+        break;  // Refresh display
+      }
+
+      if (diagButtonPressed(2)) {  // Next track
+        trackIdx++;
+        if (trackIdx >= NUM_DIAG_AUDIO_TRACKS) {
+          trackIdx = 0;
+        }
+        break;  // Refresh display
+      }
+
+      if (diagButtonPressed(3)) {  // Play
+        if (pTsunami != nullptr) {
+          pTsunami->stopAllTracks();
+          delay(50);
+          pTsunami->trackPlaySolo(testTrack, 0, false);
+          lcdPrintRow(4, "Playing...");
+          delay(200);  // Brief visual feedback
+        }
+        else {
+          lcdPrintRow(4, "Tsunami NULL!");
+        }
+      }
+
+      delay(10);
+    }
+  }
 }
 
 // ********************************************************************************************************************************
@@ -926,10 +1845,7 @@ void renderAttractDisplayIfNeeded() {
   if (!attractDisplayDirty || pLCD2004 == nullptr) {
     return;
   }
-  sprintf(lcdString, "Screamo Ready");
-  pLCD2004->println(lcdString);
-  sprintf(lcdString, "Press Start");
-  pLCD2004->println(lcdString);
+  lcdShowDiagScreen("Screamo Ready", "Press Start", "", "");
   attractDisplayDirty = false;
 }
 
@@ -949,10 +1865,55 @@ void renderDiagnosticsMenuIfNeeded() {
   }
   diagDisplayDirty = false;
   diagLastRenderedSuite = diagnosticSuiteIdx;
-  sprintf(lcdString, "Diagnostics");
-  pLCD2004->println(lcdString);
-  sprintf(lcdString, "%s", diagSuiteNames[diagnosticSuiteIdx]);
-  pLCD2004->println(lcdString);
+  // Show 4-line diagnostic menu
+  lcdShowDiagScreen(
+    "DIAGNOSTICS",
+    diagSuiteNames[diagnosticSuiteIdx],
+    "-/+ to scroll",
+    "SEL=run  BACK=exit"
+  );
+}
+
+// ********************************************************************************************************************************
+// ************************************************* LCD DISPLAY HELPERS **********************************************************
+// ********************************************************************************************************************************
+
+// Clear LCD and mark display states dirty so they refresh
+void lcdClear() {
+  if (pLCD2004 != nullptr) {
+    pLCD2004->clearScreen();
+  }
+}
+
+// Display text on a specific row (1-4), left-justified, padded/truncated to 20 chars
+void lcdPrintRow(byte t_row, const char* t_text) {
+  if (pLCD2004 == nullptr || t_row < 1 || t_row > 4) {
+    return;
+  }
+  // Build a 20-char padded string
+  char buf[LCD_WIDTH + 1];
+  memset(buf, ' ', LCD_WIDTH);
+  buf[LCD_WIDTH] = '\0';
+  byte len = strlen(t_text);
+  if (len > LCD_WIDTH) len = LCD_WIDTH;
+  memcpy(buf, t_text, len);
+  pLCD2004->printRowCol(t_row, 1, buf);
+}
+
+// Display text at specific row/col (1-based), no padding
+void lcdPrintAt(byte t_row, byte t_col, const char* t_text) {
+  if (pLCD2004 == nullptr) {
+    return;
+  }
+  pLCD2004->printRowCol(t_row, t_col, t_text);
+}
+
+// Format and display a 4-line diagnostic screen
+void lcdShowDiagScreen(const char* line1, const char* line2, const char* line3, const char* line4) {
+  lcdPrintRow(1, line1);
+  lcdPrintRow(2, line2);
+  lcdPrintRow(3, line3);
+  lcdPrintRow(4, line4);
 }
 
 void setAllDevicesOff() {
@@ -1004,25 +1965,31 @@ void softwareReset() {
 void updateModeAttract() {
   renderAttractDisplayIfNeeded();
 
-  if (audioCurrentMusicTrack == 0) {
-    audioStartMainMusic();
+  // Volume adjustment with +/- buttons
+  // If no music playing, start a test track so user can hear the change
+  if (diagButtonPressed(1)) {  // Minus
+    if (audioCurrentMusicTrack == 0) {
+      audioStartMusicTrack(musTracksCircus[0].trackNum, musTracksCircus[0].lengthSeconds, false);
+    }
+    audioAdjustMasterGainQuiet(-1);
   }
-
-  if (diagButtonPressed(1)) {
-    audioAdjustMasterGain(-1);
-    audioPlayCoasterDrop();
+  if (diagButtonPressed(2)) {  // Plus
+    if (audioCurrentMusicTrack == 0) {
+      audioStartMusicTrack(musTracksCircus[0].trackNum, musTracksCircus[0].lengthSeconds, false);
+    }
+    audioAdjustMasterGainQuiet(+1);
   }
-
-  if (diagButtonPressed(2)) {
-    audioAdjustMasterGain(+1);
-    audioPlayCoasterDrop();
+  if (diagButtonPressed(0)) {  // Back - stop any test music
+    audioStopMusic();
+    markAttractDisplayDirty();  // Refresh display to show "Screamo Ready"
   }
-
-  if (diagButtonPressed(3)) {
+  if (diagButtonPressed(3)) {  // Enter diagnostics
+    audioStopMusic();  // Stop test music when entering diagnostics
     resetDiagButtonStates();
     modeCurrent = MODE_DIAGNOSTIC;
     diagnosticSuiteIdx = 0;
     diagnosticState = 0;
+    lcdClear();
     markDiagnosticsDisplayDirty(true);
     return;
   }
@@ -1040,12 +2007,12 @@ void updateModeOriginal() {
 void updateModeEnhanced() {
   // TODO: main Enhanced game logic here.
 
+  // Volume adjustment - music should already be playing
   if (diagButtonPressed(1)) {
-    audioAdjustMasterGain(-1);
+    audioAdjustMasterGainQuiet(-1);
   }
-
   if (diagButtonPressed(2)) {
-    audioAdjustMasterGain(+1);
+    audioAdjustMasterGainQuiet(+1);
   }
 }
 
@@ -1067,34 +2034,8 @@ void updateModeDiagnostic() {
   runDiagnosticsLoop();
 }
 
-void tsunamiTest() {
-  // Here is some code to test the Tsunami WAV player by playing a sound...
-  // Call example: playTsunamiSound(1);
-  // 001..016 are spoken numbers
-  // 020 is coaster clicks
-  // 021 is coaster clicks with 10-char filename
-  // 030 is "cock the gun" being spoken
-  // 031 is American Flyer announcement
-  // Track number, output number is always 0, lock T/F
-
-  pTsunami->trackPlayPoly(21, 0, false);
-  delay(2000);
-  pTsunami->trackPlayPoly(30, 0, false);
-  delay(2000);
-  pTsunami->trackPlayPoly(1, 0, false);
-  delay(2000);
-  pTsunami->trackStop(21);
-}
-
 // ************************************
 // ***** TSUNAMI HELPER FUNCTIONS *****
-// ************************************
-
-// This gives us simple primitives: audioPlayTrack(trackNum); and audioStopTrack(trackNum);
-// We can call these directly for “fire and forget” events.
-
-// ************************************
-// ***** TSUNAMI GAIN / VOLUME    *****
 // ************************************
 
 // Master gain applies to all outputs; category gains are applied per-track on top of master.
@@ -1102,34 +2043,42 @@ void audioApplyMasterGain() {
   if (pTsunami == nullptr) {
     return;
   }
-
   int gain = (int)tsunamiGainDb;
-
   for (int out = 0; out < TSUNAMI_NUM_OUTPUTS; out++) {
     pTsunami->masterGain(out, gain);
   }
 }
 
+// Apply category-specific gain offset to a track after starting it.
+// Call this immediately after trackPlay() to apply voice/sfx/music offsets.
+void audioApplyTrackGain(unsigned int t_trackNum, int8_t t_categoryOffset) {
+  if (pTsunami == nullptr) {
+    return;
+  }
+  // Calculate total gain: master + category offset
+  int totalGain = (int)tsunamiGainDb + (int)t_categoryOffset;
+  // Clamp to valid range
+  if (totalGain < -70) totalGain = -70;
+  if (totalGain > 10) totalGain = 10;
+  // Apply to this specific track
+  pTsunami->trackGain((int)t_trackNum, totalGain);
+}
+
 void audioSaveMasterGain() {
-  // Store tsunamiGainDb as a single signed byte
   EEPROM.update(EEPROM_ADDR_TSUNAMI_GAIN, (byte)tsunamiGainDb);
 }
 
 void audioLoadMasterGain() {
   byte raw = EEPROM.read(EEPROM_ADDR_TSUNAMI_GAIN);
   int8_t val = (int8_t)raw;
-
   if (val < TSUNAMI_GAIN_DB_MIN || val > TSUNAMI_GAIN_DB_MAX) {
     tsunamiGainDb = TSUNAMI_GAIN_DB_DEFAULT;
     audioSaveMasterGain();
-  }
-  else {
+  } else {
     tsunamiGainDb = val;
   }
 }
 
-// Persist per-category relative gains in EEPROM.
-// These are smaller-range trims layered on top of tsunamiGainDb.
 void audioSaveCategoryGains() {
   EEPROM.update(EEPROM_ADDR_TSUNAMI_GAIN_VOICE, (byte)tsunamiVoiceGainDb);
   EEPROM.update(EEPROM_ADDR_TSUNAMI_GAIN_SFX, (byte)tsunamiSfxGainDb);
@@ -1137,265 +2086,107 @@ void audioSaveCategoryGains() {
 }
 
 void audioLoadCategoryGains() {
+  const int8_t CAT_TRIM_MIN = -20;
+  const int8_t CAT_TRIM_MAX =  20;
   int8_t v = (int8_t)EEPROM.read(EEPROM_ADDR_TSUNAMI_GAIN_VOICE);
   int8_t s = (int8_t)EEPROM.read(EEPROM_ADDR_TSUNAMI_GAIN_SFX);
   int8_t m = (int8_t)EEPROM.read(EEPROM_ADDR_TSUNAMI_GAIN_MUSIC);
-
-  // Use a modest range for category trims; these are relative to master.
-  const int8_t CAT_TRIM_MIN = -20;
-  const int8_t CAT_TRIM_MAX =  20;
-
-  if (v < CAT_TRIM_MIN || v > CAT_TRIM_MAX) {
-    v = 0;
-  }
-  if (s < CAT_TRIM_MIN || s > CAT_TRIM_MAX) {
-    s = 0;
-  }
-  if (m < CAT_TRIM_MIN || m > CAT_TRIM_MAX) {
-    m = 0;
-  }
-
+  if (v < CAT_TRIM_MIN || v > CAT_TRIM_MAX) v = 0;
+  if (s < CAT_TRIM_MIN || s > CAT_TRIM_MAX) s = 0;
+  if (m < CAT_TRIM_MIN || m > CAT_TRIM_MAX) m = 0;
   tsunamiVoiceGainDb = v;
   tsunamiSfxGainDb   = s;
   tsunamiMusicGainDb = m;
-
-  // Optional: normalize stored values in case they were invalid.
   audioSaveCategoryGains();
 }
 
-// Stop all playback on Tsunami and restore default/master/category gains.
-// Call once during setup after pTsunami->start().
+void audioSaveDucking() {
+  EEPROM.update(EEPROM_ADDR_TSUNAMI_DUCK_DB, (byte)tsunamiDuckingDb);
+}
+
+void audioLoadDucking() {
+  int8_t val = (int8_t)EEPROM.read(EEPROM_ADDR_TSUNAMI_DUCK_DB);
+  if (val < -40 || val > 0) {
+    tsunamiDuckingDb = -20;  // Default
+    audioSaveDucking();
+  } else {
+    tsunamiDuckingDb = val;
+  }
+}
+
+// Stop all playback on Tsunami and restore gains from EEPROM.
+// Call once during setup() after pTsunami->start().
 void audioResetTsunamiState() {
   if (pTsunami == nullptr) {
     return;
   }
-
-  // Stop ALL tracks (Tsunami supports up to 4096, but we can cover what we use).
-  // trackStop(0) is typically "stop all", but we are explicit for safety.
+  // Stop all tracks
   for (int trk = 1; trk <= 256; trk++) {
     pTsunami->trackStop(trk);
   }
-
-  // Reload master and category gains from EEPROM (in case reset happened
-  // after changes but before they were persisted, or after a crash).
+  // Reload and apply gains from EEPROM
   audioLoadMasterGain();
   audioLoadCategoryGains();
-
-  // Reapply master gain to all outputs.
+  audioLoadDucking();  // Add this line
   audioApplyMasterGain();
-
-  // Clear "currently playing" bookkeeping so mode code does not think
-  // something is active when Tsunami is now stopped.
-  audioCurrentVoiceTrack = 0;
+  // Clear "currently playing" bookkeeping
+  audioCurrentComTrack   = 0;
   audioCurrentSfxTrack   = 0;
   audioCurrentMusicTrack = 0;
 }
 
-// Compute effective gain (in Tsunami units) for a given category,
-// combining master gain and relative category trim, and clamping to Tsunami range.
-int audioGetEffectiveGainDb(byte t_category) {
-  int base = (int)tsunamiGainDb;
-
-  if (t_category == AUDIO_CAT_VOICE) {
-    base += (int)tsunamiVoiceGainDb;
-  }
-  else if (t_category == AUDIO_CAT_SFX) {
-    base += (int)tsunamiSfxGainDb;
-  }
-  else if (t_category == AUDIO_CAT_MUSIC) {
-    base += (int)tsunamiMusicGainDb;
-  }
-
-  if (base < TSUNAMI_GAIN_DB_MIN) {
-    base = TSUNAMI_GAIN_DB_MIN;
-  }
-  else if (base > TSUNAMI_GAIN_DB_MAX) {
-    base = TSUNAMI_GAIN_DB_MAX;
-  }
-
-  return base;
-}
-
 void audioAdjustMasterGain(int8_t t_deltaDb) {
   int newVal = (int)tsunamiGainDb + (int)t_deltaDb;
-  if (newVal < TSUNAMI_GAIN_DB_MIN) {
-    newVal = TSUNAMI_GAIN_DB_MIN;
-  }
-  else if (newVal > TSUNAMI_GAIN_DB_MAX) {
-    newVal = TSUNAMI_GAIN_DB_MAX;
-  }
-
-  if ((int8_t)newVal == tsunamiGainDb) {
-    // No change; nothing to do.
-    return;
-  }
-
+  if (newVal < TSUNAMI_GAIN_DB_MIN) newVal = TSUNAMI_GAIN_DB_MIN;
+  if (newVal > TSUNAMI_GAIN_DB_MAX) newVal = TSUNAMI_GAIN_DB_MAX;
+  if ((int8_t)newVal == tsunamiGainDb) return;
   tsunamiGainDb = (int8_t)newVal;
   audioApplyMasterGain();
   audioSaveMasterGain();
-
-  // Optional: show gain on LCD line (kept under 20 chars).
   sprintf(lcdString, "Vol %3d dB", (int)tsunamiGainDb);
-  pLCD2004->println(lcdString);
+  lcdPrintRow(4, lcdString);  // Changed from pLCD2004->println()
 }
 
-// Adjust a specific category's relative gain (in dB) and persist.
-void audioAdjustCategoryGain(byte t_category, int8_t t_deltaDb) {
-  int8_t* pGain = nullptr;
-
-  switch (t_category) {
-  case AUDIO_CAT_VOICE: pGain = &tsunamiVoiceGainDb; break;
-  case AUDIO_CAT_SFX:   pGain = &tsunamiSfxGainDb;   break;
-  case AUDIO_CAT_MUSIC: pGain = &tsunamiMusicGainDb; break;
-  default:
-    return;
-  }
-
-  // Category trims use a smaller window than the absolute Tsunami range.
-  const int8_t CAT_TRIM_MIN = -20;
-  const int8_t CAT_TRIM_MAX =  20;
-
-  int newVal = (int)(*pGain) + (int)t_deltaDb;
-  if (newVal < CAT_TRIM_MIN) {
-    newVal = CAT_TRIM_MIN;
-  } else if (newVal > CAT_TRIM_MAX) {
-    newVal = CAT_TRIM_MAX;
-  }
-
-  if ((int8_t)newVal == *pGain) {
-    return;
-  }
-
-  *pGain = (int8_t)newVal;
-  audioSaveCategoryGains();
-
-  // Simple feedback; caller can decide when to show this.
-  sprintf(lcdString, "Cat %u %+3d dB", (unsigned)t_category, (int)(*pGain));
-  pLCD2004->println(lcdString);
-}
-
-// Internal: update per-category "now playing" state based on a track index.
-void audioSetCurrentFromIndex(byte t_index, bool t_set) {
-  if (t_index >= NUM_AUDIO_TRACKS) {
-    return;
-  }
-/*
-  if (!t_set) {
-    unsigned int trackNum = audioTracks[t_index].trackNum;
-    byte category = audioTracks[t_index].category;
-
-    if (category == AUDIO_CAT_VOICE && audioCurrentVoiceTrack == trackNum) {
-      audioCurrentVoiceTrack = 0;
-    } else if (category == AUDIO_CAT_SFX && audioCurrentSfxTrack == trackNum) {
-      audioCurrentSfxTrack = 0;
-    } else if (category == AUDIO_CAT_MUSIC && audioCurrentMusicTrack == trackNum) {
-      audioCurrentMusicTrack = 0;
-    }
-    return;
-  }
-
-  unsigned int trackNum = audioTracks[t_index].trackNum;
-  byte category = audioTracks[t_index].category;
-
-  if (category == AUDIO_CAT_VOICE) {
-    audioCurrentVoiceTrack = trackNum;
-  } else if (category == AUDIO_CAT_SFX) {
-    audioCurrentSfxTrack = trackNum;
-  } else if (category == AUDIO_CAT_MUSIC) {
-    audioCurrentMusicTrack = trackNum;
-  }
-*/
-}
-
-// Core helper: start a specific track by index, using its metadata flags.
-void audioPlayTrackByIndex(byte t_index) {
-  if (pTsunami == nullptr) {
-    return;
-  }
-/*  if (t_index >= NUM_AUDIO_TRACKS) {
-    return;
-  }
-
-  // Read fields directly from the table (no local struct, no &)
-  unsigned int trackNum = audioTracks[t_index].trackNum;
-  byte  category = audioTracks[t_index].category;
-  byte  flags    = audioTracks[t_index].flags;
-
-  // Handle NON_INTERRUPT flag: do not start if same category already playing.
-  if (flags & AUDIO_FLAG_NON_INTERRUPT) {
-    if (category == AUDIO_CAT_VOICE && audioCurrentVoiceTrack != 0) {
-      return;
-    }
-    if (category == AUDIO_CAT_SFX && audioCurrentSfxTrack != 0) {
-      return;
-    }
-    if (category == AUDIO_CAT_MUSIC && audioCurrentMusicTrack != 0) {
-      return;
-    }
-  }
-
-  // Compute effective gain for this category (master + per-category trim).
-  int gainDb = audioGetEffectiveGainDb(category);
-
-  // Apply per-track gain before playing.
-  pTsunami->trackGain((int)trackNum, gainDb);
-
-  if (flags & AUDIO_FLAG_LOOP) {
-    pTsunami->trackLoad((int)trackNum, 0, false);
-    pTsunami->trackLoop((int)trackNum, true);
-    pTsunami->trackPlayPoly((int)trackNum, 0, false);
-  }
-  else {
-    pTsunami->trackLoop((int)trackNum, false);
-    pTsunami->trackPlayPoly((int)trackNum, 0, false);
-  }
-
-  audioSetCurrentFromIndex(t_index, true);
-*/
-}
-
-// Stop a track by Tsunami track number (001..nnn).
-void audioStopTrack(unsigned int t_trackNum) {
-  if (t_trackNum == 0 || pTsunami == nullptr) {
-    return;
-  }
-  pTsunami->trackStop((int)t_trackNum);
-
-  // Walk the table once to clear the appropriate "current" state if needed.
-  for (byte i = 0; i < NUM_AUDIO_TRACKS; i++) {
-    if (audioTracks[i].trackNum == t_trackNum) {
-      audioSetCurrentFromIndex(i, false);
-      break;
-    }
-  }
-}
-
-// Convenience: play by raw Tsunami track number (only uses flags/category if it finds a match).
-void audioPlayTrack(unsigned int t_trackNum) {
+// Play a track with category-specific gain applied.
+// category: 0=voice, 1=sfx, 2=music
+void audioPlayTrackWithCategory(unsigned int t_trackNum, byte t_category) {
   if (pTsunami == nullptr || t_trackNum == 0) {
     return;
   }
-  for (byte i = 0; i < NUM_AUDIO_TRACKS; i++) {
-    if (audioTracks[i].trackNum == t_trackNum) {
-      audioPlayTrackByIndex(i);
-      return;
-    }
+  pTsunami->trackPlayPoly((int)t_trackNum, 0, false);
+
+  // Apply category-specific gain offset
+  int8_t offset = 0;
+  switch (t_category) {
+  case 0: offset = tsunamiVoiceGainDb; break;
+  case 1: offset = tsunamiSfxGainDb; break;
+  case 2: offset = tsunamiMusicGainDb; break;
+  }
+  audioApplyTrackGain(t_trackNum, offset);
+}
+
+// Legacy version for backward compatibility (defaults to SFX)
+void audioPlayTrack(unsigned int t_trackNum) {
+  audioPlayTrackWithCategory(t_trackNum, 1); // Default to SFX category
+}
+
+// Simple primitive to stop a track by number.
+void audioStopTrack(unsigned int t_trackNum) {
+  if (pTsunami == nullptr || t_trackNum == 0) {
+    return;
+  }
+  pTsunami->trackStop((int)t_trackNum);
+}
+
+// Stop all currently playing music.
+void audioStopAllMusic() {
+  if (audioCurrentMusicTrack != 0) {
+    audioStopTrack(audioCurrentMusicTrack);
+    audioCurrentMusicTrack = 0;
   }
 }
 
-// For voice tracks where we have several within a category, we can use the voiceSubcat field and pick a random matching entry.
-// Call sites will now pass the VOICE_SUB_* consts.
-// Examples of how to use this in mode code:
-// On Enhanced game start:
-//   audioPlayRandomVoice(VOICE_SUB_GAME_START);
-// When switching to Player 2:
-//   audioPlayRandomVoice(VOICE_SUB_PLAYER_UP);
-// When a ball is saved:
-//   audioPlayRandomVoice(VOICE_SUB_BALL_SAVED);
-// After a drain with terrible play:
-//   audioPlayRandomVoice(VOICE_SUB_BAD_PLAY);
-
-// Very simple pseudo-random index 0..(n-1). Replace with better RNG if desired.
+// Very simple pseudo-random index 0..(n-1).
 int audioRandomInt(int t_maxExclusive) {
   if (t_maxExclusive <= 0) {
     return 0;
@@ -1403,764 +2194,98 @@ int audioRandomInt(int t_maxExclusive) {
   return (int)(millis() % (unsigned long)t_maxExclusive);
 }
 
-void audioPlayRandomVoice(byte t_subcat) {
-  if (pTsunami == nullptr) {
-    return;
+// Adjust master gain without playing any audio feedback.
+// Use this during gameplay or attract mode.
+void audioAdjustMasterGainQuiet(int8_t t_deltaDb) {
+  int newVal = (int)tsunamiGainDb + (int)t_deltaDb;
+  if (newVal < TSUNAMI_GAIN_DB_MIN) newVal = TSUNAMI_GAIN_DB_MIN;
+  if (newVal > TSUNAMI_GAIN_DB_MAX) newVal = TSUNAMI_GAIN_DB_MAX;
+  if ((int8_t)newVal == tsunamiGainDb) return;
+  tsunamiGainDb = (int8_t)newVal;
+  audioApplyMasterGain();
+  audioSaveMasterGain();
+  sprintf(lcdString, "Vol %3d dB", (int)tsunamiGainDb);
+  lcdPrintRow(4, lcdString);  // Changed from pLCD2004->println()
+}
+
+// Check if current music track has finished playing (based on start time and length).
+// Returns true if no music is playing or if the track has ended.
+bool audioMusicHasEnded() {
+  if (audioCurrentMusicTrack == 0) {
+    return true;  // Nothing playing
   }
-/*
-  byte indices[NUM_AUDIO_TRACKS];
-  byte count = 0;
+  unsigned long now = millis();
+  return (now >= audioMusicEndMillis);
+}
 
-  for (byte i = 0; i < NUM_AUDIO_TRACKS; i++) {
-    if (audioTracks[i].category == AUDIO_CAT_VOICE &&
-      audioTracks[i].voiceSubcat == t_subcat) {
-      indices[count++] = i;
-    }
+// Start a music track if not already playing. Sets end time based on track length.
+// Returns true if track was started, false if same track already playing.
+bool audioStartMusicTrack(unsigned int t_trackNum, byte t_lengthSeconds, bool t_loop) {
+  if (pTsunami == nullptr || t_trackNum == 0) {
+    return false;
   }
-
-  if (count == 0) {
-    return;
+  // Don't restart the same track if it's already playing
+  if (audioCurrentMusicTrack == t_trackNum && !audioMusicHasEnded()) {
+    return false;
   }
-
-  int pick = audioRandomInt(count);
-  byte chosenIndex = indices[pick];
-  audioPlayTrackByIndex(chosenIndex);
-*/
-}
-
-// Finally, some named wrappers for specific SFX/music use cases:
-// Start/stop coaster "clicking up hill" loop
-void audioStartCoasterClimb() {
-  audioPlayTrackByIndex(AUDIO_IDX_SFX_COASTER_CLIMB);
-}
-
-void audioStopCoasterClimb() {
-  audioStopTrack(audioTracks[AUDIO_IDX_SFX_COASTER_CLIMB].trackNum);
-}
-
-// Play a single roar down the hill
-void audioPlayCoasterDrop() {
-  audioPlayTrackByIndex(AUDIO_IDX_SFX_COASTER_DROP);
-}
-
-// Short scream SFX
-void audioPlayScream() {
-  audioPlayTrackByIndex(AUDIO_IDX_SFX_SCREAM);
-}
-
-// Background music helpers
-void audioStartMainMusic() {
-  audioPlayTrackByIndex(AUDIO_IDX_MUSIC_MAIN);
-}
-
-void audioStartMultiballMusic() {
-  if (audioCurrentMusicTrack != 0 &&
-    audioCurrentMusicTrack != audioTracks[AUDIO_IDX_MUSIC_MULTIBALL].trackNum) {
-    audioStopTrack(audioCurrentMusicTrack);
-  }
-  audioPlayTrackByIndex(AUDIO_IDX_MUSIC_MULTIBALL);
-}
-
-void audioStopAllMusic() {
+  // Stop any currently playing music first
   if (audioCurrentMusicTrack != 0) {
-    audioStopTrack(audioCurrentMusicTrack);
+    pTsunami->trackStop((int)audioCurrentMusicTrack);
   }
+  // Start the new track
+  audioCurrentMusicTrack = t_trackNum;
+  audioMusicEndMillis = millis() + ((unsigned long)t_lengthSeconds * 1000UL);
+  if (t_loop) {
+    pTsunami->trackLoop((int)t_trackNum, true);
+    audioMusicEndMillis = millis() + 3600000UL;  // 1 hour
+  }
+  pTsunami->trackPlayPoly((int)t_trackNum, 0, false);
+
+  // Apply music category gain offset
+  audioApplyTrackGain(t_trackNum, tsunamiMusicGainDb);
+
+  return true;
 }
 
-// ********************************************************************************************************************************
-// ***** OLD TEST CODE CAN BE REMOVED FROM PROJECT ********************************************************************************
-// ********************************************************************************************************************************
-
-void runBasicDiagnostics() {
-  // Let's send some test messages to the Slave Arduino in the head.
-  // void sendMAStoSLVMode(const byte t_mode);                     // RS485_TYPE_MAS_TO_SLV_MODE
-  // void getMAStoSLVMode(byte* t_mode);                           // RS485_TYPE_MAS_TO_SLV_MODE
-
-  // void sendMAStoSLVScoreQuery();                                                            // RS485_TYPE_MAS_TO_SLV_SCORE_QUERY
-  // void sendSLVtoMASScoreReport(const byte t_10K, const byte t_100K, const byte t_million);  // RS485_TYPE_SLV_TO_MAS_SCORE_REPORT
-  // void getSLVtoMASScoreReport(byte* t_10K, byte* t_100K, byte* t_million);                  // RS485_TYPE_SLV_TO_MAS_SCORE_REPORT
-
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);  // Wait for right flipper button press to continue
-  pMessage->sendMAStoSLVTiltLamp(false);
-  delay(500);
-  pMessage->sendMAStoSLVTiltLamp(true);
-  delay(500);
-  pMessage->sendMAStoSLVTiltLamp(false);
-  delay(500);
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVGILamp(true);
-  delay(500);
-  pMessage->sendMAStoSLVGILamp(false);
-  delay(500);
-  pMessage->sendMAStoSLVGILamp(true);
-  delay(500);
-
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVCreditInc(3);
-  delay(500);
-
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVCreditInc(1);
-  pMessage->sendMAStoSLVCreditInc(1);
-  pMessage->sendMAStoSLVCreditInc(1);
-  delay(500);
-
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVCreditDec();
-  pMessage->sendMAStoSLVCreditDec();
-  pMessage->sendMAStoSLVCreditDec();
-  pMessage->sendMAStoSLVCreditDec();
-  pMessage->sendMAStoSLVCreditDec();
-  pMessage->sendMAStoSLVCreditDec();
-  delay(500);
-
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVBell10K();
-  pMessage->sendMAStoSLVBell10K();
-  pMessage->sendMAStoSLVBell10K();
-  pMessage->sendMAStoSLVBell10K();
-  pMessage->sendMAStoSLVBell10K();
-  delay(500);
-
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVBell100K();
-  pMessage->sendMAStoSLVBell100K();
-  pMessage->sendMAStoSLVBell100K();
-  pMessage->sendMAStoSLVBell100K();
-  pMessage->sendMAStoSLVBell100K();
-  delay(500);
-
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVBellSelect();
-  pMessage->sendMAStoSLVBellSelect();
-  pMessage->sendMAStoSLVBellSelect();
-  pMessage->sendMAStoSLVBellSelect();
-  pMessage->sendMAStoSLVBellSelect();
-  delay(500);
-
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLV10KUnitPulse();
-  pMessage->sendMAStoSLV10KUnitPulse();
-  pMessage->sendMAStoSLV10KUnitPulse();
-  pMessage->sendMAStoSLV10KUnitPulse();
-  pMessage->sendMAStoSLV10KUnitPulse();
-  delay(500);
-
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVBell10K();
-  pMessage->sendMAStoSLVBell100K();
-  pMessage->sendMAStoSLVBellSelect();
-  pMessage->sendMAStoSLV10KUnitPulse();
-  delay(10);
-  pMessage->sendMAStoSLVBell10K();
-  pMessage->sendMAStoSLVBell100K();
-  pMessage->sendMAStoSLVBellSelect();
-  pMessage->sendMAStoSLV10KUnitPulse();
-  delay(10);
-  pMessage->sendMAStoSLVBell10K();
-  pMessage->sendMAStoSLVBell100K();
-  pMessage->sendMAStoSLVBellSelect();
-  pMessage->sendMAStoSLV10KUnitPulse();
-  delay(10);
-  pMessage->sendMAStoSLVBell10K();
-  pMessage->sendMAStoSLVBell100K();
-  pMessage->sendMAStoSLVBellSelect();
-  pMessage->sendMAStoSLV10KUnitPulse();
-  delay(10);
-  pMessage->sendMAStoSLVBell10K();
-  pMessage->sendMAStoSLVBell100K();
-  pMessage->sendMAStoSLVBellSelect();
-  pMessage->sendMAStoSLV10KUnitPulse();
-  delay(500);
-
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVScoreAbs(999);
-  delay(500);
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVScoreReset();
-  delay(500);
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVScoreAbs(121);
-  delay(500);
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVScoreReset();
-  delay(500);
-
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVScoreAbs(998);  // 9,980,000
-  delay(500);
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVScoreInc10K(4);  // 9,990,000
-  delay(500);
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVScoreInc10K(-4);  // 9,950,000
-  delay(500);
-
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVScoreAbs(989);   // 9,890,000
-  delay(500);
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVScoreInc10K(40);  // 9,990,000
-  delay(500);
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVScoreInc10K(-40);  // 9,590,000
-  delay(500);
-
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVScoreAbs(3);  // 30,000
-  delay(500);
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVScoreInc10K(-8);  //  0
-  delay(500);
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVScoreInc10K(4);  //  40,000
-  delay(500);
-
-  // Six 10K increments in a row with no pauses
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVScoreInc10K(1);
-  pMessage->sendMAStoSLVScoreInc10K(1);
-  pMessage->sendMAStoSLVScoreInc10K(1);
-  pMessage->sendMAStoSLVScoreInc10K(1);
-  pMessage->sendMAStoSLVScoreInc10K(1);
-  pMessage->sendMAStoSLVScoreInc10K(1);
-  delay(500);
-
-  // Five, pause, one, pause, one 10K increments
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVScoreInc10K(6);
-  pMessage->sendMAStoSLVScoreInc10K(1);
-  delay(500);
-
-  // Six negative 10K increments in a row with no pauses
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVScoreInc10K(-1);
-  pMessage->sendMAStoSLVScoreInc10K(-1);
-  pMessage->sendMAStoSLVScoreInc10K(-1);
-  pMessage->sendMAStoSLVScoreInc10K(-1);
-  pMessage->sendMAStoSLVScoreInc10K(-1);
-  pMessage->sendMAStoSLVScoreInc10K(-1);
-  delay(500);
-
-  // Five, pause, one, pause, one 10K decrements
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVScoreInc10K(-6);
-  pMessage->sendMAStoSLVScoreInc10K(-1);
-  delay(500);
-
-  // Six 100K increments in a row with no pauses
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVScoreInc10K(10);
-  pMessage->sendMAStoSLVScoreInc10K(10);
-  pMessage->sendMAStoSLVScoreInc10K(10);
-  pMessage->sendMAStoSLVScoreInc10K(10);
-  pMessage->sendMAStoSLVScoreInc10K(10);
-  pMessage->sendMAStoSLVScoreInc10K(10);
-  delay(500);
-
-  // Five, pause, one, pause, one 100K increments
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVScoreInc10K(60);
-  pMessage->sendMAStoSLVScoreInc10K(10);
-  delay(500);
-
-  // Six negative 100K increments in a row with no pauses
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVScoreInc10K(-10);
-  pMessage->sendMAStoSLVScoreInc10K(-10);
-  pMessage->sendMAStoSLVScoreInc10K(-10);
-  pMessage->sendMAStoSLVScoreInc10K(-10);
-  pMessage->sendMAStoSLVScoreInc10K(-10);
-  pMessage->sendMAStoSLVScoreInc10K(-10);
-  delay(500);
-
-  // Five, pause, one, pause, one 100K decrements
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVScoreInc10K(-60);
-  pMessage->sendMAStoSLVScoreInc10K(-10);
-  delay(500);
-
-  // 2, pause, 3, pause, 4, pause,  5, pause, 5, pause, 1 10K increments
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);  // Gives 14 single advances
-  pMessage->sendMAStoSLVScoreInc10K(2);
-  pMessage->sendMAStoSLVScoreInc10K(3);
-  pMessage->sendMAStoSLVScoreInc10K(4);
-  pMessage->sendMAStoSLVScoreInc10K(5);
-  pMessage->sendMAStoSLVScoreInc10K(6);
-  delay(500);
-
-  // 5, pause, 5, pause, 1, pause, 1 10K increments
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);  // 5-5-4 as expected
-  pMessage->sendMAStoSLVScoreInc10K(11);
-  pMessage->sendMAStoSLVScoreInc10K(1);
-  delay(500);
-
-  // 2, pause, 3, pause, 4, pause, 5, pause, 5, pause, 1 100K increments
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);  // Gives 14 single advances
-  pMessage->sendMAStoSLVScoreInc10K(20);
-  pMessage->sendMAStoSLVScoreInc10K(30);
-  pMessage->sendMAStoSLVScoreInc10K(40);
-  pMessage->sendMAStoSLVScoreInc10K(50);
-  pMessage->sendMAStoSLVScoreInc10K(60);
-  delay(500);
-
-  // 2 @ 100K, pause, 3 @ 10K, pause, 5 @ 10K, pause, 5 @ 10K, pause, 2 @ 10K decrements
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);  // Works perfectly!
-  pMessage->sendMAStoSLVScoreInc10K(20);
-  pMessage->sendMAStoSLVScoreInc10K(3);
-  pMessage->sendMAStoSLVScoreInc10K(-12);
-  delay(500);
-
-  waitForSwitchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
-  pMessage->sendMAStoSLVScoreQuery();
-  pMessage->sendMAStoSLVCreditStatusQuery();
-
-  while (true) {
-    // See if there is an incoming message for us...
-    byte msgType = pMessage->available();
-    while (msgType != RS485_TYPE_NO_MESSAGE) {
-      switch (msgType) {
-      case RS485_TYPE_SLV_TO_MAS_CREDIT_STATUS:
-      {
-        bool creditsAvailable = false;
-        pMessage->getSLVtoMASCreditStatus(&creditsAvailable);
-        sprintf(lcdString, "Credits: %s", creditsAvailable ? "YES" : "NO");
-        pLCD2004->println(lcdString);
-      }
-      break;
-      case RS485_TYPE_SLV_TO_MAS_SCORE_REPORT:
-      {
-        int t_score = 0;
-        pMessage->getSLVtoMASScoreReport(&t_score);
-        sprintf(lcdString, "Score Rpt: %d", t_score);
-        pLCD2004->println(lcdString); Serial.println(lcdString);
-      }
-      break;
-      default:
-        sprintf(lcdString, "MSG TYPE ERROR %c", msgType); pLCD2004->println(lcdString); Serial.println(lcdString);
-        // It's printing a, b, c, etc. i.e. successive characters **************************************************************************
-      }
-      msgType = pMessage->available();
-    }
+// Stop current music track.
+void audioStopMusic() {
+  if (pTsunami != nullptr && audioCurrentMusicTrack != 0) {
+    pTsunami->trackStop((int)audioCurrentMusicTrack);
   }
+  audioCurrentMusicTrack = 0;
+  audioMusicEndMillis = 0;
 }
 
-void runRudimentarySwitchAndLampTests() {
-  byte shakerMotorPower = 0;  // Tested range 12/12/25 is 70 to 140.  At 150 the hats sometimes false trigger.
-
-  while (true) {
-    // Fast read all 64 Centipede #2 inputs (16 bits at a time) into switchNewState[] before checking any switches.
-    // This is much faster (2-3ms) than calling digitalRead() for each switch individually (~30ms total).
-    for (int i = 0; i < 4; i++) {
-      switchNewState[i] = pShiftRegister->portRead(4 + i);  // read ports 4..7 which map to Centipede #2 inputs
-    }
-
-    // Check flipper buttons
-    if (switchClosed(SWITCH_IDX_FLIPPER_LEFT_BUTTON)) {  // Fire the left flipper
-      analogWrite(deviceParm[DEV_IDX_FLIPPER_LEFT].pinNum, deviceParm[DEV_IDX_FLIPPER_LEFT].powerInitial);
-      delay(deviceParm[DEV_IDX_FLIPPER_LEFT].timeOn * 10);
-      analogWrite(deviceParm[DEV_IDX_FLIPPER_LEFT].pinNum, deviceParm[DEV_IDX_FLIPPER_LEFT].powerHold);
-      delay(20);
-      while (switchClosedImmediate(SWITCH_IDX_FLIPPER_LEFT_BUTTON)) {  // Keep holding the flipper while button is pressed
-        delay(10);
-      }
-      analogWrite(deviceParm[DEV_IDX_FLIPPER_LEFT].pinNum, LOW);  // Turn OFF
-      pMessage->sendMAStoSLVScoreFlash(400);  // Flash 4M
-    }
-
-    if (switchClosed(SWITCH_IDX_FLIPPER_RIGHT_BUTTON)) {  // Fire the right flipper
-      analogWrite(deviceParm[DEV_IDX_FLIPPER_RIGHT].pinNum, deviceParm[DEV_IDX_FLIPPER_RIGHT].powerInitial);
-      delay(deviceParm[DEV_IDX_FLIPPER_RIGHT].timeOn * 10);
-      analogWrite(deviceParm[DEV_IDX_FLIPPER_RIGHT].pinNum, deviceParm[DEV_IDX_FLIPPER_RIGHT].powerHold);
-      delay(20);
-      while (switchClosedImmediate(SWITCH_IDX_FLIPPER_RIGHT_BUTTON)) {  // Keep holding the flipper while button is pressed
-        delay(10);
-      }
-      analogWrite(deviceParm[DEV_IDX_FLIPPER_RIGHT].pinNum, LOW);  // Turn OFF
-      pMessage->sendMAStoSLVScoreFlash(0);  // Flash off (same as sending absScore(0)
-    }
-    // Check left slingshot
-    if (switchClosed(SWITCH_IDX_SLINGSHOT_LEFT)) {
-      const byte idx = DEV_IDX_SLINGSHOT_LEFT;
-      analogWrite(deviceParm[DEV_IDX_SLINGSHOT_LEFT].pinNum, deviceParm[idx].powerInitial);           // energize at initial strength
-      delay((int)deviceParm[DEV_IDX_SLINGSHOT_LEFT].timeOn * 10);                // hold for timeOn * 10ms
-      analogWrite(deviceParm[DEV_IDX_SLINGSHOT_LEFT].pinNum, LOW);               // turn off if no hold strength
-      delay(100);
-    }
-    // Check right slingshot
-    if (switchClosed(SWITCH_IDX_SLINGSHOT_RIGHT)) {
-      analogWrite(deviceParm[DEV_IDX_SLINGSHOT_RIGHT].pinNum, deviceParm[DEV_IDX_SLINGSHOT_RIGHT].powerInitial);           // energize at initial strength
-      delay((int)deviceParm[DEV_IDX_SLINGSHOT_RIGHT].timeOn * 10);                // hold for timeOn * 10ms
-      analogWrite(deviceParm[DEV_IDX_SLINGSHOT_RIGHT].pinNum, LOW);               // turn off if no hold strength
-      delay(100);
-    }
-    // Check pop bumper
-    if (switchClosed(SWITCH_IDX_BUMPER_E)) {
-      analogWrite(deviceParm[DEV_IDX_POP_BUMPER].pinNum, deviceParm[DEV_IDX_POP_BUMPER].powerInitial);           // energize at initial strength
-      const byte lampIdx = LAMP_IDX_E;
-      const byte pinNum = lampParm[lampIdx].pinNum;
-      pShiftRegister->digitalWrite(pinNum, LOW);  // Turn ON lamp
-      delay((int)deviceParm[DEV_IDX_POP_BUMPER].timeOn * 10);                // hold for timeOn * 10ms
-      analogWrite(deviceParm[DEV_IDX_POP_BUMPER].pinNum, LOW);               // turn off if no hold strength
-      delay(200);
-      pShiftRegister->digitalWrite(pinNum, HIGH); // Turn OFF lamp
-    }
-    // For each of the other bumpers, light the corresponding lamp when hit for 500ms then turn it off...
-    if (switchClosed(SWITCH_IDX_BUMPER_S)) {
-      const byte lampIdx = LAMP_IDX_S;
-      const byte pinNum = lampParm[lampIdx].pinNum;
-      pShiftRegister->digitalWrite(pinNum, LOW);  // Turn ON lamp
-      delay(200);
-      pShiftRegister->digitalWrite(pinNum, HIGH); // Turn OFF lamp
-    }
-    if (switchClosed(SWITCH_IDX_BUMPER_C)) {
-      const byte lampIdx = LAMP_IDX_C;
-      const byte pinNum = lampParm[lampIdx].pinNum;
-      pShiftRegister->digitalWrite(pinNum, LOW);  // Turn ON lamp
-      delay(200);
-      pShiftRegister->digitalWrite(pinNum, HIGH); // Turn OFF lamp
-    }
-    if (switchClosed(SWITCH_IDX_BUMPER_R)) {
-      const byte lampIdx = LAMP_IDX_R;
-      const byte pinNum = lampParm[lampIdx].pinNum;
-      pShiftRegister->digitalWrite(pinNum, LOW);  // Turn ON lamp
-      delay(200);
-      pShiftRegister->digitalWrite(pinNum, HIGH); // Turn OFF lamp
-    }
-    if (switchClosed(SWITCH_IDX_BUMPER_A)) {
-      const byte lampIdx = LAMP_IDX_A;
-      const byte pinNum = lampParm[lampIdx].pinNum;
-      pShiftRegister->digitalWrite(pinNum, LOW);  // Turn ON lamp
-      delay(200);
-      pShiftRegister->digitalWrite(pinNum, HIGH); // Turn OFF lamp
-    }
-    if (switchClosed(SWITCH_IDX_BUMPER_M)) {
-      const byte lampIdx = LAMP_IDX_M;
-      const byte pinNum = lampParm[lampIdx].pinNum;
-      pShiftRegister->digitalWrite(pinNum, LOW);  // Turn ON lamp
-      delay(200);
-      pShiftRegister->digitalWrite(pinNum, HIGH); // Turn OFF lamp
-    }
-    if (switchClosed(SWITCH_IDX_BUMPER_O)) {
-      const byte lampIdx = LAMP_IDX_O;
-      const byte pinNum = lampParm[lampIdx].pinNum;
-      pShiftRegister->digitalWrite(pinNum, LOW);  // Turn ON lamp
-      delay(200);
-      pShiftRegister->digitalWrite(pinNum, HIGH); // Turn OFF lamp
-    }
-    // Check hat switches - light corresponding lamps
-    if (switchClosed(SWITCH_IDX_HAT_LEFT_TOP)) {
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_HAT_LEFT_TOP].pinNum, LOW);
-      delay(200);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_HAT_LEFT_TOP].pinNum, HIGH);
-    }
-    if (switchClosed(SWITCH_IDX_HAT_LEFT_BOTTOM)) {
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_HAT_LEFT_BOTTOM].pinNum, LOW);
-      delay(200);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_HAT_LEFT_BOTTOM].pinNum, HIGH);
-    }
-    if (switchClosed(SWITCH_IDX_HAT_RIGHT_TOP)) {
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_HAT_RIGHT_TOP].pinNum, LOW);
-      delay(200);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_HAT_RIGHT_TOP].pinNum, HIGH);
-    }
-    if (switchClosed(SWITCH_IDX_HAT_RIGHT_BOTTOM)) {
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_HAT_RIGHT_BOTTOM].pinNum, LOW);
-      delay(200);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_HAT_RIGHT_BOTTOM].pinNum, HIGH);
-    }
-    // Check kickout switches - fire solenoids and flash corresponding lamps
-    if (switchClosed(SWITCH_IDX_KICKOUT_LEFT)) {
-      const byte devIdx = DEV_IDX_KICKOUT_LEFT;
-      pMessage->sendMAStoSLVScoreInc10K(50);  // Will resolve to 5x 100K advances on slave
-      digitalWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, HIGH); // Start the score motor (explicit, non?PWM)
-      delay(588);  // Let score motor run for 4 cycles = 147ms * 4 = 588ms
-      analogWrite(deviceParm[devIdx].pinNum, deviceParm[devIdx].powerInitial);  // Fire kickout solenoid
-      delay((int)deviceParm[devIdx].timeOn * 10); // Leave coil energized in timeOn 10ms ticks
-      analogWrite(deviceParm[devIdx].pinNum, LOW);  // De-energize kickout solenoid
-      digitalWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, LOW); // Stop the score motor (explicit)
-    }
-    if (switchClosed(SWITCH_IDX_KICKOUT_RIGHT)) {
-      const byte devIdx = DEV_IDX_KICKOUT_RIGHT;
-      pMessage->sendMAStoSLVScoreInc10K(50);  // Will resolve to 5x 100K advances on slave
-      digitalWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, HIGH); // Start the score motor (explicit, non?PWM)
-      delay(588);  // Let score motor run for 4 cycles = 147ms * 4 = 588ms
-      analogWrite(deviceParm[devIdx].pinNum, deviceParm[devIdx].powerInitial);  // Fire kickout solenoid
-      delay((int)deviceParm[devIdx].timeOn * 10); // Leave coil energized in timeOn 10ms ticks
-      analogWrite(deviceParm[devIdx].pinNum, LOW);  // De-energize kickout solenoid
-      digitalWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, LOW); // Stop the score motor (explicit)
-    }
-    // Check drain switches
-    if (switchClosed(SWITCH_IDX_DRAIN_LEFT)) {
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_SPOT_NUMBER_LEFT].pinNum, LOW);
-      delay(200);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_SPOT_NUMBER_LEFT].pinNum, HIGH);
-    }
-    if (switchClosed(SWITCH_IDX_DRAIN_CENTER)) {
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_WHITE_8].pinNum, LOW);
-      delay(200);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_WHITE_8].pinNum, HIGH);
-    }
-    if (switchClosed(SWITCH_IDX_DRAIN_RIGHT)) {
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_SPOT_NUMBER_RIGHT].pinNum, LOW);
-      delay(200);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_SPOT_NUMBER_RIGHT].pinNum, HIGH);
-    }
-    // Check gobble hole - light special when lit
-    if (switchClosed(SWITCH_IDX_GOBBLE)) {
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_SPECIAL].pinNum, LOW);
-      delay(200);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_SPECIAL].pinNum, HIGH);
-    }
-    // Check left side target switches - light nearby G.I. lamps
-    if (switchClosed(SWITCH_IDX_LEFT_SIDE_TARGET_2)) {
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_GI_LEFT_TOP].pinNum, LOW);
-      delay(200);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_GI_LEFT_TOP].pinNum, HIGH);
-    }
-    if (switchClosed(SWITCH_IDX_LEFT_SIDE_TARGET_3)) {
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_GI_LEFT_CENTER_1].pinNum, LOW);
-      delay(200);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_GI_LEFT_CENTER_1].pinNum, HIGH);
-    }
-    if (switchClosed(SWITCH_IDX_LEFT_SIDE_TARGET_4)) {
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_GI_LEFT_CENTER_1].pinNum, LOW);
-      delay(200);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_GI_LEFT_CENTER_1].pinNum, HIGH);
-    }
-    if (switchClosed(SWITCH_IDX_LEFT_SIDE_TARGET_5)) {
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_GI_LEFT_CENTER_2].pinNum, LOW);
-      delay(200);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_GI_LEFT_CENTER_2].pinNum, HIGH);
-    }
-    // Check right side target switches - light nearby G.I. lamps
-    if (switchClosed(SWITCH_IDX_RIGHT_SIDE_TARGET_1)) {
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_GI_RIGHT_TOP].pinNum, LOW);
-      delay(200);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_GI_RIGHT_TOP].pinNum, HIGH);
-    }
-    if (switchClosed(SWITCH_IDX_RIGHT_SIDE_TARGET_2)) {
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_GI_RIGHT_TOP].pinNum, LOW);
-      delay(200);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_GI_RIGHT_TOP].pinNum, HIGH);
-    }
-    if (switchClosed(SWITCH_IDX_RIGHT_SIDE_TARGET_3)) {
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_GI_RIGHT_CENTER_1].pinNum, LOW);
-      delay(200);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_GI_RIGHT_CENTER_1].pinNum, HIGH);
-    }
-    if (switchClosed(SWITCH_IDX_RIGHT_SIDE_TARGET_4)) {
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_GI_RIGHT_CENTER_1].pinNum, LOW);
-      delay(200);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_GI_RIGHT_CENTER_1].pinNum, HIGH);
-    }
-    if (switchClosed(SWITCH_IDX_RIGHT_SIDE_TARGET_5)) {
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_GI_RIGHT_CENTER_2].pinNum, LOW);
-      delay(200);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_GI_RIGHT_CENTER_2].pinNum, HIGH);
-    }
-    if (switchClosed(SWITCH_IDX_START_BUTTON)) {
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_WHITE_5].pinNum, LOW);
-      const byte idx = DEV_IDX_BALL_TRAY_RELEASE;
-      analogWrite(deviceParm[DEV_IDX_BALL_TRAY_RELEASE].pinNum, deviceParm[idx].powerInitial);           // energize at initial strength
-      delay((int)deviceParm[DEV_IDX_BALL_TRAY_RELEASE].timeOn * 10);                // hold for timeOn * 10ms
-      analogWrite(deviceParm[DEV_IDX_BALL_TRAY_RELEASE].pinNum, deviceParm[idx].powerHold);           // energize at hold strength
-      // Hold at low power until Start button is released
-      sprintf(lcdString, "dR = %02d", pShiftRegister->digitalRead(switchParm[SWITCH_IDX_START_BUTTON].pinNum));
-      pLCD2004->println(lcdString);
-      // Wait while Start is physically pressed (active LOW)
-      while (pShiftRegister->digitalRead(switchParm[SWITCH_IDX_START_BUTTON].pinNum) == LOW) {
-        sprintf(lcdString, "dR = %02d", pShiftRegister->digitalRead(switchParm[SWITCH_IDX_START_BUTTON].pinNum));
-        pLCD2004->println(lcdString);
-        delay(500);
-      }
-      analogWrite(deviceParm[DEV_IDX_BALL_TRAY_RELEASE].pinNum, LOW);               // turn off if no hold strength
-      delay(2000);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_WHITE_5].pinNum, HIGH);
-    }
-    if (switchClosed(SWITCH_IDX_DIAG_1)) {
-      digitalWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, HIGH); // Start the score motor
-      delay(5000);
-      digitalWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, LOW); // Stop the score motor (explicit)
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_WHITE_1].pinNum, LOW);
-      delay(200);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_WHITE_1].pinNum, HIGH);
-    }
-    if (switchClosed(SWITCH_IDX_DIAG_2)) {  // "-"
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_WHITE_2].pinNum, LOW);
-      if (shakerMotorPower >= 80) {  // 70 is the minimum power to run the motor
-        shakerMotorPower = shakerMotorPower - 10;
-        analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, shakerMotorPower); // energize shaker motor
-      }
-      else if (shakerMotorPower > 0) {
-        shakerMotorPower = 0;
-        analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, shakerMotorPower); // turn off shaker motor
-      }
-      sprintf(lcdString, "Shaker %i", shakerMotorPower); pLCD2004->println(lcdString);
-      delay(500);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_WHITE_2].pinNum, HIGH);
-    }
-    if (switchClosed(SWITCH_IDX_DIAG_3)) {  // "+"
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_WHITE_3].pinNum, LOW);
-      if (shakerMotorPower < 70) {  // Minimum power to run the motor
-        shakerMotorPower = 70;
-        analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, shakerMotorPower); // energize shaker motor
-      }
-      else if (shakerMotorPower < 240) {  // Can't exceed 255
-        shakerMotorPower = shakerMotorPower + 10;
-        analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, shakerMotorPower); // energize shaker motor
-      }
-      sprintf(lcdString, "Shaker %i", shakerMotorPower); pLCD2004->println(lcdString);
-      delay(500);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_WHITE_3].pinNum, HIGH);
-    }
-    if (switchClosed(SWITCH_IDX_DIAG_4)) {  // TEST SOFTWARE RESET
-      // Send message to slave to also reset
-      pMessage->sendMAStoSLVCommandReset();
-      delay(10);  // Allow message to fully transmit and Slave to process before Master resets
-      softwareReset();
-    }
-    if (switchClosed(SWITCH_IDX_KNOCK_OFF)) {
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_WHITE_6].pinNum, LOW);
-      const byte idx = DEV_IDX_BALL_TROUGH_RELEASE;
-      analogWrite(deviceParm[DEV_IDX_BALL_TROUGH_RELEASE].pinNum, deviceParm[idx].powerInitial);           // energize at initial strength
-      delay((int)deviceParm[DEV_IDX_BALL_TROUGH_RELEASE].timeOn * 10);                // hold for timeOn * 10ms
-      analogWrite(deviceParm[DEV_IDX_BALL_TROUGH_RELEASE].pinNum, LOW);               // turn off if no hold strength
-      delay(200);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_WHITE_6].pinNum, HIGH);
-    }
-    if (switchClosed(SWITCH_IDX_COIN_MECH)) {
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_WHITE_7].pinNum, LOW);
-      delay(200);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_WHITE_7].pinNum, HIGH);
-    }
-    if (switchClosed(SWITCH_IDX_BALL_IN_LIFT)) {
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_RED_9].pinNum, LOW);
-      delay(200);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_RED_9].pinNum, HIGH);
-    }
-    if (switchClosed(SWITCH_IDX_TILT_BOB)) {
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_RED_7].pinNum, LOW);
-      delay(200);
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_RED_7].pinNum, HIGH);
-    }
-    delay(10);  // Simulate 10ms loop delay
+// Start a random circus music track (not the same as last played).
+void audioStartRandomCircusMusic() {
+  // Pick a random track different from the last one
+  byte idx = audioRandomInt(NUM_MUS_CIRCUS);
+  unsigned int trackNum = musTracksCircus[idx].trackNum;
+  // Simple check to avoid immediate repeat (optional enhancement: use EEPROM)
+  if (trackNum == audioCurrentMusicTrack && NUM_MUS_CIRCUS > 1) {
+    idx = (idx + 1) % NUM_MUS_CIRCUS;
+    trackNum = musTracksCircus[idx].trackNum;
   }
+  audioStartMusicTrack(trackNum, musTracksCircus[idx].lengthSeconds, false);
 }
 
-// ********************************************************************************************************************************
-// ********************************************************************************************************************************
-// ********************************************************************************************************************************
-
-/*
-// Example code to query Slave for credits available
-  // Send message asking Slave if we have any credits; will return a message with bool TRUE or FALSE
-  sprintf(lcdString, "Sending to Slave"); Serial.println(lcdString);
-  pMessage->sendRequestCredit();
-  sprintf(lcdString, "Sent to Slave"); Serial.println(lcdString);
-
-  // Wait for response from Slave...
-  // msgType ' ' (blank) means there was no message waiting for us.
-  // msgType 'C' means this is a response from Slave we're expecting
-  // For any message with contents (such as this, which is a bool value), we'll need to call the "pMessage->get" function to retrieve the actual contents of the message.
-
-  // Wait for a respons from Slave re: are there any credits?
-  // msgType will be 'C' if there is a response, or ' ' (
-  while (msgType == ' ') {
-    msgType = pMessage->available();
+// Start a random surf music track (not the same as last played).
+void audioStartRandomSurfMusic() {
+  byte idx = audioRandomInt(NUM_MUS_SURF);
+  unsigned int trackNum = musTracksSurf[idx].trackNum;
+  if (trackNum == audioCurrentMusicTrack && NUM_MUS_SURF > 1) {
+    idx = (idx + 1) % NUM_MUS_SURF;
+    trackNum = musTracksSurf[idx].trackNum;
   }
-
-  bool credits = false;
-  switch(msgType) {
-    case 'C' :  // New credit message in incoming RS485 buffer as expected
-      pMessage->getCreditSuccess(&credits);
-      // Just calling the function updates "credits" value ;-)
-      if (credits) {
-        sprintf(lcdString, "True!");
-      } else {
-        sprintf(lcdString, "False!");
-      }
-      pLCD2004->println(lcdString);
-      break;
-    default:
-      sprintf(lcdString, "MSG TYPE ERROR %c", msgType); pLCD2004->println(lcdString); Serial.println(lcdString);
-      // It's printing a, b, c, etc. i.e. successive characters **************************************************************************
-  }
-  msgType = pMessage->available();
-*/
-
-// ***** CENTIPEDE INPUT SPEED TEST RESULTS FOR FUTURE REFERENCE *****
-// Here is some code that reads Centipede #2 inputs manually, one at a time, and displays any closed switches.
-// TESTING RESULTS SHOW IT TAKES 30ms TO READ ALL 64 SWITCHES MANUALLY
-/*
-while (true) {
-  for (int i = 0; i < 64; i++) {  // We'll read Centipede #2, but the function will correct for this
-    if (switchClosed(i)) {
-      sprintf(lcdString, "SW %02d CLOSED", i);
-      pLCD2004->println(lcdString);
-      Serial.println(lcdString);
-    }
-  }
-  long unsigned int endMillis = millis();
+  audioStartMusicTrack(trackNum, musTracksSurf[idx].lengthSeconds, false);
 }
 
-// Here is some code that reads Centipede #2 inputs 16 bits at a time using portRead(), and displays any that are closed.
-// TESTING RESULTS SHOW IT ONLY TAKES 2-3ms TO READ ALL 64 SWITCHES USING portRead()!
-/*
-while (true) {
-  // This block of code will read all 64 inputs from Centipede #2, 16 bits at a time, and display any that are closed.
-  // We will use our switchOldState/switchNewState arrays to hold the 64 bits read from Centipede #2.
-  // We will use the shiftRegister->portRead function to read 16 bits at a time.
-  for (int i = 0; i < 4; i++) {  // There are 4 ports of 16 bits each = 64 bits total
-    switchNewState[i] = pShiftRegister->portRead(i + 4);  // "+4" so we'll read from Centipede #2; input ports 4..7
-    // Now check each of the 16 bits read for closed switches
-    for (int bitNum = 0; bitNum < 16; bitNum++) {
-      // Check if this bit is LOW (closed switch)
-      if ((switchNewState[i] & (1 << bitNum)) == 0) {
-        int switchNum = (i * 16) + bitNum;  // Calculate switch number 0..63
-        sprintf(lcdString, "SW %02d CLOSED", switchNum);
-        pLCD2004->println(lcdString);
-        Serial.println(lcdString);
-        delay(1000);
-      }
-    }
-  }
+// *** STUB FUNCTIONS - TO BE IMPLEMENTED ***
+// These are placeholders that will be built out with the new audio system.
+
+void audioStartMainMusic() {
+  // Start a random circus track (or surf based on theme setting - TODO)
+  audioStartRandomCircusMusic();
 }
-*/
 
-// ********************************************************************************************************************************
-// SAMPLE LOOP CODE AND COMMENTS FOR FUTURE REFERENCE:
 
-// At top of 10ms game-play loop, read the status of the two flipper buttons continuously until 10ms has transpired i.e. ready for another loop iteration.
-//   Handle flipper button presses immediately, outside of switch state table processing for 1st priority handling.
-// Next read all 37 non-flipper Centipede #2 inputs (16 bits at a time) into switchNewState[] before checking any switches.
-//   Handle slingshot and pop bumper switches immediately, outside of switch state table processing for 2nd priority handline.
-//   Then process the rest of the switches via the switch state table as before (3rd priority handling).
-// This way the flippers, slingshots, and bumpers are very responsive, while the other switches can be debounced via the state table.
-
-/*
-  void loop() {
-    unsigned long loopStart = millis();
-
-    // Fast flipper polling (uses remaining time after other tasks)
-    while (millis() - loopStart < 10) {
-      if (switchClosed(SWITCH_IDX_FLIPPER_LEFT_BUTTON)) {
-        // Fire left flipper instantly
-      }
-      if (switchClosed(SWITCH_IDX_FLIPPER_RIGHT_BUTTON)) {
-        // Fire right flipper instantly
-      }
-    }
-
-    // Once per 10ms: read shift register switches
-    for (int i = 0; i < 4; i++) {
-      switchNewState[i] = pShiftRegister->portRead(i + 4);
-    }
-
-    // Process bumpers, lamps, score updates, etc.
-    // ...
-
-    // Update coil timers (decrement countdown, etc.)
-    // ...
-  }
-*/

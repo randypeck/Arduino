@@ -1,4 +1,4 @@
-// PINBALL_CONSTS.H Rev: 12/28/25.
+// PINBALL_CONSTS.H Rev: 01/14/26.
 
 #ifndef PINBALL_CONSTS_H
 #define PINBALL_CONSTS_H
@@ -23,13 +23,13 @@ const byte ARDUINO_SLV =  2;              // Slave Arduino
 const byte ARDUINO_ALL = 99;              // Master broadcasting to all i.e. mode change
 
 // *** OPERATING MODES:
-const byte MODE_UNDEFINED   = 0;
-const byte MODE_ATTRACT     = 1;
-const byte MODE_ORIGINAL    = 2;
-const byte MODE_ENHANCED    = 3;
-const byte MODE_IMPULSE     = 4;
-const byte MODE_TILT        = 5;
-const byte MODE_DIAGNOSTIC  = 6;
+const byte MODE_UNDEFINED  = 0;
+const byte MODE_DIAGNOSTIC = 1;
+const byte MODE_ORIGINAL   = 2;
+const byte MODE_ENHANCED   = 3;
+const byte MODE_IMPULSE    = 4;
+const byte MODE_ATTRACT    = 5;
+const byte MODE_TILT       = 6;
 
 const byte LCD_WIDTH      = 20;  // 2004 (20 char by 4 lines) LCD display
 
@@ -121,5 +121,129 @@ const byte PIN_OUT_LED                 = 13;  // Built-in LED always pin 13
 // SLAVE ARDUINO HEAD DIRECT INPUT PIN NUMBERS (Switches):
 const byte PIN_IN_SWITCH_CREDIT_EMPTY       =  2;  // Input : Credit wheel "Empty" switch.  Pulled LOW when empty.
 const byte PIN_IN_SWITCH_CREDIT_FULL        =  3;  // Input : Credit wheel "Full" switch.  Pulled LOW when full.
+
+// ********************************
+// ***** AUDIO TRACK CONSTANTS ****
+// ********************************
+
+// *** AUDIO FLAGS ***
+const byte AUDIO_FLAG_NONE     = 0x00;
+const byte AUDIO_FLAG_LOOP     = 0x01;
+
+// *** AUDIO PRIORITY (for COM tracks) ***
+const byte AUDIO_PRIORITY_LOW  = 1;  // Routine callouts (compliments, drain comments)
+const byte AUDIO_PRIORITY_MED  = 2;  // Important but interruptible (player up, ball saved)
+const byte AUDIO_PRIORITY_HIGH = 3;  // Critical (mode end, tilt, awards)
+
+// *** FIXED TRACK NUMBERS (used directly in code) ***
+// Diagnostics
+const unsigned int TRACK_DIAG_ENTER             =  101;
+const unsigned int TRACK_DIAG_EXIT              =  102;
+const unsigned int TRACK_DIAG_TONE              =  103;
+const unsigned int TRACK_DIAG_SWITCH_CLOSE      =  104;
+const unsigned int TRACK_DIAG_SWITCH_OPEN       =  105;
+const unsigned int TRACK_DIAG_LAMPS             =  111;
+const unsigned int TRACK_DIAG_SWITCHES          =  112;
+const unsigned int TRACK_DIAG_COILS             =  113;
+const unsigned int TRACK_DIAG_MOTORS            =  114;
+const unsigned int TRACK_DIAG_MUSIC             =  115;
+const unsigned int TRACK_DIAG_SFX               =  116;
+const unsigned int TRACK_DIAG_COMMENTS          =  117;
+
+// Tilt
+const unsigned int TRACK_TILT_BUZZER            =  211;
+
+// Start sequence
+const unsigned int TRACK_START_REJECT_HORN      =  311;
+const unsigned int TRACK_START_P1_OK            =  351;
+const unsigned int TRACK_START_WILDER           =  352;
+const unsigned int TRACK_START_MORE_FRIENDS     =  353;
+const unsigned int TRACK_START_P2               =  354;
+const unsigned int TRACK_START_P3               =  355;
+const unsigned int TRACK_START_P4               =  356;
+const unsigned int TRACK_START_PARK_FULL        =  357;
+const unsigned int TRACK_START_SCREAM           =  401;
+const unsigned int TRACK_START_HEY_GANG         =  402;
+const unsigned int TRACK_START_LIFT_LOOP        =  403;
+const unsigned int TRACK_START_DROP             =  404;
+
+// Player/Ball announcements (add player/ball number - 1 to get track)
+const unsigned int TRACK_PLAYER_BASE            =  451;  // 451 + (playerNum - 1)
+const unsigned int TRACK_BALL_BASE              =  461;  // 461 + (ballNum - 1)
+
+// Shoot prompts
+const unsigned int TRACK_SHOOT_LIFT_ROD         =  611;
+
+// Ball saved special case
+const unsigned int TRACK_BALL_SAVED_MODE_END    =  641;
+
+// Mode common
+const unsigned int TRACK_MODE_STINGER_START     = 1001;
+const unsigned int TRACK_MODE_JACKPOT           = 1002;
+const unsigned int TRACK_MODE_HURRY             = 1003;
+const unsigned int TRACK_MODE_COUNTDOWN         = 1004;
+const unsigned int TRACK_MODE_TIME_UP           = 1005;
+const unsigned int TRACK_MODE_STINGER_END       = 1006;
+
+// Mode intros
+const unsigned int TRACK_MODE_BUMPER_INTRO      = 1101;
+const unsigned int TRACK_MODE_BUMPER_REMIND     = 1111;
+const unsigned int TRACK_MODE_BUMPER_ACHIEVED   = 1197;
+const unsigned int TRACK_MODE_RAB_INTRO         = 1201;
+const unsigned int TRACK_MODE_RAB_REMIND        = 1211;
+const unsigned int TRACK_MODE_RAB_ACHIEVED      = 1297;
+const unsigned int TRACK_MODE_GOBBLE_INTRO      = 1301;
+const unsigned int TRACK_MODE_GOBBLE_REMIN      = 1311;
+const unsigned int TRACK_MODE_GOBBLE_HIT        = 1321;
+const unsigned int TRACK_MODE_GOBBLE_ACHIEVED   = 1397;
+
+// *** TRACK RANGES (for random selection) ***
+const unsigned int TRACK_TILT_WARNING_FIRST     =  201;
+const unsigned int TRACK_TILT_WARNING_LAST      =  205;
+const unsigned int TRACK_TILT_COM_FIRST         =  212;
+const unsigned int TRACK_TILT_COM_LAST          =  216;
+const unsigned int TRACK_BALL_MISSING_FIRST     =  301;
+const unsigned int TRACK_BALL_MISSING_LAST      =  304;
+const unsigned int TRACK_START_REJECT_FIRST     =  312;
+const unsigned int TRACK_START_REJECT_LAST      =  330;
+const unsigned int TRACK_BALL1_COM_FIRST        =  511;
+const unsigned int TRACK_BALL1_COM_LAST         =  519;
+const unsigned int TRACK_BALL5_COM_FIRST        =  531;
+const unsigned int TRACK_BALL5_COM_LAST         =  540;
+const unsigned int TRACK_GAME_OVER_FIRST        =  551;
+const unsigned int TRACK_GAME_OVER_LAST         =  577;
+const unsigned int TRACK_SHOOT_FIRST            =  612;
+const unsigned int TRACK_SHOOT_LAST             =  620;
+const unsigned int TRACK_BALL_SAVED_FIRST       =  631;
+const unsigned int TRACK_BALL_SAVED_LAST        =  636;
+const unsigned int TRACK_BALL_SAVED_URG_FIRST   =  651;
+const unsigned int TRACK_BALL_SAVED_URG_LAST    =  662;
+const unsigned int TRACK_MULTIBALL_FIRST        =  671;
+const unsigned int TRACK_MULTIBALL_LAST         =  675;
+const unsigned int TRACK_COMPLIMENT_FIRST       =  701;
+const unsigned int TRACK_COMPLIMENT_LAST        =  714;
+const unsigned int TRACK_DRAIN_FIRST            =  721;
+const unsigned int TRACK_DRAIN_LAST             =  739;
+const unsigned int TRACK_AWARD_FIRST            =  811;
+const unsigned int TRACK_AWARD_LAST             =  842;
+const unsigned int TRACK_MODE_BUMPER_HIT_FIRST  = 1121;
+const unsigned int TRACK_MODE_BUMPER_HIT_LAST   = 1133;
+const unsigned int TRACK_MODE_BUMPER_MISS_FIRST = 1141;
+const unsigned int TRACK_MODE_BUMPER_MISS_LAST  = 1148;
+const unsigned int TRACK_MODE_RAB_HIT_FIRST     = 1221;
+const unsigned int TRACK_MODE_RAB_HIT_LAST      = 1225;
+const unsigned int TRACK_MODE_RAB_MISS_FIRST    = 1241;
+const unsigned int TRACK_MODE_RAB_MISS_LAST     = 1254;
+const unsigned int TRACK_MODE_GOBBLE_MISS_FIRST = 1341;
+const unsigned int TRACK_MODE_GOBBLE_MISS_LAST  = 1348;
+const unsigned int TRACK_MUSIC_CIRCUS_FIRST     = 2001;
+const unsigned int TRACK_MUSIC_CIRCUS_LAST      = 2019;
+const unsigned int TRACK_MUSIC_SURF_FIRST       = 2051;
+const unsigned int TRACK_MUSIC_SURF_LAST        = 2068;
+
+// *** SPECIAL CONSTANTS ***
+const unsigned int TRACK_LIFT_LOOP_SECONDS      =  120;  // Loop 0403 before this expires
+const byte NUM_CIRCUS_TRACKS                    =   19;  // 2001-2019
+const byte NUM_SURF_TRACKS                      =   18;  // 2051-2068
 
 #endif

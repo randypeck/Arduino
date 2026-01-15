@@ -1,4 +1,4 @@
-// PINBALL_FUNCTIONS.H Rev: 08/18/25.
+// PINBALL_FUNCTIONS.H Rev: 01/14/26.
 // Not a class, just a group of functions.
 
 // 02/20/23: Eliminated pLCD2004 and pShiftRegister from parms being passed to classes, *and* as "extern" in class.h files,
@@ -24,33 +24,11 @@ extern char lcdString[];  // Global array to hold strings sent to Digole 2004 LC
 #include <Pinball_Centipede.h>
 extern Pinball_Centipede* pShiftRegister;
 
-extern void wdt_disable();  // Used by SWT to release all turnout solenoids in haltIfHaltPinPulledLow()
+// extern void wdt_disable();  // Used by SWT to release all turnout solenoids in haltIfHaltPinPulledLow()
 
 void initScreamoMasterArduinoPins();
 void initScreamoSlaveArduinoPins();
 void centipedeForceAllOff();
-void haltIfHaltPinPulledLow();
 void endWithFlashingLED(int t_numFlashes);
-void requestEmergencyStop();
-void chirp();
-
-// BIT FUNCTIONS: I found a couple alternates online, but Arduino.h has built-in macros for all kinds of bit manipulation.
-// I built functions based on the Arduino.h macros, because: 1. Visual Studio gave me a warning that they may not be supported
-// (they are, but I'd rather not have the warning), and 2. because I prefer using functions versus "invisible" macros.
-// Here are the macro definitions found in arduino.h:
-// #define lowByte(w) ((unsigned int) ((w) & 0xff))
-// #define highByte(w) ((unsigned int) ((w) >> 8))
-// #define bitRead(value, bit) (((value) >> (bit)) & 0x01)
-// #define bitSet(value, bit) ((value) |= (1UL << (bit)))
-// #define bitClear(value, bit) ((value) &= ~(1UL << (bit)))
-// #define bitToggle(value, bit) ((value) ^= (1UL << (bit)))
-// #define bitWrite(value, bit, bitvalue) ((bitvalue) ? bitSet(value, bit) : bitClear(value, bit))
-byte getLowByte(unsigned t_val);
-byte getHighByte(unsigned t_val);
-bool readBit(unsigned t_val, byte t_bit);
-unsigned setBit(unsigned t_val, byte t_bit);
-unsigned clearBit(unsigned t_val, byte t_bit);
-unsigned toggleBit(unsigned t_val, byte t_bit);
-unsigned writeBit(unsigned t_val, byte t_bit, byte t_bitVal);
 
 #endif
