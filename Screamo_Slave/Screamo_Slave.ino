@@ -1,5 +1,6 @@
-// Screamo_Slave.INO Rev: 12/28/25
-// 12/28/25: Updated SCORE_INC_10K and SCORE_RESET to remain silent (no bells or 10K unit) in Enhanced mode.
+// Screamo_Slave.INO Rev: 01/19/26
+// 12/28/25: Updated SCORE_INC_10K and SCORE_RESET to remain silent (no bells or 10K unit) in Enhanced style.
+// 01/19/26: Updated SCORE_INC_10K message to include silent parm
 
 #include <Arduino.h>
 #include <Pinball_Consts.h>
@@ -10,7 +11,7 @@
 const int EEPROM_ADDR_SCORE = 0;  // Address to store 16-bit score (uses addr 0 and 1)
 
 const byte THIS_MODULE = ARDUINO_SLV;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "SLAVE 12/28/25";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "SLAVE 01/19/26";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which effectively makes it a global.
 // No need to pass lcdString[] to any functions that use it!
 
@@ -128,6 +129,7 @@ const byte SCREAMO_SLAVE_TICK_MS = 10;  // One scheduler tick == 10ms
 
 int currentScore                 =  0;    // Current game score (0..999).
 int targetScore                  =  0;    // Desired final score (0..999) updated by incoming RS485 score deltas.
+bool scoreCommandSilent = false;  // True when current score command should suppress bells/10K unit
 
 unsigned long lastLoopTime       =  0;    // Used to track 10ms loop timing.
 
@@ -472,8 +474,11 @@ void processMessage(byte t_msgType) {
   case RS485_TYPE_MAS_TO_SLV_SCORE_INC_10K: {
     // Forward signed delta (in 10K units) to the centralized enqueue/validation logic.
     int incAmount = 0;
-    pMessage->getMAStoSLVScoreInc10K(&incAmount);
-    sprintf(lcdString, "Score adj %d", incAmount); pLCD2004->println(lcdString);
+    bool silent = false;
+    pMessage->getMAStoSLVScoreInc10K(&incAmount, &silent);  // CHANGED: now gets silent flag
+    scoreCommandSilent = silent;  // NEW: store for use by processScoreAdjust()
+    sprintf(lcdString, "Scr adj %d%s", incAmount, silent ? " SIL" : ""); // FIXED: max 19 chars
+    pLCD2004->println(lcdString);
 
     // requestScoreAdjust() performs clamping, updates targetScore, prunes saturation, and starts processing if idle.
     requestScoreAdjust(incAmount);
@@ -1076,6 +1081,7 @@ void scoreAdjustFinishIfDone() {
   scoreCycleHundred       = false;
   scoreCmdActiveDirection = 0;
   scoreAdjustCycleIndex   = 0;
+  scoreCommandSilent      = false;  // NEW: clear silent flag when batch completes
 }
 
 void pruneQueuedAtBoundary(int t_saturatedDir) {
@@ -1402,10 +1408,18 @@ bool hasCredits() {
 bool noiseMakersEnabled() {
   // Return true when mechanical score sounds (10K unit, bells in head; Selection, reset units in cabinet)
   // should be used for *automatic* scoring behavior.
-  // Original and Impulse modes => authentic EM behavior: noise makers ON.
-  // Enhanced mode              => silent scoring: bells/10K unit suppressed for auto scoring.
+  // Original and Impulse styles => authentic EM behavior: noise makers ON.
+  // Enhanced style              => silent scoring: bells/10K unit suppressed for auto scoring.
+  // Silent flag                 => Master explicitly requests silence regardless of mode.
   // NOTE: This does NOT affect explicit "fire bell/10K unit" commands coming from Master.
-  //       Those commands still directly activate the devices regardless of mode.
+  //       Those commands still directly activate the devices regardless of style.
+
+  // If Master explicitly requested silence, honor that first
+  if (scoreCommandSilent) {
+    return false;
+  }
+
+  // Otherwise use mode-based logic
   if (modeCurrent == MODE_ENHANCED) {
     return false;
   }

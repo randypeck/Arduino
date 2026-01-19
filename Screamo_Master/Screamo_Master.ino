@@ -1,4 +1,4 @@
-// Screamo_Master.INO Rev: 01/18/26
+// Screamo_Master.INO Rev: 01/19/26
 // 11/12/25: Moved Right Kickout from pin 13 to pin 44 to avoid MOSFET firing twice on power-up.  Don't use MOSFET on pin 13.
 // 12/28/25: Changed flipper inputs from direct Arduino inputs to Centipede inputs.
 // 01/07/26: Added "5 Balls in Trough" switch to Centipede inputs. All switches tested and working.
@@ -12,7 +12,7 @@
 #include <Pinball_Descriptions.h> 
 
 const byte THIS_MODULE = ARDUINO_MAS;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "MASTER 01/18/26";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "MASTER 01/19/26";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which makes it a global.
 // And no need to pass lcdString[] to any functions that use it!
 
@@ -38,12 +38,12 @@ const int EEPROM_ADDR_LAST_MODE_PLAYED        = 25;  // 1-byte unsigned: Last En
 
 const int EEPROM_ADDR_BALL_SAVE_TIME          = 30;  // 1-byte unsigned: Ball save time (seconds) (0=off, 1-30 seconds) from first point scored that ball.
 
-const int EEPROM_ADDR_HURRY_UP_1_TIME         = 31;  // 1-byte unsigned: Mode 1 time limit (in seconds)
-const int EEPROM_ADDR_HURRY_UP_2_TIME         = 32;  // 1-byte unsigned: i.e. "Roll-A-Ball" mode etc.
-const int EEPROM_ADDR_HURRY_UP_3_TIME         = 33;  // 1-byte unsigned
-const int EEPROM_ADDR_HURRY_UP_4_TIME         = 34;  // 1-byte unsigned
-const int EEPROM_ADDR_HURRY_UP_5_TIME         = 35;  // 1-byte unsigned
-const int EEPROM_ADDR_HURRY_UP_6_TIME         = 36;  // 1-byte unsigned
+const int EEPROM_ADDR_MODE_1_TIME             = 31;  // 1-byte unsigned: Mode 1 time limit (in seconds)
+const int EEPROM_ADDR_MODE_2_TIME             = 32;  // 1-byte unsigned: i.e. "Roll-A-Ball" mode etc.
+const int EEPROM_ADDR_MODE_3_TIME             = 33;  // 1-byte unsigned
+const int EEPROM_ADDR_MODE_4_TIME             = 34;  // 1-byte unsigned
+const int EEPROM_ADDR_MODE_5_TIME             = 35;  // 1-byte unsigned
+const int EEPROM_ADDR_MODE_6_TIME             = 36;  // 1-byte unsigned
 
 const int EEPROM_ADDR_ORIGINAL_REPLAY_1       = 40;  // 2-byte unsigned: 1st replay score for Original/Impulse mode 0..999
 const int EEPROM_ADDR_ORIGINAL_REPLAY_2       = 42;  // 2-byte unsigned
@@ -56,6 +56,51 @@ const int EEPROM_ADDR_ENHANCED_REPLAY_2       = 52;  // 2-byte unsigned
 const int EEPROM_ADDR_ENHANCED_REPLAY_3       = 54;  // 2-byte unsigned
 const int EEPROM_ADDR_ENHANCED_REPLAY_4       = 56;  // 2-byte unsigned
 const int EEPROM_ADDR_ENHANCED_REPLAY_5       = 58;  // 2-byte unsigned
+
+// Settings categories
+const byte SETTINGS_CAT_GAME    = 0;
+const byte SETTINGS_CAT_ORIG_REPLAY = 1;
+const byte SETTINGS_CAT_ENH_REPLAY  = 2;
+const byte NUM_SETTINGS_CATEGORIES = 3;
+
+const char* settingsCategoryNames[NUM_SETTINGS_CATEGORIES] = {
+  "Game Settings",
+  "Original Replays",
+  "Enhanced Replays"
+};
+
+// Game Settings parameter indices
+const byte GAME_SETTING_THEME      = 0;
+const byte GAME_SETTING_BALL_SAVE  = 1;
+const byte GAME_SETTING_MODE_1     = 2;
+const byte GAME_SETTING_MODE_2     = 3;
+const byte GAME_SETTING_MODE_3     = 4;
+const byte GAME_SETTING_MODE_4     = 5;
+const byte GAME_SETTING_MODE_5     = 6;
+const byte GAME_SETTING_MODE_6     = 7;
+const byte NUM_GAME_SETTINGS       = 8;
+
+const char* gameSettingNames[NUM_GAME_SETTINGS] = {
+  "Music Theme",
+  "Ball Save Time",
+  "Mode 1: Bumper",
+  "Mode 2: Roll-A-Ball",
+  "Mode 3: Gobble",
+  "Mode 4: Reserved",
+  "Mode 5: Reserved",
+  "Mode 6: Reserved"
+};
+
+// Theme selection values
+const byte THEME_CIRCUS = 0;
+const byte THEME_SURF   = 1;
+
+// Replay setting constants
+const byte NUM_REPLAY_SCORES = 5;
+
+bool initialBootDisplayShown = false;
+unsigned long bootDisplayStartMs = 0;
+const unsigned long BOOT_DISPLAY_DURATION_MS = 3000;  // Show rev date
 
 // **************************************
 // ***** LAMP STRUCTS AND CONSTANTS *****
@@ -345,10 +390,10 @@ DeviceParmStruct deviceParm[NUM_DEVS] = {
   {  7, 180, 10,   0, 0, 0 },  // SLINGSHOT_RIGHT     =  4, PWM MOSFET
   {  8, 150, 10,  40, 0, 0 },  // FLIPPER_LEFT        =  5, PWM MOSFET.  200 hits gobble hole too hard; 150 can get to top of p/f.
   {  9, 150, 10,  40, 0, 0 },  // FLIPPER_RIGHT       =  6, PWM MOSFET
-  { 10, 200, 20,  40, 0, 0,},  // BALL_TRAY_RELEASE   =  7, PWM MOSFET (original tray release)
+  { 10, 200, 20,  40, 0, 0 },  // BALL_TRAY_RELEASE   =  7, PWM MOSFET (original tray release)
   { 23, 255,  5,   0, 0, 0 },  // SELECTION_UNIT      =  8, Non-PWM MOSFET; on/off only.
   { 24, 255,  5,   0, 0, 0 },  // RELAY_RESET         =  9, Non-PWM MOSFET; on/off only.
-  { 11, 150, 23,   0, 0, 0,},  // BALL_TROUGH_RELEASE = 10, PWM MOSFET (new up/down post)
+  { 11, 150, 23,   0, 0, 0 },  // BALL_TROUGH_RELEASE = 10, PWM MOSFET (new up/down post)
   // For the ball trough release coil, 150 is the right power; 100 could not guarantee it could retract if there was pressure holding it from balls above.
   // 230ms is just enough time for ball to get 1/2 way past post and momentum carries it so it won't get pinned by the post.
   // The post springs back fully extended before the next ball hits it, regardless of how many balls are stacked above it.
@@ -840,13 +885,14 @@ void markDiagnosticsDisplayDirty(bool forceSuiteReset = false);  // Must forward
 byte diagnosticSuiteIdx  = 0;  // 0..NUM_DIAG_SUITES-1: which top-level suite selected
 byte diagnosticState     = 0;  // 0 = at suite menu, >0 = inside a suite (future use)
 
-const byte NUM_DIAG_SUITES = 5;
+const byte NUM_DIAG_SUITES = 6;
 const char* diagSuiteNames[NUM_DIAG_SUITES] = {
   "VOLUME",
   "LAMP TESTS",
   "SWITCH TESTS",
   "COIL/MOTOR TESTS",
-  "AUDIO TESTS"
+  "AUDIO TESTS",
+  "SETTINGS"
 };
 
 const byte NUM_DIAG_BUTTONS = 4;
@@ -854,6 +900,59 @@ byte diagButtonLastState[NUM_DIAG_BUTTONS] = { 0, 0, 0, 0 };
 bool attractDisplayDirty = true;
 bool diagDisplayDirty = true;
 byte diagLastRenderedSuite = 0xFF;
+
+// ******************************************
+// ***** GAME STATE STRUCTURE AND VARS ******
+// ******************************************
+
+// Game state tracks multi-player state, ball tracking, and timing.
+// Memory efficient: ~24 bytes total.
+struct GameStateStruct {
+  byte numPlayers;           // 1-4 (Enhanced) or 1 (Original/Impulse)
+  byte currentPlayer;        // 1-4 (1-indexed for display)
+  byte currentBall;          // 1-5 (1-indexed for display)
+  uint16_t score[4];         // 0..999 per player (in 10K units, so 999 = 9,990,000)
+  byte tiltWarnings;         // 0-2 warnings before tilt (per ball)
+  bool tilted;               // True if current ball has tilted
+  bool ballInPlay;           // True if ball is live on playfield
+  bool ballSaveActive;       // True if ball save timer is running
+  unsigned long ballSaveEndMs;      // When ball save expires (millis)
+  unsigned long ballLaunchMs;       // When ball was launched (for shoot prompts)
+  bool hasScored;            // True if player scored this ball (for ball save activation)
+};
+
+GameStateStruct gameState;
+
+// Coil rest period: after timeOn expires and powerHold==0, coil enters rest for this many ticks.
+// Negative countdown values indicate rest period; 0 = idle; positive = active.
+// 8 ticks * 10ms = 80ms rest, ensuring coils can't rapid-fire dangerously.
+const int8_t COIL_REST_TICKS = -8;
+
+// *** CREDIT TRACKING ***
+// Credits are managed by Slave; Master only queries presence (has credits or not).
+// No need to track count - just query Slave when needed.
+bool lastKnownCreditStatus = false;  // Cached result of last credit query
+unsigned long lastCreditQueryMs = 0;
+const unsigned long CREDIT_QUERY_INTERVAL_MS = 500;  // Don't spam Slave with queries
+
+// *** FLIPPER STATE ***
+// Flippers need immediate response, tracked separately from other coils.
+bool leftFlipperHeld = false;
+bool rightFlipperHeld = false;
+
+// *** START BUTTON EDGE DETECTION ***
+byte startButtonLastState = 0;
+
+// Forward declarations for functions defined later
+void initGameState();
+bool canActivateDeviceNow(byte t_devIdx);
+void activateDevice(byte t_devIdx);
+void updateDeviceTimers();
+void releaseDevice(byte t_devIdx);
+void processFlippers();
+void requestCreditStatusFromSlave();
+void handleCreditStatusResponse(bool t_hasCredits);
+bool hasCredits();
 
 // ********************************************************************************************************************
 // ********************************************************************************************************************
@@ -932,8 +1031,12 @@ void setup() {
   pLCD2004->begin();  // 20-char x 4-line LCD display via Serial 1.
   pLCD2004->println(lcdString);  // Display app version, defined above.
 
+  // Set boot display timing
+  bootDisplayStartMs = millis();
+  initialBootDisplayShown = false;  // Will transition after delay
+
   // *** INITIALIZE TSUNAMI WAV PLAYER OBJECT ***
- // Files must be WAV format, 16-bit PCM, 44.1kHz, Stereo.  Details in Tsunami.h comments.
+  // Files must be WAV format, 16-bit PCM, 44.1kHz, Stereo.  Details in Tsunami.h comments.
   pTsunami = new Tsunami();  // Create Tsunami object on Serial3
   pTsunami->start();         // Start Tsunami WAV player
   delay(10);                 // Give Tsunami time to initialize  // *************************** Change to 1000 if 10ms is insufficient **********************
@@ -948,6 +1051,8 @@ void setup() {
   setGILamps(true);          // Turn on playfield G.I. lamps
   pMessage->sendMAStoSLVGILamp(true);  // Tell Slave to turn on its G.I. lamps as well
   setAttractLamps();
+
+  initGameState();  // Initialize game state to attract mode defaults
 
 }  // End of setup()
 
@@ -966,18 +1071,19 @@ void loop() {
 
   loopNextMillis = now + LOOP_TICK_MS;
 
-  // Fast path: handle flipper buttons immediately (always active)
-  // NOTE: This is placeholder; real flipper handling will be added later.
-  // if (switchClosed(SWITCH_IDX_FLIPPER_LEFT_BUTTON)) { /* handle left flipper */ }
-  // if (switchClosed(SWITCH_IDX_FLIPPER_RIGHT_BUTTON)) { /* handle right flipper */ }
-
-  // Update Centipede #2 switch snapshot once per tick (for non-flipper switches)
+  // Update Centipede #2 switch snapshot once per tick
   for (int i = 0; i < 4; i++) {
     switchOldState[i] = switchNewState[i];
     switchNewState[i] = pShiftRegister->portRead(4 + i);  // ports 4..7 => inputs
   }
 
-  // Dispatch by mode.
+  // Process device timers FIRST - ensures coil state is current before any activation attempts
+  updateDeviceTimers();
+
+  // Process flippers immediately for responsive feel (every tick, regardless of mode)
+  processFlippers();
+
+  // Dispatch by mode
   switch (modeCurrent) {
   case MODE_ATTRACT:
     updateModeAttract();
@@ -1069,8 +1175,403 @@ const byte DIAG_SUITE_LAMPS       = 1;
 const byte DIAG_SUITE_SWITCHES    = 2;
 const byte DIAG_SUITE_COILS       = 3;
 const byte DIAG_SUITE_AUDIO       = 4;
+const byte DIAG_SUITE_SETTINGS    = 5;
 
-// Called when user presses SELECT on a suite
+
+byte readThemeFromEEPROM() {
+  byte theme = EEPROM.read(EEPROM_ADDR_THEME);
+  if (theme > 1) theme = THEME_CIRCUS;  // Default to Circus if invalid
+  return theme;
+}
+
+void writeThemeToEEPROM(byte theme) {
+  if (theme <= 1) {
+    EEPROM.update(EEPROM_ADDR_THEME, theme);
+  }
+}
+
+byte readBallSaveTimeFromEEPROM() {
+  byte ballSave = EEPROM.read(EEPROM_ADDR_BALL_SAVE_TIME);
+  if (ballSave > 30) ballSave = 10;  // Default to 10 seconds if invalid
+  return ballSave;
+}
+
+void writeBallSaveTimeToEEPROM(byte seconds) {
+  if (seconds <= 30) {
+    EEPROM.update(EEPROM_ADDR_BALL_SAVE_TIME, seconds);
+  }
+}
+
+byte readModeTimeFromEEPROM(byte modeNum) {
+  // modeNum: 1-6
+  if (modeNum < 1 || modeNum > 6) return 60;
+  int addr = EEPROM_ADDR_MODE_1_TIME + (modeNum - 1);
+  byte modeTime = EEPROM.read(addr);
+  if (modeTime == 0 || modeTime > 250) modeTime = 60;  // Default 60 seconds
+  return modeTime;
+}
+
+void writeModeTimeToEEPROM(byte modeNum, byte seconds) {
+  if (modeNum < 1 || modeNum > 6) return;
+  if (seconds == 0 || seconds > 250) return;
+  int addr = EEPROM_ADDR_MODE_1_TIME + (modeNum - 1);
+  EEPROM.update(addr, seconds);
+}
+
+unsigned int readReplayScoreFromEEPROM(bool enhanced, byte replayNum) {
+  // replayNum: 1-5
+  if (replayNum < 1 || replayNum > 5) return 450;
+
+  int baseAddr = enhanced ? EEPROM_ADDR_ENHANCED_REPLAY_1 : EEPROM_ADDR_ORIGINAL_REPLAY_1;
+  int addr = baseAddr + ((replayNum - 1) * 2);  // 2 bytes per score
+
+  unsigned int score = 0;
+  EEPROM.get(addr, score);
+
+  // Validate: scores are 0..999 (in 10K units)
+  if (score > 999) {
+    // Set defaults: Original 450,600,700,800,900; Enhanced 500,650,750,850,950
+    if (enhanced) {
+      score = 450 + (replayNum * 50) + 50;  // 500,600,700,800,900 -> adjusted to 500,650,800,850,950
+      if (replayNum == 2) score = 650;
+      if (replayNum == 3) score = 750;
+      if (replayNum == 4) score = 850;
+      if (replayNum == 5) score = 950;
+    }
+    else {
+      score = 400 + (replayNum * 50) + 50;  // 450,550,650,750,850 -> adjusted to 450,600,700,800,900
+      if (replayNum == 2) score = 600;
+      if (replayNum == 3) score = 700;
+      if (replayNum == 4) score = 800;
+      if (replayNum == 5) score = 900;
+    }
+  }
+  return score;
+}
+
+void writeReplayScoreToEEPROM(bool enhanced, byte replayNum, unsigned int score) {
+  if (replayNum < 1 || replayNum > 5) return;
+  if (score > 999) return;
+
+  int baseAddr = enhanced ? EEPROM_ADDR_ENHANCED_REPLAY_1 : EEPROM_ADDR_ORIGINAL_REPLAY_1;
+  int addr = baseAddr + ((replayNum - 1) * 2);
+
+  EEPROM.put(addr, score);
+}
+
+// Add the main settings suite handler function:
+
+void diagRunSettings() {
+  // Three-level navigation:
+  // Level 0: Select category (Game/Orig Replay/Enh Replay) with LEFT/RIGHT, SELECT to enter
+  // Level 1: Select parameter within category with LEFT/RIGHT, SELECT to enter adjustment
+  // Level 2: Adjust value with LEFT/RIGHT, BACK to return to parameter selection
+
+  byte categoryIdx = 0;
+  byte paramIdx = 0;
+  byte level = 0;  // 0 = category select, 1 = param select, 2 = value adjust
+
+  char buf[LCD_WIDTH + 1];
+  bool needsRedraw = true;
+
+  while (true) {
+    // Update switch states
+    for (int i = 0; i < 4; i++) {
+      switchOldState[i] = switchNewState[i];
+      switchNewState[i] = pShiftRegister->portRead(4 + i);
+    }
+
+    // Level 0: Category selection
+    if (level == 0) {
+      if (needsRedraw) {
+        lcdShowDiagScreen(
+          "SETTINGS",
+          settingsCategoryNames[categoryIdx],
+          "-/+ category SEL=enter",
+          "BACK=exit"
+        );
+        needsRedraw = false;
+      }
+
+      if (diagButtonPressed(0)) {  // BACK
+        return;  // Exit settings suite
+      }
+      if (diagButtonPressed(1)) {  // LEFT
+        if (categoryIdx == 0) {
+          categoryIdx = NUM_SETTINGS_CATEGORIES - 1;
+        }
+        else {
+          categoryIdx--;
+        }
+        paramIdx = 0;  // Reset param when changing category
+        needsRedraw = true;
+      }
+      if (diagButtonPressed(2)) {  // RIGHT
+        categoryIdx++;
+        if (categoryIdx >= NUM_SETTINGS_CATEGORIES) {
+          categoryIdx = 0;
+        }
+        paramIdx = 0;
+        needsRedraw = true;
+      }
+      if (diagButtonPressed(3)) {  // SELECT
+        level = 1;
+        paramIdx = 0;
+        needsRedraw = true;
+      }
+      continue;
+    }
+
+    // Level 1: Parameter selection
+    if (level == 1) {
+      if (needsRedraw) {
+        if (categoryIdx == SETTINGS_CAT_GAME) {
+          // Game Settings
+          lcdClearRow(0);
+          lcdPrintRow(0, "GAME SETTINGS");
+          lcdClearRow(1);
+          lcdPrintRow(1, gameSettingNames[paramIdx]);
+
+          // Show current value on row 2
+          lcdClearRow(2);
+          if (paramIdx == GAME_SETTING_THEME) {
+            byte theme = readThemeFromEEPROM();
+            sprintf(buf, "Value: %s", theme == THEME_CIRCUS ? "Circus" : "Surf");
+          }
+          else if (paramIdx == GAME_SETTING_BALL_SAVE) {
+            byte ballSave = readBallSaveTimeFromEEPROM();
+            sprintf(buf, "Value: %d sec", ballSave);
+          }
+          else {
+            byte modeTime = readModeTimeFromEEPROM(paramIdx - GAME_SETTING_MODE_1 + 1);
+            sprintf(buf, "Value: %d sec", modeTime);
+          }
+          lcdPrintRow(2, buf);
+
+          lcdClearRow(3);
+          lcdPrintRow(3, "-/+ SEL=adj BACK=up");
+
+        }
+        else if (categoryIdx == SETTINGS_CAT_ORIG_REPLAY) {
+          // Original Replay Scores (1-5)
+          lcdClearRow(0);
+          lcdPrintRow(0, "ORIGINAL REPLAYS");
+          lcdClearRow(1);
+          sprintf(buf, "Replay %d", paramIdx + 1);
+          lcdPrintRow(1, buf);
+
+          unsigned int score = readReplayScoreFromEEPROM(false, paramIdx + 1);
+          lcdClearRow(2);
+          sprintf(buf, "Score: %d.%dM", score / 100, (score / 10) % 10);
+          lcdPrintRow(2, buf);
+
+          lcdClearRow(3);
+          lcdPrintRow(3, "-/+ SEL=adj BACK=up");
+
+        }
+        else if (categoryIdx == SETTINGS_CAT_ENH_REPLAY) {
+          // Enhanced Replay Scores (1-5)
+          lcdClearRow(0);
+          lcdPrintRow(0, "ENHANCED REPLAYS");
+          lcdClearRow(1);
+          sprintf(buf, "Replay %d", paramIdx + 1);
+          lcdPrintRow(1, buf);
+
+          unsigned int score = readReplayScoreFromEEPROM(true, paramIdx + 1);
+          lcdClearRow(2);
+          sprintf(buf, "Score: %d.%dM", score / 100, (score / 10) % 10);
+          lcdPrintRow(2, buf);
+
+          lcdClearRow(3);
+          lcdPrintRow(3, "-/+ SEL=adj BACK=up");
+        }
+
+        needsRedraw = false;
+      }
+
+      if (diagButtonPressed(0)) {  // BACK
+        level = 0;
+        needsRedraw = true;
+        continue;
+      }
+
+      if (diagButtonPressed(1)) {  // LEFT
+        byte maxParams = (categoryIdx == SETTINGS_CAT_GAME) ? NUM_GAME_SETTINGS : NUM_REPLAY_SCORES;
+        if (paramIdx == 0) {
+          paramIdx = maxParams - 1;
+        }
+        else {
+          paramIdx--;
+        }
+        needsRedraw = true;
+      }
+
+      if (diagButtonPressed(2)) {  // RIGHT
+        byte maxParams = (categoryIdx == SETTINGS_CAT_GAME) ? NUM_GAME_SETTINGS : NUM_REPLAY_SCORES;
+        paramIdx++;
+        if (paramIdx >= maxParams) {
+          paramIdx = 0;
+        }
+        needsRedraw = true;
+      }
+
+      if (diagButtonPressed(3)) {  // SELECT
+        level = 2;
+        needsRedraw = true;
+      }
+      continue;
+    }
+
+    // Level 2: Value adjustment
+    if (level == 2) {
+      if (needsRedraw) {
+        if (categoryIdx == SETTINGS_CAT_GAME) {
+          lcdClearRow(0);
+          lcdPrintRow(0, "ADJUST VALUE");
+          lcdClearRow(1);
+          lcdPrintRow(1, gameSettingNames[paramIdx]);
+          lcdClearRow(3);
+          lcdPrintRow(3, "-/+ value BACK=done");
+
+          // Display initial value on row 2
+          lcdClearRow(2);
+          if (paramIdx == GAME_SETTING_THEME) {
+            byte theme = readThemeFromEEPROM();
+            sprintf(buf, "Value: %s", theme == THEME_CIRCUS ? "Circus" : "Surf");
+          } else if (paramIdx == GAME_SETTING_BALL_SAVE) {
+            byte ballSave = readBallSaveTimeFromEEPROM();
+            sprintf(buf, "Value: %d sec", ballSave);
+          } else {
+            byte modeTime = readModeTimeFromEEPROM(paramIdx - GAME_SETTING_MODE_1 + 1);
+            sprintf(buf, "Value: %d sec", modeTime);
+          }
+          lcdPrintRow(2, buf);
+          needsRedraw = false;
+        } else {
+          lcdClearRow(0);
+          const char* title = (categoryIdx == SETTINGS_CAT_ORIG_REPLAY) ? "ORIGINAL REPLAYS" : "ENHANCED REPLAYS";
+          lcdPrintRow(0, title);
+          lcdClearRow(1);
+          sprintf(buf, "Replay %d", paramIdx + 1);
+          lcdPrintRow(1, buf);
+          lcdClearRow(3);
+          lcdPrintRow(3, "-/+ value BACK=done");
+
+          // Display initial value on row 2
+          lcdClearRow(2);
+          bool enhanced = (categoryIdx == SETTINGS_CAT_ENH_REPLAY);
+          unsigned int score = readReplayScoreFromEEPROM(enhanced, paramIdx + 1);
+          sprintf(buf, "Score: %d.%dM", score / 100, (score / 10) % 10);
+          lcdPrintRow(2, buf);
+          needsRedraw = false;
+        }
+      }
+
+      if (diagButtonPressed(0)) {  // BACK
+        level = 1;
+        needsRedraw = true;
+        continue;
+      }
+
+      if (diagButtonPressed(1)) {  // LEFT (decrease)
+        if (categoryIdx == SETTINGS_CAT_GAME) {
+          if (paramIdx == GAME_SETTING_THEME) {
+            byte theme = readThemeFromEEPROM();
+            theme = (theme == THEME_CIRCUS) ? THEME_SURF : THEME_CIRCUS;
+            writeThemeToEEPROM(theme);
+            // Update display only after value changed
+            lcdClearRow(2);
+            sprintf(buf, "Value: %s", theme == THEME_CIRCUS ? "Circus" : "Surf");
+            lcdPrintRow(2, buf);
+          } else if (paramIdx == GAME_SETTING_BALL_SAVE) {
+            byte ballSave = readBallSaveTimeFromEEPROM();
+            if (ballSave > 0) {
+              ballSave--;
+              writeBallSaveTimeToEEPROM(ballSave);
+              lcdClearRow(2);
+              sprintf(buf, "Value: %d sec", ballSave);
+              lcdPrintRow(2, buf);
+            }
+          } else {
+            byte modeNum = paramIdx - GAME_SETTING_MODE_1 + 1;
+            byte modeTime = readModeTimeFromEEPROM(modeNum);
+            if (modeTime > 10) {
+              modeTime -= 5;
+              if (modeTime < 10) modeTime = 10;
+              writeModeTimeToEEPROM(modeNum, modeTime);
+              lcdClearRow(2);
+              sprintf(buf, "Value: %d sec", modeTime);
+              lcdPrintRow(2, buf);
+            }
+          }
+        } else {
+          // Replay scores: decrement by 10 (100K)
+          bool enhanced = (categoryIdx == SETTINGS_CAT_ENH_REPLAY);
+          unsigned int score = readReplayScoreFromEEPROM(enhanced, paramIdx + 1);
+          if (score >= 10) {
+            score -= 10;
+            writeReplayScoreToEEPROM(enhanced, paramIdx + 1, score);
+            lcdClearRow(2);
+            sprintf(buf, "Score: %d.%dM", score / 100, (score / 10) % 10);
+            lcdPrintRow(2, buf);
+          }
+        }
+      }
+
+      if (diagButtonPressed(2)) {  // RIGHT (increase)
+        if (categoryIdx == SETTINGS_CAT_GAME) {
+          if (paramIdx == GAME_SETTING_THEME) {
+            byte theme = readThemeFromEEPROM();
+            theme = (theme == THEME_CIRCUS) ? THEME_SURF : THEME_CIRCUS;
+            writeThemeToEEPROM(theme);
+            // Update display only after value changed
+            lcdClearRow(2);
+            sprintf(buf, "Value: %s", theme == THEME_CIRCUS ? "Circus" : "Surf");
+            lcdPrintRow(2, buf);
+          } else if (paramIdx == GAME_SETTING_BALL_SAVE) {
+            byte ballSave = readBallSaveTimeFromEEPROM();
+            if (ballSave < 30) {
+              ballSave++;
+              writeBallSaveTimeToEEPROM(ballSave);
+              lcdClearRow(2);
+              sprintf(buf, "Value: %d sec", ballSave);
+              lcdPrintRow(2, buf);
+            }
+          } else {
+            byte modeNum = paramIdx - GAME_SETTING_MODE_1 + 1;
+            byte modeTime = readModeTimeFromEEPROM(modeNum);
+            if (modeTime < 250) {
+              modeTime += 5;
+              if (modeTime > 250) modeTime = 250;
+              writeModeTimeToEEPROM(modeNum, modeTime);
+              lcdClearRow(2);
+              sprintf(buf, "Value: %d sec", modeTime);
+              lcdPrintRow(2, buf);
+            }
+          }
+        } else {
+          // Replay scores: increment by 10 (100K)
+          bool enhanced = (categoryIdx == SETTINGS_CAT_ENH_REPLAY);
+          unsigned int score = readReplayScoreFromEEPROM(enhanced, paramIdx + 1);
+          if (score < 990) {
+            score += 10;
+            if (score > 999) score = 999;
+            writeReplayScoreToEEPROM(enhanced, paramIdx + 1, score);
+            lcdClearRow(2);
+            sprintf(buf, "Score: %d.%dM", score / 100, (score / 10) % 10);
+            lcdPrintRow(2, buf);
+          }
+        }
+      }
+      if (diagButtonPressed(3)) {  // SELECT (no action in adjust mode)
+        // Ignore; only BACK exits
+      }
+      continue;
+    }
+  }
+}
+
+// Update diagEnterSelectedSuite() to include the new suite (around line 1477):
 void diagEnterSelectedSuite() {
   lcdClear();
   switch (diagnosticSuiteIdx) {
@@ -1088,6 +1589,9 @@ void diagEnterSelectedSuite() {
     break;
   case DIAG_SUITE_AUDIO:
     diagRunAudio();
+    break;
+  case DIAG_SUITE_SETTINGS:  // NEW
+    diagRunSettings();
     break;
   default:
     break;
@@ -1856,10 +2360,25 @@ void markAttractDisplayDirty() {
 }
 
 void renderAttractDisplayIfNeeded() {
-  if (!attractDisplayDirty || pLCD2004 == nullptr) {
+  if (pLCD2004 == nullptr) {
     return;
   }
-  lcdShowDiagScreen("Screamo Ready", "Press Start", "", "");
+
+  // On first boot, keep the rev date displayed for a few seconds
+  if (!initialBootDisplayShown) {
+    if (millis() - bootDisplayStartMs < BOOT_DISPLAY_DURATION_MS) {
+      return;  // Keep showing boot screen
+    }
+    // Time expired, transition to attract screen
+    initialBootDisplayShown = true;
+    attractDisplayDirty = true;  // Force refresh to attract screen
+  }
+
+  if (!attractDisplayDirty) {
+    return;
+  }
+
+  lcdShowDiagScreen("Screamo Ready", "", "-/+ Vol  SEL=Diag", "");
   attractDisplayDirty = false;
 }
 
@@ -1888,6 +2407,182 @@ void renderDiagnosticsMenuIfNeeded() {
   );
 }
 
+// Initialize game state to attract mode defaults
+void initGameState() {
+  gameState.numPlayers = 0;
+  gameState.currentPlayer = 0;
+  gameState.currentBall = 0;
+  for (byte i = 0; i < 4; i++) {
+    gameState.score[i] = 0;
+  }
+  gameState.tiltWarnings = 0;
+  gameState.tilted = false;
+  gameState.ballInPlay = false;
+  gameState.ballSaveActive = false;
+  gameState.ballSaveEndMs = 0;
+  gameState.ballLaunchMs = 0;
+  gameState.hasScored = false;
+}
+
+// ******************************************
+// ***** COIL / DEVICE TICK HANDLER *********
+// ******************************************
+
+// Check if a device can be activated now (mechanical/safety guards).
+// Returns true if activation is allowed.
+bool canActivateDeviceNow(byte t_devIdx) {
+  // Add any device-specific safety checks here.
+  // For example, prevent flipper activation if tilted.
+  if (gameState.tilted) {
+    // Block flippers and scoring devices during tilt
+    if (t_devIdx == DEV_IDX_FLIPPER_LEFT ||
+      t_devIdx == DEV_IDX_FLIPPER_RIGHT ||
+      t_devIdx == DEV_IDX_SLINGSHOT_LEFT ||
+      t_devIdx == DEV_IDX_SLINGSHOT_RIGHT ||
+      t_devIdx == DEV_IDX_POP_BUMPER) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Request activation of a device (coil/motor).
+// If device is busy (active or resting), request is queued.
+// If idle and allowed, starts immediately.
+void activateDevice(byte t_devIdx) {
+  if (t_devIdx >= NUM_DEVS) {
+    sprintf(lcdString, "DEV ERR %u", t_devIdx);
+    pLCD2004->println(lcdString);
+    return;
+  }
+  if (deviceParm[t_devIdx].countdown != 0) {
+    deviceParm[t_devIdx].queueCount++;
+    return;
+  }
+  if (canActivateDeviceNow(t_devIdx)) {
+    analogWrite(deviceParm[t_devIdx].pinNum, deviceParm[t_devIdx].powerInitial);
+    deviceParm[t_devIdx].countdown = deviceParm[t_devIdx].timeOn;
+  }
+}
+
+void updateDeviceTimers() {
+  for (byte i = 0; i < NUM_DEVS; i++) {
+    if (deviceParm[i].countdown > 0) {
+      deviceParm[i].countdown--;
+      if (deviceParm[i].countdown == 0) {
+        if (deviceParm[i].powerHold > 0) {
+          analogWrite(deviceParm[i].pinNum, deviceParm[i].powerHold);
+        } else {
+          analogWrite(deviceParm[i].pinNum, 0);
+          if (deviceParm[i].timeOn > 0) {
+            deviceParm[i].countdown = COIL_REST_TICKS;
+          }
+        }
+      }
+      continue;
+    }
+
+    if (deviceParm[i].countdown < 0) {
+      deviceParm[i].countdown++;
+      if (deviceParm[i].countdown == 0 && deviceParm[i].queueCount > 0) {
+        if (canActivateDeviceNow(i)) {
+          deviceParm[i].queueCount--;
+          analogWrite(deviceParm[i].pinNum, deviceParm[i].powerInitial);
+          deviceParm[i].countdown = deviceParm[i].timeOn;
+        }
+      }
+      continue;
+    }
+
+    if (deviceParm[i].queueCount > 0) {
+      if (canActivateDeviceNow(i)) {
+        deviceParm[i].queueCount--;
+        analogWrite(deviceParm[i].pinNum, deviceParm[i].powerInitial);
+        deviceParm[i].countdown = deviceParm[i].timeOn;
+      }
+    }
+  }
+}
+
+void releaseDevice(byte t_devIdx) {
+  if (t_devIdx >= NUM_DEVS) {
+    return;
+  }
+  analogWrite(deviceParm[t_devIdx].pinNum, 0);
+  deviceParm[t_devIdx].countdown = 0;
+  deviceParm[t_devIdx].queueCount = 0;
+}
+
+// ******************************************
+// ***** FLIPPER HANDLING *******************
+// ******************************************
+
+// Process flipper buttons - called every tick for immediate response.
+// Flippers use hold power after initial activation.
+void processFlippers() {
+  // Skip flipper processing if game is tilted or not in play
+  if (gameState.tilted || modeCurrent == MODE_ATTRACT || modeCurrent == MODE_DIAGNOSTIC) {
+    // Ensure flippers are released
+    if (leftFlipperHeld) {
+      releaseDevice(DEV_IDX_FLIPPER_LEFT);
+      leftFlipperHeld = false;
+    }
+    if (rightFlipperHeld) {
+      releaseDevice(DEV_IDX_FLIPPER_RIGHT);
+      rightFlipperHeld = false;
+    }
+    return;
+  }
+
+  // Left flipper
+  bool leftPressed = switchClosed(SWITCH_IDX_FLIPPER_LEFT_BUTTON);
+  if (leftPressed && !leftFlipperHeld) {
+    // Button just pressed - activate flipper
+    activateDevice(DEV_IDX_FLIPPER_LEFT);
+    leftFlipperHeld = true;
+  } else if (!leftPressed && leftFlipperHeld) {
+    // Button released - release flipper
+    releaseDevice(DEV_IDX_FLIPPER_LEFT);
+    leftFlipperHeld = false;
+  }
+
+  // Right flipper
+  bool rightPressed = switchClosed(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
+  if (rightPressed && !rightFlipperHeld) {
+    activateDevice(DEV_IDX_FLIPPER_RIGHT);
+    rightFlipperHeld = true;
+  } else if (!rightPressed && rightFlipperHeld) {
+    releaseDevice(DEV_IDX_FLIPPER_RIGHT);
+    rightFlipperHeld = false;
+  }
+}
+
+// ******************************************
+// ***** CREDIT QUERY HELPER ****************
+// ******************************************
+
+// Query Slave for credit status (non-blocking).
+// Returns cached value; actual query happens asynchronously.
+// Call this when you need to know if credits are available.
+void requestCreditStatusFromSlave() {
+  unsigned long now = millis();
+  if (now - lastCreditQueryMs >= CREDIT_QUERY_INTERVAL_MS) {
+    pMessage->sendMAStoSLVCreditStatusQuery();
+    lastCreditQueryMs = now;
+  }
+}
+
+// Called when Slave responds with credit status.
+// Updates cached value.
+void handleCreditStatusResponse(bool t_hasCredits) {
+  lastKnownCreditStatus = t_hasCredits;
+}
+
+// Check if we have credits (uses cached value).
+bool hasCredits() {
+  return lastKnownCreditStatus;
+}
+
 // ********************************************************************************************************************************
 // ************************************************* LCD DISPLAY HELPERS **********************************************************
 // ********************************************************************************************************************************
@@ -1896,6 +2591,15 @@ void renderDiagnosticsMenuIfNeeded() {
 void lcdClear() {
   if (pLCD2004 != nullptr) {
     pLCD2004->clearScreen();
+  }
+}
+
+// Clear a specific row (1-4)
+void lcdClearRow(byte row) {
+  // Wrapper for Pinball_LCD clearRow() function.
+  // Row parameter: 1..4
+  if (pLCD2004 != nullptr) {
+    pLCD2004->clearRow(row);
   }
 }
 

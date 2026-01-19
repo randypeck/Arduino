@@ -1,9 +1,9 @@
 # 1954 Williams Screamo - Modernized Control System Overview
-Rev: 01-19-26.
+Rev: 01-19-26b.  Re-stated by Claude Opus 4.5.
 
 ## 1. Introduction
 
-Screamo was originally a 1954 single-player Williams pinball machine, and has since been cosmetically and mechanically restored. This project modernizes the control system while preserving the original gameplay experience as much as possible, plus adding a new Enhanced game mode with modern features.
+Screamo was originally a 1954 single-player Williams pinball machine, and has since been cosmetically and mechanically restored. This project modernizes the control system while preserving the original gameplay experience as much as possible, plus adding a new Enhanced game style with modern features.
 
 Originally, all rules, scoring, and features were handled by electromechanical (EM) devices:
 
@@ -15,7 +15,7 @@ Originally, all rules, scoring, and features were handled by electromechanical (
 - Coils: moved the ball on the playfield (pop bumper, side kickouts, slingshots, etc.) and controlled mechanisms (ball tray release, stepper units, etc.)
 - Relays: handled game state and scorekeeping.
 
-This project replaces most of the EM logic with two Arduino Mega 2560 R3 boards (Master and Slave) while preserving the original feel, sounds, and behavior as much as possible, plus adding a new Enhanced game mode and a rich diagnostic system.
+This project replaces most of the EM logic with two Arduino Mega 2560 R3 boards (Master and Slave) while preserving the original feel, sounds, and behavior as much as possible, plus adding a new Enhanced game style and a rich diagnostic system.
 
 NOTE: The score is displayed to the player via lamps that illuminate numbers in the head, rather than a digital display.  Possible scores range from 10,000 to 9,990,000 points, in increments of 10,000 points.  Thus, there are 999 possible score values, and internally we represent the score as an integer from 1 to 999, where each unit represents 10,000 points.
 
@@ -27,7 +27,7 @@ NOTE: The score is displayed to the player via lamps that illuminate numbers in 
   - Owns all game rules and most real-time behavior.
   - Controls playfield and cabinet coils, playfield lamps, shaker motor, Tsunami audio system, ball handling, and Score Motor / EM sound devices.
   - Talks to the Slave via RS-485 messages.
-  - Manages Diagnostic mode, multi-player logic in Enhanced mode, and mode selection (Original / Enhanced / Impulse).
+  - Manages Diagnostic mode, multi-player logic in Enhanced game style, and style selection (Original / Enhanced / Impulse).
 
 - Slave Arduino (in head)
   - Owns lit-from-behind-backglass score display (including Tilt lamp and head's G.I. lamps) and head hardware.
@@ -61,7 +61,7 @@ These remain and are still used as active game mechanisms:
 - Left and right side kickouts (playfield).
 - Left and right slingshots (playfield).
 - Credit Unit (head).
-- Ball tray release (original coil) (playfield).
+- Ball Tray Release (original coil) (playfield).
 - Lamps (playfield and head).
 - Most switches (head, playfield and cabinet) including the coin mechanism switch and the Start button.
 
@@ -107,13 +107,13 @@ The actual scoring and rule decisions are all handled in software.
 
 - Shaker Motor (in cabinet.)
   - Controlled by Master via PWM MOSFET.
-  - For tactile feedback in Enhanced mode; speed and duration controlled by PWM (cabinet).
+  - For tactile feedback in Enhanced game style; speed and duration controlled by PWM (cabinet).
 
 - Audio System (in cabinet.)
   - Controlled by Master via RS-232 serial commands.
   - Tsunami WAV Trigger board (controlled by Master) (cabinet).
   - Amplifier and speaker (cabinet).
-  - Plays simultaneous voice, music, and sound effects, primarily in Enhanced mode.
+  - Plays simultaneous voice, music, and sound effects, primarily in Enhanced style.
 
 - LCD Displays (on inside of coin door and in head.)
   - Controlled by Arduinos via RS-232 serial commands.
@@ -126,24 +126,102 @@ The actual scoring and rule decisions are all handled in software.
   - Four diagnostic buttons in the coin door: BACK, LEFT, RIGHT, SELECT.
   - Used in Game Over / Diagnostic mode; also used in-game for Tsunami volume (LEFT/RIGHT).
 
-- New Ball Release Mechanism (from ball trough to ball lift) (below playfield).
-  - Up/down post releases individual balls from the trough (below the tray) into the ball lift.
+- New Ball Trough Release Mechanism (from Ball Trough to Ball Lift) (below playfield).
+  - Up/down post releases individual balls from the Ball Trough into the Ball Lift.
   - Controlled by Master via PWM MOSFET.
+  - See Section 3.4 for Ball Flow details.
 
-- Ball presence switch at base of Ball Lift mechanism (below playfield).
-  - Switch read by Master via Input Centipede.
+- Ball In Lift Switch at base of Ball Lift mechanism (below playfield).
+  - 'SWITCH_IDX_BALL_IN_LIFT' - Switch read by Master via Input Centipede.
+  - Detects when a ball is present at the base of the Ball Lift, waiting to be pushed up into the Shooter Lane.
 
-- Ball presence switch in ball trough (below playfield).
-  - Switch read by Master via Input Centipede.
-  - Detects when five balls are present in the trough.
+- 5 Balls In Trough Switch in Ball Trough (below playfield).
+  - 'SWITCH_IDX_5_BALLS_IN_TROUGH' - Switch read by Master via Input Centipede.
+  - Detects when five balls are present in the Ball Trough.
+  - When this switch is OPEN, fewer than five balls are in the trough.
 
+### 3.4 Ball Flow and Ball Handling Mechanisms
+
+Understanding how the ball moves through the machine is critical for game logic:
+
+**Physical Areas (from playfield to shooter lane):**
+
+1. **Playfield**: Where the ball is in play.
+
+2. **Ball Tray**: A collection area at the very bottom of the playfield that catches balls draining via the three bottom Drain Rollovers (left, center, right). The Ball Tray holds balls until the Ball Tray Release coil is fired, which opens the tray and allows balls to drop into the Ball Trough below.
+
+3. **Ball Trough**: A holding area below the Ball Tray that can hold up to five balls. Balls enter the Ball Trough in two ways:
+   - From the Ball Tray (when the Ball Tray Release coil is fired).
+   - Directly from the Gobble Hole (balls draining via the Gobble Hole bypass the Ball Tray entirely and drop directly into the Ball Trough).
+   
+   The Ball Trough has a switch ('SWITCH_IDX_5_BALLS_IN_TROUGH') that closes when five balls are present.
+
+4. **Ball Trough Release**: A new up/down post mechanism ('DEV_IDX_BALL_TROUGH_RELEASE') that releases one ball at a time from the Ball Trough into the Ball Lift. Each pulse releases exactly one ball.
+
+5. **Ball Lift**: A vertical channel where balls wait after being released from the Ball Trough. The Ball Lift has a switch ('SWITCH_IDX_BALL_IN_LIFT') at its base that detects when a ball is present. The player pushes the ball up through the Ball Lift using the Ball Lift Rod (a manually-operated plunger), which launches the ball into the Shooter Lane.
+
+6. **Shooter Lane**: The lane at the top of the Ball Lift where the ball rests before the player uses the shooter to launch it onto the playfield.
+
+
+**Ball Flow Summary:**
+~~~
+Playfield | +---> Drain Rollovers (L/C/R) ---> Ball Tray ---> [Ball Tray Release coil] ---> Ball Trough | [Ball Trough Release coil] | v Ball Lift (SWITCH_IDX_BALL_IN_LIFT) | [Player pushes Ball Lift Rod] | v Shooter Lane | [Player shoots] | v Playfield
+            +---> Gobble Hole -------------------------------------------------directly---> Ball Trough |
+~~~
+**Key Software Implications:**
+- When balls drain via Drain Rollovers, the Ball Tray collects them. Software must fire 'DEV_IDX_BALL_TRAY_RELEASE' to drop them into the Ball Trough before they can be dispensed.
+- When balls drain via Gobble Hole, they go directly to the Ball Trough (no Ball Tray Release needed).
+- To dispense a ball to the player, fire 'DEV_IDX_BALL_TROUGH_RELEASE' to release one ball from the Ball Trough into the Ball Lift.
+- The 'SWITCH_IDX_BALL_IN_LIFT' switch tells software when a ball is ready for the player to push into the Shooter Lane.
+- The 'SWITCH_IDX_5_BALLS_IN_TROUGH' switch tells software whether all five balls are accounted for in the Ball Trough.
+
+**Ball Location Tracking (Master Software)**
+
+Master must track ball locations to properly manage ball dispensing, especially for Enhanced Style features like Ball Save, Multiball, and timed Modes. Key tracking requirements:
+
+1. **Balls in Ball Tray**: Incremented each time a Drain Rollover switch (`SWITCH_IDX_DRAIN_LEFT`, `SWITCH_IDX_DRAIN_CENTER`, `SWITCH_IDX_DRAIN_RIGHT`) closes. These balls are NOT immediately available for dispensing.
+
+2. **Balls in Ball Trough**: 
+   - Incremented when `SWITCH_IDX_GOBBLE` closes (Gobble Hole drains directly to trough).
+   - Incremented when Ball Tray is opened and balls drop (after firing `DEV_IDX_BALL_TRAY_RELEASE`).
+   - Decremented when `DEV_IDX_BALL_TROUGH_RELEASE` is fired to dispense a ball.
+   - The `SWITCH_IDX_5_BALLS_IN_TROUGH` switch provides a sanity check (closed = 5 balls present).
+
+3. **Ball Tray Release Logic**:
+   - Before dispensing a ball via `DEV_IDX_BALL_TROUGH_RELEASE`, check if there are balls available in the Ball Trough.
+   - If the Ball Trough is empty (or nearly empty) but balls are tracked in the Ball Tray, fire `DEV_IDX_BALL_TRAY_RELEASE` first to drop them into the Ball Trough.
+   - This is critical during Multiball and timed Modes when balls must be quickly returned to the player.
+
+4. **Ball Tray Open/Close Behavior**:
+   - At game start: Ball Tray opens and remains open until the first point is scored, then closes.
+   - During gameplay: Ball Tray remains closed. Balls draining via Drain Rollovers accumulate in the Ball Tray.
+   - When a new ball is needed (drain, Ball Save, Mode ball replacement): 
+     - If Ball Trough has balls available, dispense directly.
+     - If Ball Trough is empty but Ball Tray has balls, open Ball Tray briefly to drop balls into Trough, then dispense.
+
+5. **Why This Matters**:
+   - In Original/Impulse Style: Simpler tracking; Ball Tray stays open until first point, then we don't worry much about ball locations.
+   - In Enhanced Style: Precise tracking needed for Ball Save (return ball quickly), Multiball (track multiple balls), and timed Modes (pause timer while fetching replacement ball).
+
+**Example Scenario - Enhanced Style Multiball**:
+- Player has 2 balls locked in kickouts, 1 ball in play.
+- Ball in play drains via center Drain Rollover into Ball Tray.
+- Ball Tray now has 1 ball; Ball Trough has 2 balls.
+- Multiball starts: need to release locked balls + give player a new ball.
+- Fire both kickouts to release locked balls onto playfield.
+- To dispense the 3rd ball: Ball Trough has 2, so dispense one.
+- Now: 3 balls on playfield, 1 in Ball Trough, 1 in Ball Tray.
+- If another ball drains to Ball Tray and we need to replace it quickly:
+  - Fire `DEV_IDX_BALL_TRAY_RELEASE` to drop both Ball Tray balls into Trough.
+  - Fire `DEV_IDX_BALL_TROUGH_RELEASE` to dispense one ball to Ball Lift.
+    - After firing Ball Trough Release coil, always confirm `SWITCH_IDX_BALL_IN_LIFT` is closed.  If that switch doesn't close within a reasonable time (e.g., 2 seconds), we have a rather serious and unexpected error to deal with.
 ---
 
-## 4. Game Modes
+## 4. Game Styles
 
-Screamo runs in several modes. Unless otherwise noted, Master is mode authority and informs Slave via RS-485.
+Screamo runs in several styles. Unless otherwise noted, Master is style authority and informs Slave via RS-485.
 
-### 4.1 Original Mode
+### 4.1 Original Style
 
 - Triggered by: Single press of Start button (with at least one credit).
 - Single-player only.
@@ -154,21 +232,24 @@ Screamo runs in several modes. Unless otherwise noted, Master is mode authority 
 - EM sound devices used:
   - Bells, Score Motor, 10K Unit, Selection Unit, Relay Reset Bank, Knocker.
 - Goal: Make it feel like playing an unmodified original Screamo (except for the flipper operation.)
-- Shaker motor and Tsunami audio are not used in this mode.
+- Shaker motor and Tsunami audio are not used in this style.
 
-### 4.2 Enhanced Mode
+### 4.2 Enhanced Style
 
-- Triggered by: Second press of Start button (with at least one credit) before shooting a ball (maybe required before raising from lift into shooter lane, else ignored).
+- Triggered by: Double-tap of Start button (two presses within 1000ms, with at least one credit).
 - A new rule set, uses:
   - Tsunami audio system.
   - Shaker motor.
+  - EM sound devices (bells, Score Motor, 10K Unit, Selection Unit, Relay Reset Bank) during NORMAL Enhanced gameplay.
+  - Tsunami-only sound effects during MODES and MULTIBALL (no EM bells/devices during these special periods).
 - Multi-player support:
-  - After starting Enhanced mode, and before any points are scored, the player may press Start up to three more times to add Players 2, 3, and 4 (one credit per player).
+  - After starting Enhanced style, and before any points are scored, the player may press Start up to three more times to add Players 2, 3, and 4 (one credit per player).
+  - Audio cue: "Press Start again if ya wanna admit any of your little friends."
 - Theme:
   - Roller-coaster / amusement park flavor.
   - Voice, music, and special effects.
-  - Musical theme can be toggled between Callipe/Circus music and Surf Rock (settable in Diagnostics Settings).
-  - One of the two themes is used for music during regular Enhanced play, and the other theme's music is played during Hurry-Up and Multiball modes.
+  - Musical theme can be toggled between Calliope/Circus music and Surf Rock (settable in Diagnostics Settings).
+  - One of the two themes is used for music during regular Enhanced play, and the other theme's music is played during modes and Multiball.
 - Features (planned / current):
   - Up to four players.
   - Special game modes and scoring goals (details to be specified separately).
@@ -176,18 +257,41 @@ Screamo runs in several modes. Unless otherwise noted, Master is mode authority 
   - Shaker motor events triggered on certain happenings.
   - Extra voice prompts, music, jackpots, etc. (details to be specified separately).
 
-### 4.3 Impulse Mode
+### 4.3 Impulse Style
 
-- Triggered by: Rapid double-tap of Start button (two presses within one second, with at least one credit).
+- Triggered by: Second press of Start button MORE than 1000ms after the first press (with at least one credit).
+  - This allows players familiar with the hidden style to deliberately access it by pressing Start, waiting a beat, then pressing Start again.
 - Single-player only.
-- Rules identical to Original mode except for flipper behavior:
+- Rules identical to Original style except for flipper behavior:
   - Impulse flippers:
     - Pressing either flipper button causes both flippers to fire briefly and immediately drop.
     - Flippers cannot be held up.
     - A new press is required before flippers can be fired again.
 - Intended to exactly reproduce the original 1954 impulse-flipper behavior and gameplay.
+- EM sound devices used (same as Original style).
+- Shaker motor and Tsunami audio are not used in this style.
 
-### 4.4 Game Over / Attract Mode
+### 4.4 Start Button Tap Detection Summary
+
+| Action             | Timing                                      | Result         |
+|--------------------|---------------------------------------------|----------------|
+| Single tap         | No second press within 500ms                | Original Style |
+| Double tap         | Second press within 500ms                   | Enhanced Style |
+| Delayed second tap | Second press after 500ms                    | Impulse Style  |
+
+**Note:** The 500ms double-tap window is configurable in Master software.
+
+**Design rationale**: This scheme keeps Enhanced style hidden from casual players who simply press Start once. Players who know about Enhanced style can quickly double-tap. Players who know about Impulse style can deliberately delay their second tap. No audio cues are given until after a style is selected, preserving the "secret" nature of Enhanced and Impulse styles for unsuspecting players.
+
+**Start button during gameplay:**
+- **Before first point scored (any style):**
+  - Original/Impulse: Extra Start presses are ignored.
+  - Enhanced: Start presses attempt to add players 2-4 (see Section 12.2).
+- **After first point scored (any style):**
+  - Pressing Start immediately ends the current game and begins tap detection for a new game.
+  - This matches the behavior of an original, unmodified 1954 Screamo.
+
+### 4.5 Game Over / Attract Mode
 
 - Default mode on power-up and at the end of each game.
 - Typical behavior:
@@ -200,27 +304,34 @@ Screamo runs in several modes. Unless otherwise noted, Master is mode authority 
 - In this mode, Master:
   - Waits for Start button presses, coin insertions, knock-off button, or Diagnostic button presses.
 
-### 4.5 Tilt Behavior
+### 4.6 Tilt Behavior
 
-- When the game is tilted in any playing mode:
+Tilting always affects only the CURRENT BALL; it never ends the game prematurely (unless it was the last ball of the last player).
+
+- When the game is tilted in any playing style:
   - Flippers are disabled.
-  - All lights momentarily turn off.
-  - If not last ball, any balls in side kickouts are retained (locked balls always carry over to next player, if any.)
+  - All playfield lights momentarily turn off.
+  - Any balls in side kickouts are retained (locked balls always carry over to the next ball and to the next player, if any).
   - TILT lamp is turned on and flashes for about 4 seconds.
-  - Game waits for all in-play ball to drain. (This may be difficult to know if there is a ball in the shooter lane and/or the base of the ball lift.)
-- After that:
-  - If more balls remain for the current player, continue with the next ball, or continues to play any remaining balls in play.
-  - For multi-player Enhanced games, advance to the next player if appropriate.
-  - If this was the last ball of the last player, game transitions to Game Over.
+  - Game waits for all in-play balls to drain. (This may be difficult to know if there is a ball in the Shooter Lane and/or the base of the Ball Lift.)
+- After all balls have drained:
+  - If more balls remain for the current player:
+    - Continue with the next ball for this player.
+  - If this was the last ball for the current player in a multi-player Enhanced game:
+    - Advance to the next player's first ball.
+  - If this was the last ball of the last player:
+    - Game transitions to Game Over / Attract mode.
 
-### 4.6 Diagnostic Mode (Overview)
+**Tilt warning count resets at the start of each ball** (not cumulative across balls or players). See Section 14.1 for Enhanced mode's two-warning tilt behavior.
+
+### 4.7 Diagnostic Mode (Overview)
 
 Diagnostic mode provides access to hardware testing and game settings. It is entered from Attract mode by pressing the SELECT button.
 
 #### Entry and Navigation
 
 - **Entry**: Press SELECT button during MODE_ATTRACT to enter Diagnostic mode.
-- **Volume Shortcut**: During ATTRACT or ENHANCED mode gameplay, LEFT and RIGHT buttons adjust Main Volume directly (persisted to EEPROM).
+- **Volume Shortcut**: During ATTRACT or ENHANCED style gameplay, LEFT and RIGHT buttons adjust Main Volume directly (persisted to EEPROM).
 - **Four Diagnostic Buttons**:
   - BACK: Exit current test / go up a level / return to Attract mode.
   - LEFT (-): Navigate to previous item or decrease value.
@@ -282,25 +393,26 @@ Diagnostic mode provides access to hardware testing and game settings. It is ent
 The following settings are defined in EEPROM but do not yet have diagnostic UI:
 
 **Game Settings** (TODO)
-- **THEME**: Select Circus or Surf Rock music as the PRIMARY theme.  The other theme is used during Hurry-Up and Multiball.
+- **THEME**: Select Circus or Surf Rock music as the PRIMARY theme.  The other theme is used during Modes and Multiball.
   - EEPROM_ADDR_THEME (address 20)
 - **BALL SAVE**: Ball save duration in seconds (0=off, 1-30).
   - EEPROM_ADDR_BALL_SAVE_TIME (address 30)
-- **HURRY UP 1-6**: Mode time limits in seconds.
-  - EEPROM_ADDR_HURRY_UP_1_TIME through EEPROM_ADDR_HURRY_UP_6_TIME (addresses 31-36)
+- **MODE 1-6**: Mode time limits in seconds.
+  - EEPROM_ADDR_MODE_1_TIME through EEPROM_ADDR_MODE_6_TIME (addresses 31-36)
 
 **Replay Scores** (TODO)
-- **ORIG REPLAY 1-5**: Replay scores for Original/Impulse mode (0-999, representing 10K increments).
+- **ORIG REPLAY 1-5**: Replay scores for Original/Impulse style (0-999, representing 10K increments).
   - EEPROM_ADDR_ORIGINAL_REPLAY_1 through EEPROM_ADDR_ORIGINAL_REPLAY_5 (addresses 40-48, 2 bytes each)
-- **ENH REPLAY 1-5**: Replay scores for Enhanced mode.
+- **ENH REPLAY 1-5**: Replay scores for Enhanced style.
   - EEPROM_ADDR_ENHANCED_REPLAY_1 through EEPROM_ADDR_ENHANCED_REPLAY_5 (addresses 50-58, 2 bytes each)
 
 **Track History** (TODO)
+- ** LAST SCORE **: Score at (approximately, not exactly) end of last game played (1-999, representing 10K increments).
+  - EEPROM_ADDR_LAST_SCORE (address 0)
 - **LAST CIRCUS SONG**: Most recent Circus track played.
   - EEPROM_ADDR_LAST_CIRCUS_SONG_PLAYED (address 21)
 - **LAST SURF SONG**: Most recent Surf Rock track played.
   - EEPROM_ADDR_LAST_SURF_SONG_PLAYED (address 22)
-
 
 **Mode History** (TODO)
 - **LAST GAME MODE**: Most recently-played game mode BUMPER CARS, ROLL-A-BALL, GOBBLE HOLE
@@ -319,7 +431,12 @@ The following settings are defined in EEPROM but do not yet have diagnostic UI:
 
 The original Score Motor is used for sound and timing reference only. Actual scores are computed in software and displayed via lamps, driven by Slave.
 
-We will only use the Score Motor, 10K Unit, Selection Unit, Relay Reset Bank, and three Bells when playing in Original or Impulse modes.  In Enhanced mode, we *may* not use these EM sound devices, and instead rely on Tsunami audio and shaker motor for feedback (yet to be determined).  However, note that we will use the Credit Unit in all modes, as one credit is required to start any game (and for each player in Enhanced mode.)
+**EM Sound Device Usage by Style:**
+- **Original Style**: All EM sound devices used (Score Motor, 10K Unit, Selection Unit, Relay Reset Bank, three Bells, Knocker).
+- **Impulse Style**: Same as Original style.
+- **Enhanced Style (normal gameplay)**: All EM sound devices used, same as Original style. This provides familiar mechanical feedback during regular play.
+- **Enhanced Style (during Modes and Multiball)**: EM sound devices are NOT used. Instead, Tsunami audio provides all sound effects. This makes these special periods feel distinctly different and more exciting.
+Note that we will use the Credit Unit in all styles, as one credit is required to start any game (and for each player in Enhanced style.)
 
 Master should start the Score Motor, and potentially fire the Selection Unit and/or the Relay Reset Bank for the audible/mechanical effect around the time it sends relevant messages to Slave, such as score updates.  Operation of the original Selection Unit and Relay Reset Bank will be detailed below.
 
@@ -370,7 +487,7 @@ Motor-paced batches:
   - Requires one 1/4 revolution for preliminaries:
     - Slot 1: Fire Relay Reset Bank.
     - Slot 2: Deduct a credit
-    - Slot 3: Open the ball tray
+    - Slot 3: Open the Ball Tray
     - Slot 4: Fire Relay Reset Bank again.
     - Slot 5: Release the 1M/100K rapid reset
   - Then one or two additional 1/4 revolutions for tens (0K to 90K) of score reset.
@@ -513,26 +630,27 @@ All controlled by Master via MOSFETs and PWM:
 - 'DEV_IDX_SLINGSHOT_RIGHT' - Right slingshot coil.
 - 'DEV_IDX_FLIPPER_LEFT' - Left flipper coil (supports hold).
 - 'DEV_IDX_FLIPPER_RIGHT' - Right flipper coil (supports hold).
-- 'DEV_IDX_BALL_TRAY_RELEASE' - Original ball tray release coil (can be held).
+- 'DEV_IDX_BALL_TRAY_RELEASE' - Original Ball Tray Release coil (can be held). Opens the Ball Tray to drop balls into the Ball Trough.
 - 'DEV_IDX_SELECTION_UNIT' - Selection Unit coil (sound only).
 - 'DEV_IDX_RELAY_RESET' - Relay Reset Bank coil (sound only).
-- 'DEV_IDX_BALL_TROUGH_RELEASE' - New up/down post ball release coil.
+- 'DEV_IDX_BALL_TROUGH_RELEASE' - New up/down post Ball Trough Release coil. Releases one ball from Ball Trough into Ball Lift.
 - 'DEV_IDX_MOTOR_SHAKER' - Shaker motor (PWM for speed and duration).
 - 'DEV_IDX_KNOCKER' - Knocker coil (one pulse per knock).
 - 'DEV_IDX_MOTOR_SCORE' - Score Motor control (sound only, can be held on).
 
 ### 8.2 Cabinet Switches (via Centipede Inputs)
 
-All cabinet switch closures, including the flipper buttons, now enter Master through Centipede #2 (switch indexes 64–127). Master still gives the flipper buttons a faster-processing path in software, but no longer wires them directly to Arduino GPIO pins.
+All cabinet switch closures, including the flipper buttons, now enter Master through Centipede #2 (switch indexes 64-127). Master still gives the flipper buttons a faster-processing path in software, but no longer wires them directly to Arduino GPIO pins.
 
-- 'SWITCH_IDX_START_BUTTON' – Start button (supports single / double / triple tap detection).
-- 'SWITCH_IDX_DIAG_1' to 'SWITCH_IDX_DIAG_4' – Diagnostic buttons (BACK, LEFT, RIGHT, SELECT).
-- 'SWITCH_IDX_KNOCK_OFF' – Hidden knock-off switch; can add credits or force reset.
-- 'SWITCH_IDX_COIN_MECH' – Coin mech switch; adds credits.
-- 'SWITCH_IDX_BALL_PRESENT' – New switch detecting ball at bottom of lift.
-- 'SWITCH_IDX_TILT_BOB' – Tilt bob switch.
-- 'SWITCH_IDX_FLIPPER_LEFT_BUTTON' / 'SWITCH_IDX_FLIPPER_RIGHT_BUTTON' – Flipper buttons routed through Centipede #2.
-- 'SWITCH_IDX_BALL_TROUGH_FULL' – Ball trough full switch; detects when 5 balls are present.
+- 'SWITCH_IDX_START_BUTTON' - Start button (supports single / double / delayed-second tap detection).
+- 'SWITCH_IDX_DIAG_1' to 'SWITCH_IDX_DIAG_4' - Diagnostic buttons (BACK, LEFT, RIGHT, SELECT).
+- 'SWITCH_IDX_KNOCK_OFF' - Hidden knock-off switch; can add credits or force reset.
+- 'SWITCH_IDX_COIN_MECH' - Coin mech switch; adds credits.
+- 'SWITCH_IDX_5_BALLS_IN_TROUGH' - Ball Trough switch; closes when 5 balls are present in the Ball Trough.
+- 'SWITCH_IDX_BALL_IN_LIFT' - Ball Lift switch; closes when a ball is present at the base of the Ball Lift.
+- 'SWITCH_IDX_TILT_BOB' - Tilt bob switch.
+- 'SWITCH_IDX_FLIPPER_LEFT_BUTTON' - Left flipper button (routed through Centipede #2).
+- 'SWITCH_IDX_FLIPPER_RIGHT_BUTTON' - Right flipper button (routed through Centipede #2).
 
 ### 8.3 Playfield Switches (via Centipede Inputs)
 
@@ -555,10 +673,11 @@ All cabinet switch closures, including the flipper buttons, now enter Master thr
   (There is no 'LEFT_SIDE_TARGET_1'.)
 
 - Gobble switch:  
-  'SWITCH_IDX_GOBBLE' - ball enters gobble hole and drains.
+  'SWITCH_IDX_GOBBLE' - ball enters gobble hole and drains directly to Ball Trough.
 
 - Drain switches:  
   'SWITCH_IDX_DRAIN_LEFT', 'SWITCH_IDX_DRAIN_CENTER', 'SWITCH_IDX_DRAIN_RIGHT'.
+  These detect balls draining via the three bottom rollovers into the Ball Tray.
 
 ### 8.4 Playfield Lamps (via Relay Modules via Centipede Outputs)
 
@@ -602,7 +721,7 @@ Lamp groups and examples:
 
 - Tsunami WAV Trigger (with amp and speaker):
   - Controlled by Master via RS-232 serial commands.
-  - Plays voice, music, and sound effects in Enhanced mode.
+  - Plays voice, music, and sound effects in Enhanced style.
   - Volume can be adjusted via LEFT and RIGHT Diagnostic buttons during play.
 
 ---
@@ -611,7 +730,7 @@ Lamp groups and examples:
 
 ### 9.1 Main Loop Timing
 
-- For Original, Enhanced, and Impulse Mode games, we'll use a 10 ms main loop on both Master and Slave:
+- For Original, Enhanced, and Impulse Style games, we'll use a 10 ms main loop on both Master and Slave:
   - On each loop:
     - Read inputs (Centipede and/or direct pins).
     - Update outputs (coils, motors, lamps, audio commands).
@@ -619,15 +738,15 @@ Lamp groups and examples:
     - Keep track of min and max loop execution time for profiling.
 - Between loop iterations:
   - Master Flipper input pins can be polled continuously (or at higher priority) outside the 10 ms loop to minimize flipper latency.
-- All coils must include a software watchdog so they are not left turned on more than an expected maximum amount of time.  And exception would be the playfield Ball Tray Release Coil, which can be held open indefinitely.
+- All coils must include a software watchdog so they are not left turned on more than an expected maximum amount of time.  An exception would be the playfield Ball Tray Release Coil, which can be held open indefinitely.
 
-### 9.2 Mode and State Management
+### 9.2 Mode/Style and State Management
 
 - On power-up:
-  - Both Master and Slave default to GAME_OVER mode.
+  - Both Master and Slave default to GAME_OVER / Attract mode.
 - At end of each game:
-  - Return to GAME_OVER.
-- From Game Over:
+  - Return to GAME_OVER / Attract mode.
+- From Attract mode:
   - If coin inserted or knock-off pressed:
     - Increment credits (up to a maximum).
     - Fire knocker.
@@ -636,23 +755,25 @@ Lamp groups and examples:
   - If Diagnostic SELECT button pressed:
     - Enter Diagnostic mode.
   - If Start pressed with credits > 0:
-    - Detect single / double tap:
-      - Single: MODE_ORIGINAL.
-      - Double: MODE_IMPULSE.
-      - Second press (with credits): MODE_ENHANCED.
-        - In Enhanced mode, Start can be pressed up to three more times to add Players 2, 3, and 4 (one credit each).
-        - New players may not be added after any points have been scored.
-      - Deduct credits appropriately.
-      - Single-tapping Start once a point has been scored in any game mode ends the game and starts a new one in the same mode (if credits remain).
-        - This is potentially problematic if a player presses Start after a point has been scored in Enhanced mode, thinking they're adding another player.
+    - Begin Start button tap detection (see Section 4.4):
+      - Single tap (no second press within 1000ms): MODE_ORIGINAL
+      - Double tap (second press within 1000ms): MODE_ENHANCED
+      - Delayed second tap (second press after 1000ms): MODE_IMPULSE
+    - In Enhanced style only:
+      - Start can be pressed up to three more times to add Players 2, 3, and 4 (one credit each).
+      - New players may not be added after any points have been scored.
+    - Deduct credits appropriately.
+  - If Start pressed with credits = 0:
+    - In Original/Impulse detection: Do nothing, remain in Attract mode.
+    - In Enhanced detection: Play Aoooga horn sound effect and random "no credit" announcement, then return to Attract mode.
 
-### 9.3 Multi-Player Indication (Enhanced Mode)
+### 9.3 Multi-Player Indication (Enhanced Style)
 
 - For multi-player Enhanced games:
   - While waiting for each player to score their first point:
     - Flash the appropriate 1M lamp (1M, 2M, 3M, or 4M) for that player.
     - All other score lamps off.
-    - We will also provide audio cues including "Player 2, you're up next", etc."
+    - We will also provide audio cues including "Player 2, you're up next", etc.
   - After the first point is scored:
     - Stop flashing; show full score lamp pattern for that player.
 - For Enhanced Game Over when only 1 player:
@@ -663,34 +784,37 @@ Lamp groups and examples:
     - Show that player's score for 2 seconds.
     - Score lamps off for 0.5 seconds.
     - Move to next player until all players have been displayed, and repeat.
+
 ---
 
-## 10. Mode Rule Summaries
+## 10. Style Rule Summaries
 
-### 10.1 Original Mode
+### 10.1 Original Style
 
 - Single player only.
 - Normal flippers (independent, holdable).
 - Classic Screamo scoring and features.
 - 5 balls per game; no extra balls.
 - Game ends after ball 5 drains.
-- 10K Unit, Relay Reset Bank, Selection Unit, and Score Motor are used purely for sound realism.
+- All EM sound devices used (10K Unit, Relay Reset Bank, Selection Unit, Score Motor, three Bells, Knocker).
+- No Tsunami audio or shaker motor.
 
-### 10.2 Impulse Mode
+### 10.2 Impulse Style
 
-- Same as Original mode, but:
+- Same as Original style, but:
   - Flippers behave as impulse flippers:
     - Press either button: both flippers fire once briefly and then drop.
     - No hold; must release and press again to flip again.
 
-### 10.3 Enhanced Mode
+### 10.3 Enhanced Style
 
-- Enhanced Mode is generally a superset of Original/Impulse mode; i.e. existing Original/Impulse features are preserved where possible, but new features are added.
+- Enhanced Style is generally a superset of Original/Impulse style; i.e. existing Original/Impulse features are preserved where possible, but new features are added.
 - Up to 4 players.
 - Uses:
   - Tsunami audio (voice, music, sound effects).
   - Shaker motor.
-  - New ball save and rule set.
+  - EM sound devices during normal gameplay (same as Original style).
+  - Tsunami-only sound effects during Modes and Multiball (no EM bells/devices).
 - Rules (high-level, to be elaborated separately):
   - Roller-coaster / Screamo theme integration.
   - Ball save for first N seconds per ball after first score.
@@ -749,103 +873,174 @@ Navigation:
 ## 12. Starting a Game
 
 - Upon turning on the game, whenever the machine is in Attract mode, the pop bumper, flippers, and slingshots are disabled, and if a ball is detected in either side kickout, it is ejected immediately.
+- At any time, whether in a game or not, inserting a coin or pressing the KNOCKOFF button for less than one second will add one credit (if not full) and fire the knocker.
+- **Start button during a game:**
+  - Before first point scored: Extra Start presses are ignored in Original/Impulse style; in Enhanced style, they attempt to add players (see Section 12.2).
+  - After first point scored: Pressing Start immediately ends the current game and begins tap detection for a new game (matching original 1954 behavior).
 
-### 12.1 Original/Impulse Mode
+### 12.1 Original/Impulse Style
 
-- Pressing Start button once (single-tap to start an Original game) or thrice (triple-tap to start an Impulse game) does the following:
+Original style is started when the Start button tap detection window (500ms, configurable) expires without a second press.
+Impulse style is started by a delayed second tap (second press MORE than 500ms after the first).
+
+**Tap detection behavior:**
+- On first Start press with credits >= 1:
+  - Start the 500ms tap detection timer.
+  - Do NOT begin the startup sequence yet.
+  - Wait for either:
+    - Second press within 500ms: Enhanced style selected.
+    - Second press after 500ms: Impulse style selected.
+    - Timer expires with no second press: Original style selected.
+- On first Start press with credits = 0:
+  - Nothing happens (no audio feedback to avoid revealing hidden styles).
+  - Return to Attract mode.
+
+**Once Original or Impulse style is selected (credits >= 1):**
+  - **Ball requirement**: In Original/Impulse style, we do NOT require all five balls to be present in the Ball Trough before starting the game. This emulates original EM behavior where there was no such detection. If the `SWITCH_IDX_5_BALLS_IN_TROUGH` switch is open, we assume the player already has one ball (in the Shooter Lane, Ball Lift, or a kickout) and will dispense only four more.
+  - Turn on Score Motor.
+  - Deduct one credit (Motor cycle 1, Slot 1).
+  - Fire the Relay Reset Bank coil (Slot 1).
+  - Open the Ball Tray (Slot 1).
+  - Fire the Relay Reset Bank coil again (Slot 4).
+  - Release the 1M/100K rapid reset (Slot 5) (Handled by Slave).
+  - Reset 10K score to zero via Score Motor timing (Motor cycles 2 and possibly 3) (Handled by Slave).
+  - Turn off Score Motor (after score reset complete).
+  - If a ball is not already present in the Ball Lift (`SWITCH_IDX_BALL_IN_LIFT` is open), fire `DEV_IDX_BALL_TROUGH_RELEASE` to release one ball into Ball Lift.
+  - Ball counting:
+    - We release a maximum of five balls from the Ball Trough during the game.
+    - If `SWITCH_IDX_5_BALLS_IN_TROUGH` was open at game start, we assume one ball was already out and will release only four more.
+    - Each time a ball drains, release another ball until the ball count reaches five.
+    - Once the fifth ball drains, the game ends (even if there may be remaining balls in the Ball Lift or Shooter Lane).
+  - **Ball Tray handling**: If balls drain via the bottom Drain Rollovers and we need to dispense them via `DEV_IDX_BALL_TROUGH_RELEASE`, we must first fire `DEV_IDX_BALL_TRAY_RELEASE` to drop them from the Ball Tray into the Ball Trough.
+  - NOTE: The Ball Tray remains open until the first point is scored, then it closes.
+  - **Start button handling during Original/Impulse gameplay:**
+    - Before first point scored: Extra Start presses are ignored.
+    - After first point scored: Pressing Start ends the game and begins tap detection for a new game.
+  - Original or Impulse style gameplay begins; ends when all five balls have drained (or Start is pressed after first point).
+
+### 12.2 Enhanced Style
+
+Enhanced style is started by a double-tap of Start (second press within 500ms of the first).
+
+**Initial credit check (before game starts):**
   - If credits = 0:
-    - Nothing happens.
-    - Go back to Attract mode (wait for coin, knock-off, diagnostic, or start button.)
-  - Else (if credits > 0):
-    - Note that in Original/Impulse mode, we don't require all five balls to be present in the trough before starting the game.
-    - Turn on Score Motor.
-    - Deduct one credit. (Motor cycle 1, Slot 1)
-    - Fire the Relay Reset Bank coil. (Slot 1)
-    - Open the ball tray. (Slot 1)
-    - Fire the Relay Reset Bank coil again. (Slot 4)
-    - Release the 1M/100K rapid reset. (Slot 5) (Handled by Slave.)
-    - Reset 10K score to zero via Score Motor timing. (Motor cycles 2 and possibly 3) (Handled by Slave.)
-    - Turn off Score Motor. (After score reset complete)
-  - If a ball is not already present in the Ball Lift, fire Ball Release coil to release one ball into Ball Lift (else wait for a ball drain and release Ball 2.)
-    - We count balls by releasing a maximum of five balls from the Ball Trough, less one if ball was already present in Ball Lift.
-    - Each time a ball drains, release another ball until four balls have drained.
-    - Once the fifth ball drains, the game ends - even if there may be remaining balls in the Ball Lift or Shooter Lane.
-  - NOTE: The ball tray remains open until the first point is scored.
-  - Original or Impulse mode gameplay begins; ends when all five balls have drained.
+    - Play Aoooga horn sound effect.
+    - Play a random "no credit" announcement (e.g., "No coin, no joyride!").
+    - Return to Attract mode.
 
-### 12.2 Enhanced Mode
-
-- Pressing Start button twice (double-tap) does the following:
-  - If credits = 0:
-    - Play Aoooga horn sound effect
-    - Play a random "no credit" announcement i.e. "No coin, no joyride!", etc.
-    - Go back to Attract mode (wait for coin, knock-off, diagnostic, or start button.)
-  - Else (if credits > 0):
-    - Open the ball tray.
-    - If five balls are not present in the trough (i.e. ball trough full switch is open):
+**Ball recovery (if needed):**
+  - If credits >= 1:
+    - Open the Ball Tray to collect any balls in it.
+    - **Ball requirement**: In Enhanced style, we DO require all five balls to be present in the Ball Trough before starting the game. This ensures proper ball tracking for multi-player games and ball save features.
+    - If `SWITCH_IDX_5_BALLS_IN_TROUGH` is open (fewer than 5 balls):
       - Leave pop bumper, flippers, and slingshots disabled.
-      - Set side kickouts to kickout if a ball is detected there.
-      - If one or two balls in side kickouts:
+      - Set side kickouts to eject if a ball is detected there.
+      - If one or two balls are detected in side kickouts:
         - Eject balls from kickouts.
-        - Wait until ball drains are detected in either Gobble Hole or bottom drain rollovers, plus few seconds to allow drain into trough.
-      - If ball detected in base of Ball Lift:
-        - Make a "There's a ball missing", "Press the ball lift rod" announcement.
-        - Wait until ball is no longer detected in base of Ball Lift, then give player time to shoot the ball(s) and let them drain.
-      - If < 5 balls present in trough (i.e. ball trough full switch is open) and nothing in kickouts or ball lift:
-        - Make a "There's a ball missing. Try to find it and let it drain" announcement.
-        - Wait until five balls present in trough.
+        - Wait until ball drains are detected (via Gobble Hole or bottom Drain Rollovers), plus a few seconds to allow drain into Ball Trough.
+      - If ball detected in Ball Lift (`SWITCH_IDX_BALL_IN_LIFT` closed):
+        - Play "There's a ball missing. Press the ball lift rod." announcement.
+        - Wait until ball is no longer detected in Ball Lift, then give player time to shoot the ball(s) and let them drain.
+      - If still < 5 balls present and nothing in kickouts or Ball Lift:
+        - Play "There's a ball missing. Try to find it and let it drain." announcement.
+        - Wait until `SWITCH_IDX_5_BALLS_IN_TROUGH` closes.
         - Periodically remind player to find missing balls if necessary.
-      - Go back to Attract mode (wait for coin, knock-off, diagnostic, or start button.)
-  - Once five balls are present in trough and have a credit:
-    - Play Scream sound effect.
-    - Play "Hey gang, let's ride the Screamo!" announcement.
-    - Turns on Score Motor.
-    - Deduct one credit. (Motor cycle 1, Slot 1)
-    - Fire the Relay Reset Bank coil. (Slot 1)
-    - Open the ball tray. (Slot 1)
-    - Fire the Relay Reset Bank coil again. (Slot 4)
-    - Release the 1M/100K rapid reset. (Slot 5) (Handled by Slave.)
-    - Reset 10K score to zero via Score Motor timing. (Motor cycles 2 and possibly 3) (Handled by Slave.)
-    - Turn off Score Motor. (After score reset complete)
-    - Enable pop bumper, flippers, and slingshots.
-    - NOTE: The ball tray remains open until the first point is scored.
-    - Play "Okay kid, you're in.", "Keep pressin' Start to add players!" announcement."
-    - Release the first ball into Ball Lift.
-    - WAIT FOR ONE OF TWO EVENTS:
-      - Player presses Start button again:
-        - If < 4 players:
-          - Deduct one credit.
-          - Play "Second guest, c'mon in!" announcement (or third/fourth guest as appropriate.)
-          - Go back to waiting for one of two events, above.
-        - If 4 players already:
-          - Play "The park's full, no more guests can join!" announcement.
-          - Go back to waiting for one of two events, above.
-      - Player presses Ball Lift Rod, thereby opening the Ball Lift switch:
-        - At this point, it is no longer possible to add players.
-        - Play Ball 1 Lift sounds, looping until first point is scored.
-        - Start Shaker Motor at low speed.
-        - When first point is scored:
-          - Close Ball Tray.
-          - Stop Ball 1 Lift sounds
-          - Play First Hill Screaming sounds.
-          - Increase Shaker Motor speed, continue for several seconds, then turn off (until we determine a better use for shaker during gameplay).
-          - Start the first music track.
-    - Enhanced mode gameplay begins; ends when all five balls have drained.
+      - Do NOT deduct credit or start game until all 5 balls are present.
 
-## 13. Original/Impulse Mode Rule Details
+**Game startup sequence (once 5 balls present and credit available):**
 
+Enhanced style uses a **silent score reset** - no Score Motor, Relay Reset Bank, or other EM sound devices during startup. This allows the Tsunami audio to provide a clean, impactful startup experience.
+
+  - Play Scream sound effect immediately (for a fun shock to the player).
+  - Deduct one credit (silent - no motor timing).
+  - Send silent score reset command to Slave (Slave resets lamps immediately, no bells or 10K unit).
+  - Open the Ball Tray.
+  - Wait briefly for score reset to complete.
+  - Play "Hey gang, let's ride the Screamo!" announcement.
+  - Enable pop bumper, flippers, and slingshots.
+  - NOTE: The Ball Tray remains open until the first point is scored, then closes.
+  - Play "Okay kid, you're in. Press Start again if ya wanna admit any of your little friends." announcement.
+  - Release the first ball into Ball Lift via `DEV_IDX_BALL_TROUGH_RELEASE`.
+
+**Player addition window (until first point is scored):**
+
+During this window, Master monitors for the following events. These events are not mutually exclusive; multiple can occur and be handled in the same loop iteration.
+
+  1. **Coin inserted or Knockoff button pressed:**
+     - Add one credit (if not full).
+     - Fire knocker.
+     - Continue waiting.
+
+  2. **Start button pressed:**
+     - If < 4 players and credits > 0:
+       - Deduct one credit.
+       - Duck hill climb audio (if playing) while announcement plays.
+       - Play appropriate announcement:
+         - Player 2: "Second guest, c'mon in!"
+         - Player 3: "Third guest, you're in!"
+         - Player 4: "Fourth guest, through the turnstile!"
+       - Continue waiting.
+     - If < 4 players but credits = 0:
+       - Duck hill climb audio (if playing) while announcement plays.
+       - Play Aoooga horn sound effect.
+       - Play random "no credit" announcement (e.g., "No free admission today!").
+       - Continue waiting (player can still add coins or shoot the ball).
+     - If 4 players already:
+       - Duck hill climb audio (if playing) while announcement plays.
+       - Play "The park's full, no more guests can join!" announcement.
+       - Continue waiting.
+
+  3. **Ball Lift switch opens (player pushes ball lift rod) - first time only:**
+     - Start Ball 1 Lift sounds (looping chain-lift sound effect).
+     - Start Shaker Motor at low speed.
+     - Start 30-second hill climb timeout timer.
+     - Mark that hill climb has started (ignore subsequent Ball Lift switch changes).
+     - **Player addition window remains open** - players 2-4 can still be added.
+     - Continue waiting for first point.
+     - **Note:** Once the ball has been raised out of the Ball Lift, we assume it is in the Shooter Lane. If the ball rolls back down and closes the Ball Lift switch again, we ignore it - the hill climb state does not restart or change.
+
+  4. **Hill climb timeout (30 seconds elapsed since hill climb started):**
+     - Stop Ball 1 Lift sounds.
+     - Stop Shaker Motor.
+     - Play non-urgent "shoot the ball" reminder (e.g., "C'mon, shoot the ball already!").
+     - Start periodic reminder timer (e.g., every 15 seconds).
+     - Continue waiting for first point.
+
+  5. **Periodic reminder (while waiting for first point, after hill climb timeout):**
+     - Play non-urgent "shoot the ball" reminder.
+     - Continue waiting.
+
+  6. **First point scored:**
+     - **Player addition window closes** - no more players can be added.
+     - Close Ball Tray.
+     - Stop Ball 1 Lift sounds (if still playing).
+     - Play First Hill Screaming sounds.
+     - Increase Shaker Motor speed (or restart if timed out), continue for several seconds, then turn off.
+     - Start the first music track.
+     - Enhanced style gameplay begins.
+
+**Start button handling during Enhanced gameplay:**
+  - Before first point scored: Start presses attempt to add players (handled above).
+  - After first point scored: Pressing Start ends the game and begins tap detection for a new game.
+
+**Game end:**
+  - Enhanced style gameplay ends when all five balls have drained for all players, or when Start is pressed after first point.
+
+---
+
+## 13. Original/Impulse Style Rule Details
 ### 13.1 Switch and Lamp Overview
 
-- Each playfield switch has a distinct behavior and score impact, depending on whether it is lit (if can be lit) and the status of the simulated Selection Unit and other simulated electromechanical devices.
+- Each playfield switch has a distinct behavior and score impact, depending on whether it is lit (if it can be lit) and the status of the simulated Selection Unit and other simulated electromechanical devices.
 - NOTE: When we refer to the Selection Unit and the 10K Unit, these are physical units that fire for sound only; their behavior is simulated in software.
 
   - Inserting a coin into the coin mech adds one credit (if not full) and fires the Knocker.
-  - Original rules call for a five-ball game; no extra balls are awarded.  Because the Ball Trough Release mechanism is new, and because we have disabled an original gate that held balls drained via the Gobble Hole, we will use the new ball release mechanism to release five balls per game.
-    - If there less than five balls in the trough when player attempts to start a game, all balls in ball lift, shooter lane, kickouts, etc. must be fired and drained until the "five balls present" trough switch is closed.
-  - NOTE: On original game, the 10K Bell is physically tied to the 10K Unit, so every 10K score increment rings the bell.  In this simulation, therefore, we will ring the 10K Bell on every 10K score increment.
+  - Original rules call for a five-ball game; no extra balls are awarded. Because the Ball Trough Release mechanism is new, and because we have disabled an original gate that held balls drained via the Gobble Hole, we will use the new ball release mechanism to release five balls per game.
+    - If there are fewer than five balls in the Ball Trough when player attempts to start a game, we proceed anyway (see Section 12.1).
+  - NOTE: On original game, the 10K Bell is physically tied to the 10K Unit, so every 10K score increment rings the bell. In this simulation, therefore, we will ring the 10K Bell on every 10K score increment.
   - On every 100K score increment, we will ring the 100K Bell (and also the 10K Bell, since 100K includes a 10K increment).
   - Each time a WHITE INSERT is lit (even if already lit), we will ring the Selection Bell.
-  - Each time a CREDIT is added (coin mech or special), we will fire the Credit Unit step-up coil and fire the Knocker (or ring a bell in the head?)
+  - Each time a CREDIT is added (coin mech or special), we will fire the Credit Unit step-up coil and fire the Knocker.
 
 ### 13.2 Replays
 
@@ -858,10 +1053,10 @@ Navigation:
       - Four corners (1, 3, 7, 9) and center (5) awards 5 replays.
       - Making 1-3 awards 20 replays.
 
-- ### 13.3 Scoring Rules
+### 13.3 Scoring Rules
 
 - Scoring Events:
-  - Hitting either SLINGSHOT awards 10K points.  This is invariable.
+  - Hitting either SLINGSHOT awards 10K points. This is invariable.
   - Hitting a BUMPER awards 10K points and extinguishes its lamp.
   - Hitting the last lit bumper, in addition to awarding 10K and extinguishing the lamp:
     - Simultaneously lights the spotted number (if not already lit).
@@ -876,9 +1071,9 @@ Navigation:
       - See Selection Unit details below for the sequence of Red inserts and Hat lamp states.
   - Rolling over any HAT SWITCH awards 10K points, or 100K points if lit.
     - Rolling over a lit Hat does not extinguish it (because the Selection Unit controls Hat lamps, and only the nine Side Targets advance the Selection Unit).
-  - Landing in either LEFT or RIGHT KICKOUTs awards 500K points.  If lit, also awards spotted number.
+  - Landing in either LEFT or RIGHT KICKOUTs awards 500K points. If lit, also awards spotted number.
     - Landing in a lit Kickout does not extinguish it (because the 10K Unit controls Kickout lamps, and Kickouts do NOT advance the 10K Unit).
-  - Draining via LEFT or RIGHT DRAIN ROLLOVER awards 100K points.  If lit, also awards spotted number.
+  - Draining via LEFT or RIGHT DRAIN ROLLOVER awards 100K points. If lit, also awards spotted number.
     - Draining via a lit Drain Rollover does not extinguish it (because the 10K Unit controls Rollover lamps, and Rollovers do NOT advance the 10K Unit).
   - Draining via CENTER DRAIN ROLLOVER awards 500K points.
   - Ball draining via GOBBLE HOLE awards 500K points and always awards spotted number.
@@ -887,7 +1082,7 @@ Navigation:
     - The ball is immediately drained; if any balls remain, the next ball is released.
     - If no balls remain, the game ends.
 
-- Bumpers: There are seven bumpers, each labeled with a letter: S, C, R, E, A, M, O.  Bumpers are initially lit and extinguised when hit.
+- Bumpers: There are seven bumpers, each labeled with a letter: S, C, R, E, A, M, O. Bumpers are initially lit and extinguished when hit.
   - The 'E' bumper is a pop bumper; all others are dead bumpers.
 
 - The 1-9 Number Matrix:
@@ -899,11 +1094,11 @@ Navigation:
     - When all seven lit bumpers are hit.
       - When the last bumper is hit, 500K points are also awarded and the Selection Bell is rung.
   - Each time a spotted number is awarded, and the corresponding white insert is lit, the grid is examined for patterns that award replays:
-    - When any 3-in-a-row (horizontal, vertical, or diagonal) is completed, a replay is awarded.  Only 1 3-in-a-row scores.
+    - When any 3-in-a-row (horizontal, vertical, or diagonal) is completed, a replay is awarded. Only 1 3-in-a-row scores.
     - Making the four corners (1, 3, 7, 9) and center number (5) awards five additional replays.
     - Making 1-3 scores twenty additional replays.
 
-- The 10K Unit is directly fired by the Bumper switches, the Hat rollover switches, the Slingshot swtiches, and when the Selection Unit is fired (by hitting one of the nine side targets).
+- The 10K Unit is directly fired by the Bumper switches, the Hat rollover switches, the Slingshot switches, and when the Selection Unit is fired (by hitting one of the nine side targets).
   - Bumpers, Hats, and Slingshots do NOT advance the Selection Unit.
   - The 10K Unit controls when the Left Kickout/Right Drain and Right Kickout/Left Drain lamps are lit ("Spots Number When Lit").
     - When the 10K Unit is at zero, Left Kickout and Right Drain lamps are lit.
@@ -911,13 +1106,13 @@ Navigation:
     - These are independent of the Selection Unit.
 
 - The Selection Unit is directly fired only by the 9 Side Target switches (simulated; in fact the Master fires the Selection Unit coil when any 9 Side Target is hit).
-  - These devices do NOT fire the 10K Unit directly, but the Selection Unit fires the 10K Unit each time it advances (simulated.)
+  - These devices do NOT fire the 10K Unit directly, but the Selection Unit fires the 10K Unit each time it advances (simulated).
   - We use the Selection Unit coil for sound effects, but its behavior is simulated in software.
   - The Selection Unit (simulated) has two functions:
     1. Determines which of the red 1-9 numbered "Spot" inserts are lit (one of them is always lit).
        - Various scoring events award the "spotted number", which lights the corresponding white 1-9 numbered insert.
-    2. Determines when the four Hat rollover lamps are lit (in Original mode, they always light and extinguished together).
-  - The Selection Unit has 50 steps/states, which equates to five sets of ten steps.  Beginning at a random state the steps are as follows:
+    2. Determines when the four Hat rollover lamps are lit (in Original style, they always light and extinguish together).
+  - The Selection Unit has 50 steps/states, which equates to five sets of ten steps. Beginning at a random state the steps are as follows:
     - 1st CYCLE RED INSERT LIT: 8, 3, 4, 9, 2, 5, 7, 2, 1, 6   HATS LIT ON 8.
     - 2nd CYCLE RED INSERT LIT: 8, 3, 4, 9, 2, 5, 7, 2, 1, 6   HATS NOT LIT.
     - 3rd CYCLE RED INSERT LIT: 8, 3, 4, 9, 2, 5, 7, 2, 1, 6   HATS LIT ON 8.
@@ -935,24 +1130,27 @@ Navigation:
 
 ---
 
-## 14. Enhanced Mode Rule Details
+## 14. Enhanced Style Rule Details
 
-Enhanced Mode rules are based on Original mode rules, with the following additions and changes:
+Enhanced Style rules are based on Original style rules, with the following additions and changes:
 
 ### 14.1 General Features
 - Up to four players can play in sequence.
 - Shaker Motor is used to provide tactile feedback during certain events.
 - Tsunami audio is used for voice, music, and sound effects.
-  - There are two music themes: CIRCUS and SURF.  An option in Settings determines which plays during normal play and which plays during Modes and Multiball.
+  - There are two music themes: CIRCUS and SURF. An option in Settings determines which plays during normal play and which plays during Modes and Multiball.
   - For instance, if CIRCUS is selected as normal play music, SURF plays during Modes and Multiball.
   - At the end of each Mode or Multiball, the next normal play music track resumes from the beginning.
   - "Last track played" for both Circus and Surf themes are stored in EEPROM.
+- **EM Sound Devices**:
+  - During NORMAL Enhanced gameplay: All EM sound devices are used (bells, Score Motor, 10K Unit, Selection Unit, Relay Reset Bank), same as Original style.
+  - During MODES and MULTIBALL: EM sound devices are NOT used. Tsunami audio provides all sound effects. This makes these special periods feel distinctly different and more exciting.
 - Ball Save feature gives player a grace period (time stored in EEPROM) after first scoring a point on each ball.
 - Side Kickouts can "lock" balls temporarily, ejecting them for MULTIBALL play (or when game ends or is tilted).
 - Features can either carry over between balls and/or players, or reset at the start of each ball (to be defined).
     - If one or two balls are locked in the side kickouts, those carry over between balls and players.
 - Extra balls can be awarded via yet-to-be-defined scoring events (to be defined).
-- G.I. Lamps, Hat Lamps and Switches may be triggered and controlled independently (not only as a group as with Original mode).
+- G.I. Lamps, Hat Lamps and Switches may be triggered and controlled independently (not only as a group as with Original style).
 - We are not constrained by the original behaviors of the 10K Unit and Selection Unit.
   - For example, we can light or extinguish Hat lamps independently of the Selection Unit.
   - We can light or extinguish Kickout and Drain Rollover lamps independently of the 10K Unit.
@@ -960,18 +1158,20 @@ Enhanced Mode rules are based on Original mode rules, with the following additio
 - All lamps may be lit, flashed, or extinguished independently (to be defined).
   - For example, multiple Red "Spot" lamps may be lit simultaneously or randomly in "motion" (to be defined).
   - All playfield lamps may be extinguished except one group, such as bumpers, during certain modes or events (to be defined).
-- Tilting the machine does the following:
-  - The first time the Tilt Bob is triggered, the game plays a teasing audio line such as "Watch it!", but does not end the ball.
-  - The second time the Tilt Bob is triggered during the same ball:
-    - The Tilt Buzzer sound effect is played
+- **Tilt behavior** (Enhanced style has a two-warning system):
+  - The first time the Tilt Bob is triggered during a ball, the game plays a teasing audio line such as "Watch it!" but does NOT end the ball.
+  - The second time the Tilt Bob is triggered during the SAME ball:
+    - The Tilt Buzzer sound effect is played.
     - A verbal message is played such as "Nice goin', you just ruined your ride! Ball's toast."
-    - The current ball immediately ends (no score awarded for that ball) but does not end the game.
+    - The current ball immediately ends (no score awarded for that ball).
+  - **Tilt warning count resets at the start of each ball.** It is not cumulative across balls or players.
+  - Tilting does not end the game; play continues with the next ball (or next player's ball in multiplayer).
 
 ### 14.2 Shaker Motor
 
-The Shaker Motor shakes the cabinet to enhance gameplay.  It is controlled by Master via PWM.
+The Shaker Motor shakes the cabinet to enhance gameplay. It is controlled by Master via PWM.
 
-- Slow shaking begins after ball has been released into ball lift and then the switch opens; i.e. when player pushes ball into shooter lane.
+- Slow shaking begins after ball has been released into Ball Lift and then the 'SWITCH_IDX_BALL_IN_LIFT' switch opens; i.e. when player pushes ball into Shooter Lane.
   - This simulates the feeling of climbing the first hill of a rollercoaster.
   - Corresponds with Tsunami sound effect of rollercoaster being hauled up the chain to the top of the first drop.
   - Shaking and sound continues until player scores the first point (hits any target, bumper, gobble, etc.).
@@ -986,7 +1186,7 @@ The Shaker Motor shakes the cabinet to enhance gameplay.  It is controlled by Ma
 ### 14.3 Audio
 
 Tsunami WAV Trigger plays voice lines, music tracks, and sound effects.
-The three physical bells in the head are also used during normal Enhanced gameplay, but generally not when in a Hurry-Up mode or Multiball (targets have their own sound effects generated by the WAV Trigger.)
+The three physical bells in the head are also used during normal Enhanced gameplay, but generally NOT when in a Mode or Multiball (targets have their own sound effects generated by the WAV Trigger).
 
 - The file 'filenames.txt' lists all audio files on the WAV Trigger SD card, with their track numbers and descriptions.
 
@@ -1008,13 +1208,15 @@ The three physical bells in the head are also used during normal Enhanced gamepl
   - Other scoring events and achievements.
   - Game start (i.e. girl screaming) and end.
   - IMPORTANT TODO: We need SFX for various target hits when not in a Mode!
-    - Original and Impulse modes have bell(s) for every target hit, but Enhanced mode does not use the mechanical sound effects.
-    - For regular Enhanced game play, target hit sounds should be subtle, so the sound effects used for hits in Mode play are especially cool.
-    - SIDE TARGETS: 
-    - BUMPERS: 
-    - GOBBLE HOLE: Tiny crowd "oohh..." as in "that's too bad"
-    - HAT ROLLOVERS: 
-    - SLINGSHOTS: whip crack
+    - Original and Impulse styles have bell(s) for every target hit, but Enhanced style DOES use the mechanical bells during normal gameplay (see Section 14.1).
+    - Only during Modes and Multiball do we switch to Tsunami-only sound effects.
+    - For regular Enhanced game play, target hit sounds come from the physical bells.
+    - For Mode/Multiball play, target hit sounds should be special and exciting:
+    - SIDE TARGETS: (to be defined)
+    - BUMPERS: (to be defined)
+    - GOBBLE HOLE: Tiny crowd "oohh..." as in "that's too bad" (regular play uses bells; this is for Modes)
+    - HAT ROLLOVERS: (to be defined)
+    - SLINGSHOTS: whip crack (for Modes)
     - 3 DRAIN ROLLOVERS: Random voice insult i.e. "Did ya forget where the flipper buttons are?"
 
 - Primary music theme (Circus or Surf) music tracks play during regular game play.
@@ -1024,21 +1226,24 @@ The three physical bells in the head are also used during normal Enhanced gamepl
 
 - From Game Over:
   - Inserting a coin adds a credit (up to maximum) and fires knocker.
-  - Single tap Start: Original Mode.
-  - Double tap Start: Impulse Mode.
-  - Triple tap Start: Enhanced Mode.
-    - Additional taps add Players 2, 3, and 4 (one credit each).
+  - **Start button tap detection** (see Section 4.4 for timing details):
+    - Single tap (no second press within 500ms): Original Style
+    - Double tap (second press within 500ms): Enhanced Style
+    - Delayed second tap (second press after 500ms): Impulse Style
+  - The startup sequence does NOT begin until the style is determined (after 500ms or second press).
+  - For Enhanced style:
+    - Additional Start presses (before first point scored) add Players 2, 3, and 4 (one credit each).
     - New players may not be added after any points have been scored.
   - Deduct credits appropriately.
-  - Detail the sequence of adding players, audio feedback, and audio and motor sequence on first ball....
+  - See Section 12.2 for detailed Enhanced style startup sequence including player addition, audio feedback, and first ball motor/audio sequence.
 
 ### 14.5 Ball Save
 
 - For non-Multiball, non-Mode game play, after first point is scored on each ball, Ball Save is active for N seconds (N stored in EEPROM).
   - If ball drains during Ball Save period:
-  - Play non-urgent "ball saved" audio line such as "Ball saved! Ride again!"
-  - Release another ball into ball lift (if balls remain in trough).
-  - Only one "ball save" allowed per ball in non-multiball and non-Mode game play.
+    - Play non-urgent "ball saved" audio line such as "Ball saved! Ride again!"
+    - Release another ball into Ball Lift via 'DEV_IDX_BALL_TROUGH_RELEASE' (if balls remain in Ball Trough).
+    - Only one "ball save" allowed per ball in non-multiball and non-Mode game play.
 
 ### 14.6 Multi-Ball
 
@@ -1046,30 +1251,33 @@ The three physical bells in the head are also used during normal Enhanced gamepl
   - Balls can be locked during regular play and also during Mode play.
   - Upon locking the first ball:
     - Play ball locked audio line.
-    - Release a new ball into the ball lift.
+    - Release a new ball into the Ball Lift.
   - Upon locking the second ball:
-    - Release a new ball into the ball lift.
+    - Release a new ball into the Ball Lift.
   - Upon scoring the first point after two balls are locked (and NOT in a Mode):
     - Start multiball play.
     - End regular music playing.
     - Release locked balls into playfield.
     - Play multiball start audio line.
     - Start the next Mode music track (used for both multiball and Mode play).
+    - **Switch from EM bells to Tsunami-only sound effects.**
   - During multiball:
     - All targets score as usual, just with more balls on the playfield.
     - Any balls that land in the side kickouts will be immediately ejected.
-    - Any balls that drain within the ball-save time period (storedin EEPROM, and applies to regular balls as well) are returned to the player, along with an "urgent" ball-saved verbal announcement such as "Ball saved! Shoot it now!"
+    - Any balls that drain within the ball-save time period (stored in EEPROM, and applies to regular balls as well) are returned to the player, along with an "urgent" ball-saved verbal announcement such as "Ball saved! Shoot it now!"
   - Multiball ends when all but one ball has drained:
     - Stop multiball music track.
     - Resume normal play music track.
+    - **Switch back to EM bells for sound effects.**
   - When a second ball is locked during a Mode (Bumper Cars, etc.), the Mode continues with a new ball but multiball does NOT start until AFTER the Mode ends and the first point is scored.
  
 ### 14.7 Modes
 
 - There are currently three modes (besides Multi-Ball): BUMPER CARS, ROLL-A-BALL, and GOBBLE HOLE SHOOTING GALLERY
 - Each mode has a combination of shared and unique sound effects and voice prompts.
+- **During all Modes: EM sound devices (bells, 10K Unit, etc.) are NOT used. Tsunami audio provides all sound effects.**
 - A mode is started each of the first three times during a game (by a given player) that all bumper lamps are extinguished (and a white insert is lit.)
-  - The mode is selected based on the next mode following the "last mode started" which is stored in EEPROM.  This carries over for multiple players, so if one player plays Roll-A-Ball, the next mode regardless of who the player is will be Gobble Hole.
+  - The mode is selected based on the next mode following the "last mode started" which is stored in EEPROM. This carries over for multiple players, so if one player plays Roll-A-Ball, the next mode regardless of who the player is will be Gobble Hole.
   - It's possible that with more than one player, a given player will get the same mode two times in a row (if the intervening player(s) played two modes.)
 - Each mode has specific goals, scoring rules, audio lines, and shaker motor patterns (to be defined).
 - Modes interrupt normal play music with mode-specific music tracks.
@@ -1080,22 +1288,23 @@ The three physical bells in the head are also used during normal Enhanced gamepl
   - When the mode ends, stop the mode music track, play "Time!" audio track, and play the "mode-end stinger" (always a factory whistle sound effect).
   - Since drained balls are always replaced during modes, we'll allow a grace period of a few seconds: if a ball drains within three seconds of mode end, we replace it and let the player continue with regular play.
   - The next regular music track plays from the beginning.
+  - **Switch back to EM bells for sound effects after mode ends.**
 
 #### 14.7.1
 
 - BUMPER CARS MODE:
   - Mode starts after the all seven bumpers have been hit (and thus their lamps extinguished and a spotted number awarded). Rotating modes sequenced from BUMPER CARS to ROLL-A-BALL to GOBBLE HOLE modes (last-played mode is stored in EEPROM.)
-  - Pre-mode features are remembered and restored after mode ends.  If there are one or two balls locked in side kickouts, they remain locked during the mode and are available for multiball after the mode ends.
-    - Note that it's possible to have two balls locked in side kickouts when the mode starts, and the first shot of the next ball happens to extinghuish the last bumper lamp, thereby starting the mode with two balls locked.  In this case, the next point scored AFTER the mode ends will start multiball.
+  - Pre-mode features are remembered and restored after mode ends. If there are one or two balls locked in side kickouts, they remain locked during the mode and are available for multiball after the mode ends.
+    - Note that it's possible to have two balls locked in side kickouts when the mode starts, and the first shot of the next ball happens to extinguish the last bumper lamp, thereby starting the mode with two balls locked. In this case, the next point scored AFTER the mode ends will start multiball.
   - Stop regular-play music, make an announcement "Let's ride the bumper cars...", then play the all-mode start stinger "school bell" sound effect, then start a new mode song.
   - Player must hit bumpers in S-C-R-E-A-M-O sequence for 1 Million points jackpot.
   - NO TARGETS COUNT DURING THIS MODE, not even bumpers until the last in the sequence ("O") is hit.
   - Mode starts with all playfield lights off except all seven bumper lamps are all lit.
-  - Bumper hits, lit or not, trigger a car honk sound effect.
+  - Bumper hits, lit or not, trigger a car honk sound effect (Tsunami, not bells).
   - Each bumper hit in sequence turns off that bumper's lamp and plays "good shot" audio line.
   - Any of the nine side targets hit triggers a random car crash sound effect.
   - None of the targets, kickouts, rollovers, or gobble hole score any points during this mode.
-  - If a ball drains during the mode but before time runs out, the countdown timer pauses, a new ball is released, an announcement is made i.e. "Here's another ball; shoot it now!" and the timer resumes when the next point is scored.  This way the player is not penalized in time for the time it takes to raise an shoot a fresh ball.
+  - If a ball drains during the mode but before time runs out, the countdown timer pauses, a new ball is released, an announcement is made i.e. "Here's another ball; shoot it now!" and the timer resumes when the next point is scored. This way the player is not penalized in time for the time it takes to raise and shoot a fresh ball.
   - Successful completion awards 1 Million points, the audio "Jackpot!", and the audio SFX "Ding ding ding".
   - After ten seconds, play the reminder "Keep aiming for those bumpers!" audio line.
   - Ten seconds before the mode ends, announce "Ten seconds!" and start the ten-second "mechanical timer" sound effect.
@@ -1110,7 +1319,7 @@ The three physical bells in the head are also used during normal Enhanced gamepl
   - Mode starts after the all seven bumpers have been hit (and thus their lamps extinguished and a spotted number awarded). Rotating modes sequenced from BUMPER CARS to ROLL-A-BALL to GOBBLE HOLE modes (last-played mode is stored in EEPROM.)
   - Pre-mode game state is preserved and then restored when the mode ends, much as with BUMPER CARS mode.
   - Player must hit any of the four Hat Rollovers as many times as possible within the time limit.
-  - Each hit awards 100K points, plays a random "bowling strike" sound effect, and plays a random complement such as "good shot!"
+  - Each hit awards 100K points, plays a random "bowling strike" sound effect (Tsunami), and plays a random compliment such as "good shot!"
   - Any of the nine side targets hit triggers a random glass-break sound effect.
   - ONLY HAT ROLLOVERS COUNT TOWARDS SCORE DURING THIS MODE.
   - After ten seconds, play the reminder "Keep rolling over those hats!" audio line.
@@ -1124,7 +1333,7 @@ The three physical bells in the head are also used during normal Enhanced gamepl
 - GOBBLE HOLE SHOOTING GALLERY MODE:
   - Mode starts after the all seven bumpers have been hit (and thus their lamps extinguished and a spotted number awarded). Rotating modes sequenced from BUMPER CARS to ROLL-A-BALL to GOBBLE HOLE modes (last-played mode is stored in EEPROM.)
   - Player must hit the Gobble Hole as many times as possible within the time limit.
-  - Each hit awards points and plays "slide whistle" and "applause" audio sound effects.
+  - Each hit awards points and plays "slide whistle" and "applause" audio sound effects (Tsunami).
   - ONLY GOBBLE HOLE COUNTS DURING THIS MODE.
   - At some point we play the reminder "Keep aiming for the Gobble Hole!" audio line.
   - If a ball drains during the mode but before time runs out, the countdown timer pauses, a new ball is released, and the timer resumes when the next point is scored.
@@ -1142,7 +1351,7 @@ The three physical bells in the head are also used during normal Enhanced gamepl
 - If multiball is not active, proceed to next ball or Game Over as appropriate.
 - If Game Over:
   - Play Game Over audio line.
-  - Display each player's score in sequence on score lamps as described above.
+  - Display each player's score in sequence on score lamps as described above (see Section 9.3).
   - Resume Attract mode.
 
 ---
@@ -1153,16 +1362,16 @@ The three physical bells in the head are also used during normal Enhanced gamepl
   - Provide function to compute how many Score Motor 1/4 revs a score update will take, so Master can keep Score Motor running in sync with Slave's score lamp updates.
 
 - Mode state machine
-  - Clean, centralized state machine for modes:
+  - Clean, centralized state machine for modes/styles:
     - GAME_OVER, DIAGNOSTIC, ORIGINAL, ENHANCED, IMPULSE, TILT, etc.
   - Per-mode handler functions called from the 10 ms loop.
 
 - Input debouncing and edge detection
-  - Ensure Start button taps are properly detected (single, double, triple).
-  - Debounce switches via time thresholds or sample windows.  Probably by initial edge detection, and then can't be re-detected for N ms.
+  - Ensure Start button taps are properly detected (single, double, delayed-second).
+  - Debounce switches via time thresholds or sample windows. Probably by initial edge detection, and then can't be re-detected for N ms.
     - This might entail per-switch countdown timers such as we have implemented in Slave for coils.
 
-- Enhanced mode rule engine
+- Enhanced style rule engine
   - Define data structures and functions for:
     - Player progression.
     - Ball save.
@@ -1176,14 +1385,14 @@ The three physical bells in the head are also used during normal Enhanced gamepl
 
 The following sections would help Copilot (and future you) a lot if you add more detail:
 
-1. Enhanced Mode Rule Details
+1. Enhanced Style Rule Details
    - Exact scoring rules, feature ladders, multiball, extra ball, ball save logic.
    - Which combinations of bumpers, targets, gobble events, etc. trigger and end:
      - Voice lines.
      - Sound effects tracks.
      - Music tracks.
      - Shaker events.
-   - Definition of "roller coaster" themed modes, if any (for example multiball, hurry-up).
+   - Definition of "roller coaster" themed modes, if any (for example multiball).
 
 2. Audio Mapping Table
    - A table mapping:

@@ -38,6 +38,24 @@ Welcome to the Screamo project. This document defines mandatory contribution sta
     }
     '''
 
+  - Pointer and Reference Syntax:
+  - Prefer **pointer syntax** over C++ reference syntax when accessing array elements or modifying struct/class members.
+  - Use `Type* pVar = array + idx;` style (pointer arithmetic) for array element access.
+  - Prefix pointer variable names with 'p' (e.g., pDev, pLamp, pSwitch).
+  - Example (preferred):
+
+    '''cpp
+    DeviceParmStruct* pDev = deviceParm + t_devIdx;
+    pDev->countdown = pDev->timeOn;
+    '''
+
+  - Avoid:
+
+    '''cpp
+    DeviceParmStruct& dev = deviceParm[t_devIdx];
+    dev.countdown = dev.timeOn;
+    '''
+  
 - Naming:
   - Constants: UPPER_SNAKE_CASE (e.g. SCORE_MOTOR_STEP_MS).
   - Globals: lowerCamelCase or descriptive snake_case consistent with existing code (e.g. currentScore, resetHighUnitsRemaining).

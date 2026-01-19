@@ -73,6 +73,24 @@ void Pinball_LCD::clearScreen() {
   delay(100);  // Required after CLS at 115200 baud
 }
 
+void Pinball_LCD::clearRow(const byte row) {
+  // Clear a single row (1..4) by filling with 20 spaces.
+  // Row parameter: 1..4 (not 0..3).
+  if (row < 1 || row > 4) {
+    return;  // Invalid row; do nothing
+  }
+
+  // Create a 20-space string
+  char spaces[LCD_WIDTH + 1];
+  for (byte i = 0; i < LCD_WIDTH; i++) {
+    spaces[i] = ' ';
+  }
+  spaces[LCD_WIDTH] = '\0';
+
+  // Use existing printRowCol to display spaces at column 1 of specified row
+  printRowCol(row, 1, spaces);
+}
+
 void Pinball_LCD::printRowCol(const byte row, const byte col, const char t_nextLine[]) {
   // Rev: 06-30-24.
   // Row 1..4, Col 1..20.

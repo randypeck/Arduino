@@ -1,4 +1,4 @@
-// PINBALL_DESCRIPTIONS.H Rev: 01/18/26.
+// PINBALL_DESCRIPTIONS.H Rev: 01/19/26.
 // Strings stored in PROGMEM to save RAM, used for diagnostic display of lamp, switch, coil, and WAV names.
 
 #ifndef PINBALL_DESCRIPTIONS_H
