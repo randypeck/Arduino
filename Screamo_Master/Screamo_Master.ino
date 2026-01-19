@@ -1,4 +1,4 @@
-// Screamo_Master.INO Rev: 01/14/26
+// Screamo_Master.INO Rev: 01/18/26
 // 11/12/25: Moved Right Kickout from pin 13 to pin 44 to avoid MOSFET firing twice on power-up.  Don't use MOSFET on pin 13.
 // 12/28/25: Changed flipper inputs from direct Arduino inputs to Centipede inputs.
 // 01/07/26: Added "5 Balls in Trough" switch to Centipede inputs. All switches tested and working.
@@ -12,7 +12,7 @@
 #include <Pinball_Descriptions.h> 
 
 const byte THIS_MODULE = ARDUINO_MAS;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "MASTER 01/14/26";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "MASTER 01/18/26";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which makes it a global.
 // And no need to pass lcdString[] to any functions that use it!
 
@@ -22,35 +22,40 @@ char lcdString[LCD_WIDTH + 1] = "MASTER 01/14/26";  // Global array holds 20-cha
 
 // NEED ADDITIONAL for both Circus and Surf last song played
 
-const int EEPROM_ADDR_SCORE                =  0;  // 2-byte unsigned addr to store 0..999 score (uses addr 0 and 1)
+const int EEPROM_ADDR_LAST_SCORE              =  0;  // 2-byte unsigned addr to store 0..999 score (uses addr 0 and 1)
 
-const int EEPROM_ADDR_TSUNAMI_GAIN         = 10;  // 1-byte signed: Overall gain (-40 to 0; default -10dB.)
-const int EEPROM_ADDR_TSUNAMI_GAIN_VOICE   = 11;  // 1-byte signed: Voice gain OFFSET +/- from overall. Default 0dB.
-const int EEPROM_ADDR_TSUNAMI_GAIN_SFX     = 12;  // 1-byte signed: SFX gain OFFSET +/- from overall. Default 0dB.
-const int EEPROM_ADDR_TSUNAMI_GAIN_MUSIC   = 13;  // 1-byte signed: Music gain OFFSET +/- from overall. Default 0dB.
-const int EEPROM_ADDR_TSUNAMI_DUCK_DB      = 14;  // 1-byte signed: Ducking gain OFFSET +/- from SFX and Music when Voice playing. Default -20dB.
+const int EEPROM_ADDR_TSUNAMI_GAIN            = 10;  // 1-byte signed: Overall gain (-40 to 0; default -10dB.)
+const int EEPROM_ADDR_TSUNAMI_GAIN_VOICE      = 11;  // 1-byte signed: Voice gain OFFSET +/- from overall. Default 0dB.
+const int EEPROM_ADDR_TSUNAMI_GAIN_SFX        = 12;  // 1-byte signed: SFX gain OFFSET +/- from overall. Default 0dB.
+const int EEPROM_ADDR_TSUNAMI_GAIN_MUSIC      = 13;  // 1-byte signed: Music gain OFFSET +/- from overall. Default 0dB.
+const int EEPROM_ADDR_TSUNAMI_DUCK_DB         = 14;  // 1-byte signed: Ducking gain OFFSET +/- from SFX and Music when Voice playing. Default -20dB.
 
-const int EEPROM_ADDR_THEME                = 20;  // 1-byte unsigned: Callipe or Surf Rock theme (music) selection
-const int EEPROM_ADDR_LAST_SONG_PLAYED     = 21;  // 1-byte unsigned: Last song number played (to avoid repeats) **************************** NEED FOR BOTH CIRCUS AND SURF
+const int EEPROM_ADDR_THEME                   = 20;  // 1-byte unsigned: Circus or Surf Rock theme (music) selection
+const int EEPROM_ADDR_LAST_CIRCUS_SONG_PLAYED = 21;  // 1-byte unsigned: Last song number played (to avoid repeats) Approx 1..19
+const int EEPROM_ADDR_LAST_SURF_SONG_PLAYED   = 22;  // 1-byte unsigned: Last song number played (to avoid repeats) Approx 1..18
 
-const int EEPROM_ADDR_BALL_SAVE_TIME       = 30;  // 1-byte unsigned: Ball save time (0=off, 1-30 seconds) from first point scored that ball.
-const int EEPROM_ADDR_HURRY_UP_1_TIME      = 31;  // 1-byte unsigned: Mode 1 time limit (in seconds)
-const int EEPROM_ADDR_HURRY_UP_2_TIME      = 32;  // 1-byte unsigned: i.e. "Roll-A-Ball" mode etc.
-const int EEPROM_ADDR_HURRY_UP_3_TIME      = 33;  // 1-byte unsigned
-const int EEPROM_ADDR_HURRY_UP_4_TIME      = 34;  // 1-byte unsigned
-const int EEPROM_ADDR_HURRY_UP_5_TIME      = 35;  // 1-byte unsigned
-const int EEPROM_ADDR_HURRY_UP_6_TIME      = 36;  // 1-byte unsigned
+const int EEPROM_ADDR_LAST_MODE_PLAYED        = 25;  // 1-byte unsigned: Last Enhanced mode played: Bumper Cars, Roll-A-Ball, or Gobble Hole Shooting Gallery
 
-const int EEPROM_ADDR_ORIGINAL_REPLAY_1    = 40;  // 2-byte unsigned: 1st replay score for Original/Impulse mode
-const int EEPROM_ADDR_ORIGINAL_REPLAY_2    = 42;  // 2-byte unsigned
-const int EEPROM_ADDR_ORIGINAL_REPLAY_3    = 44;  // 2-byte unsigned
-const int EEPROM_ADDR_ORIGINAL_REPLAY_4    = 46;  // 2-byte unsigned
-const int EEPROM_ADDR_ORIGINAL_REPLAY_5    = 48;  // 2-byte unsigned
-const int EEPROM_ADDR_ENHANCED_REPLAY_1    = 50;  // 2-byte unsigned: 1st replay score for Enhanced mode
-const int EEPROM_ADDR_ENHANCED_REPLAY_2    = 52;  // 2-byte unsigned
-const int EEPROM_ADDR_ENHANCED_REPLAY_3    = 54;  // 2-byte unsigned
-const int EEPROM_ADDR_ENHANCED_REPLAY_4    = 56;  // 2-byte unsigned
-const int EEPROM_ADDR_ENHANCED_REPLAY_5    = 58;  // 2-byte unsigned
+const int EEPROM_ADDR_BALL_SAVE_TIME          = 30;  // 1-byte unsigned: Ball save time (seconds) (0=off, 1-30 seconds) from first point scored that ball.
+
+const int EEPROM_ADDR_HURRY_UP_1_TIME         = 31;  // 1-byte unsigned: Mode 1 time limit (in seconds)
+const int EEPROM_ADDR_HURRY_UP_2_TIME         = 32;  // 1-byte unsigned: i.e. "Roll-A-Ball" mode etc.
+const int EEPROM_ADDR_HURRY_UP_3_TIME         = 33;  // 1-byte unsigned
+const int EEPROM_ADDR_HURRY_UP_4_TIME         = 34;  // 1-byte unsigned
+const int EEPROM_ADDR_HURRY_UP_5_TIME         = 35;  // 1-byte unsigned
+const int EEPROM_ADDR_HURRY_UP_6_TIME         = 36;  // 1-byte unsigned
+
+const int EEPROM_ADDR_ORIGINAL_REPLAY_1       = 40;  // 2-byte unsigned: 1st replay score for Original/Impulse mode 0..999
+const int EEPROM_ADDR_ORIGINAL_REPLAY_2       = 42;  // 2-byte unsigned
+const int EEPROM_ADDR_ORIGINAL_REPLAY_3       = 44;  // 2-byte unsigned
+const int EEPROM_ADDR_ORIGINAL_REPLAY_4       = 46;  // 2-byte unsigned
+const int EEPROM_ADDR_ORIGINAL_REPLAY_5       = 48;  // 2-byte unsigned
+
+const int EEPROM_ADDR_ENHANCED_REPLAY_1       = 50;  // 2-byte unsigned: 1st replay score for Enhanced mode 0..999
+const int EEPROM_ADDR_ENHANCED_REPLAY_2       = 52;  // 2-byte unsigned
+const int EEPROM_ADDR_ENHANCED_REPLAY_3       = 54;  // 2-byte unsigned
+const int EEPROM_ADDR_ENHANCED_REPLAY_4       = 56;  // 2-byte unsigned
+const int EEPROM_ADDR_ENHANCED_REPLAY_5       = 58;  // 2-byte unsigned
 
 // **************************************
 // ***** LAMP STRUCTS AND CONSTANTS *****
@@ -616,7 +621,7 @@ const AudioComTrackDef comTracksCompliment[] = {
 };
 const byte NUM_COM_COMPLIMENT = sizeof(comTracksCompliment) / sizeof(comTracksCompliment[0]);
 
-// DRAIN COM tracks (721-739)
+// DRAIN COM tracks (721-748)
 const AudioComTrackDef comTracksDrain[] = {
   { 721, 23, AUDIO_PRIORITY_LOW },   // Did you forget where the flipper buttons are
   { 722, 19, AUDIO_PRIORITY_LOW },   // Gravity called and you answered
@@ -636,7 +641,16 @@ const AudioComTrackDef comTracksDrain[] = {
   { 736, 17, AUDIO_PRIORITY_LOW },   // Oh that hurt to watch
   { 737, 17, AUDIO_PRIORITY_LOW },   // That Was Just Terrible
   { 738, 39, AUDIO_PRIORITY_LOW },   // Your ball saw the drain...
-  { 739, 11, AUDIO_PRIORITY_LOW }    // Whoopsie daisy
+  { 739, 11, AUDIO_PRIORITY_LOW },   // Whoopsie daisy
+  { 740, 11, AUDIO_PRIORITY_LOW },   // Get outta there, kid
+  { 741, 13, AUDIO_PRIORITY_LOW },   // Hey, wrong way
+  { 742, 14, AUDIO_PRIORITY_LOW },   // Kid not that way
+  { 743, 12, AUDIO_PRIORITY_LOW },   // Leaving so soon
+  { 744, 12, AUDIO_PRIORITY_LOW },   // No no no
+  { 745, 15, AUDIO_PRIORITY_LOW },   // Not that way
+  { 746, 11, AUDIO_PRIORITY_LOW },   // Not the exit
+  { 747,  8, AUDIO_PRIORITY_LOW },   // Oh boy
+  { 748, 11, AUDIO_PRIORITY_LOW }    // Where ya goin, kid
 };
 const byte NUM_COM_DRAIN = sizeof(comTracksDrain) / sizeof(comTracksDrain[0]);
 
@@ -659,7 +673,7 @@ const AudioComTrackDef comTracksMode[] = {
   { 1002,  8, AUDIO_PRIORITY_HIGH },  // Jackpot
   { 1003, 13, AUDIO_PRIORITY_HIGH },  // Ten seconds left
   { 1005,  8, AUDIO_PRIORITY_HIGH },  // Time
-  { 1101, 82, AUDIO_PRIORITY_HIGH },  // Lets ride the Bumper Cars
+  { 1101, 93, AUDIO_PRIORITY_HIGH },  // Lets ride the Bumper Cars
   { 1111, 18, AUDIO_PRIORITY_MED },   // Keep smashing the bumpers
   { 1201, 82, AUDIO_PRIORITY_HIGH },  // Lets play Roll-A-Ball
   { 1211, 18, AUDIO_PRIORITY_MED },   // Keep rolling over the hats
