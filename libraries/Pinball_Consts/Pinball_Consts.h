@@ -246,4 +246,170 @@ const unsigned int TRACK_LIFT_LOOP_SECONDS      =  120;  // Loop 0403 before thi
 const byte NUM_CIRCUS_TRACKS                    =   19;  // 2001-2019
 const byte NUM_SURF_TRACKS                      =   18;  // 2051-2068
 
+// *** SETTINGS AND EEPROM CATEGORIES ***
+const byte SETTINGS_CAT_GAME        = 0;
+const byte SETTINGS_CAT_ORIG_REPLAY = 1;
+const byte SETTINGS_CAT_ENH_REPLAY  = 2;
+const byte NUM_SETTINGS_CATEGORIES  = 3;
+
+// Game settings parameter indices
+const byte GAME_SETTING_THEME      = 0;
+const byte GAME_SETTING_BALL_SAVE  = 1;
+const byte GAME_SETTING_MODE_1     = 2;
+const byte GAME_SETTING_MODE_2     = 3;
+const byte GAME_SETTING_MODE_3     = 4;
+const byte GAME_SETTING_MODE_4     = 5;
+const byte GAME_SETTING_MODE_5     = 6;
+const byte GAME_SETTING_MODE_6     = 7;
+const byte NUM_GAME_SETTINGS       = 8;
+
+// Replay score count
+const byte NUM_REPLAY_SCORES = 5;
+
+// Theme selection values
+const byte THEME_CIRCUS = 0;
+const byte THEME_SURF   = 1;
+
+// *** DEVICE (COIL/MOTOR) COUNTS AND INDICES ***
+// Master has 14 devices (coils/motors), Slave has 8
+const byte NUM_DEVS_MASTER              = 14;
+const byte NUM_DEVS_SLAVE               =  8;
+
+// Master device indices (0-13)
+const byte DEV_IDX_POP_BUMPER           =  0;
+const byte DEV_IDX_KICKOUT_LEFT         =  1;
+const byte DEV_IDX_KICKOUT_RIGHT        =  2;
+const byte DEV_IDX_SLINGSHOT_LEFT       =  3;
+const byte DEV_IDX_SLINGSHOT_RIGHT      =  4;
+const byte DEV_IDX_FLIPPER_LEFT         =  5;
+const byte DEV_IDX_FLIPPER_RIGHT        =  6;
+const byte DEV_IDX_BALL_TRAY_RELEASE    =  7;  // Original
+const byte DEV_IDX_SELECTION_UNIT       =  8;  // Sound FX only
+const byte DEV_IDX_RELAY_RESET          =  9;  // Sound FX only
+const byte DEV_IDX_BALL_TROUGH_RELEASE  = 10;  // New up/down post
+const byte DEV_IDX_MOTOR_SHAKER         = 11;  // 12vdc
+const byte DEV_IDX_KNOCKER              = 12;
+const byte DEV_IDX_MOTOR_SCORE          = 13;  // 50vac; sound FX only
+
+// Slave device indices (defined in Screamo_Slave.ino - not shared)
+
+const byte MOTOR_SHAKER_POWER_MIN       =  70;  // Minimum power needed to start shaker motor
+const byte MOTOR_SHAKER_POWER_MAX       = 140;  // Maximum power before hats trigger
+
+// *** LAMP COUNTS ***
+// Master has 47 playfield/cabinet lamps, Slave has 29 head lamps
+const byte NUM_LAMPS_MASTER             = 47;
+const byte NUM_LAMPS_SLAVE              = 29;
+
+// *** LAMP INDICES ***
+const byte LAMP_IDX_GI_LEFT_TOP       =  0;
+const byte LAMP_IDX_GI_LEFT_CENTER_1  =  1;  // Above left kickout
+const byte LAMP_IDX_GI_LEFT_CENTER_2  =  2;  // Below left kickout
+const byte LAMP_IDX_GI_LEFT_BOTTOM    =  3;  // Left slingshot
+const byte LAMP_IDX_GI_RIGHT_TOP      =  4;
+const byte LAMP_IDX_GI_RIGHT_CENTER_1 =  5;  // Above right kickout
+const byte LAMP_IDX_GI_RIGHT_CENTER_2 =  6;  // Below right kickout
+const byte LAMP_IDX_GI_RIGHT_BOTTOM   =  7;  // Right slingshot
+const byte LAMP_IDX_S                 =  8;  // "S" bumper lamp
+const byte LAMP_IDX_C                 =  9;  // "C" bumper lamp
+const byte LAMP_IDX_R                 = 10;  // "R" bumper lamp
+const byte LAMP_IDX_E                 = 11;  // "E" bumper lamp
+const byte LAMP_IDX_A                 = 12;  // "A" bumper lamp
+const byte LAMP_IDX_M                 = 13;  // "M" bumper lamp
+const byte LAMP_IDX_O                 = 14;  // "O" bumper lamp
+const byte LAMP_IDX_WHITE_1           = 15;
+const byte LAMP_IDX_WHITE_2           = 16;
+const byte LAMP_IDX_WHITE_3           = 17;
+const byte LAMP_IDX_WHITE_4           = 18;
+const byte LAMP_IDX_WHITE_5           = 19;
+const byte LAMP_IDX_WHITE_6           = 20;
+const byte LAMP_IDX_WHITE_7           = 21;
+const byte LAMP_IDX_WHITE_8           = 22;
+const byte LAMP_IDX_WHITE_9           = 23;
+const byte LAMP_IDX_RED_1             = 24;
+const byte LAMP_IDX_RED_2             = 25;
+const byte LAMP_IDX_RED_3             = 26;
+const byte LAMP_IDX_RED_4             = 27;
+const byte LAMP_IDX_RED_5             = 28;
+const byte LAMP_IDX_RED_6             = 29;
+const byte LAMP_IDX_RED_7             = 30;
+const byte LAMP_IDX_RED_8             = 31;
+const byte LAMP_IDX_RED_9             = 32;
+const byte LAMP_IDX_HAT_LEFT_TOP      = 33;
+const byte LAMP_IDX_HAT_LEFT_BOTTOM   = 34;
+const byte LAMP_IDX_HAT_RIGHT_TOP     = 35;
+const byte LAMP_IDX_HAT_RIGHT_BOTTOM  = 36;
+const byte LAMP_IDX_KICKOUT_LEFT      = 37;
+const byte LAMP_IDX_KICKOUT_RIGHT     = 38;
+const byte LAMP_IDX_SPECIAL           = 39;  // Special When Lit above gobble hole
+const byte LAMP_IDX_GOBBLE_1          = 40;  // "1" BALL IN HOLE
+const byte LAMP_IDX_GOBBLE_2          = 41;  // "2" BALL IN HOLE
+const byte LAMP_IDX_GOBBLE_3          = 42;  // "3" BALL IN HOLE
+const byte LAMP_IDX_GOBBLE_4          = 43;  // "4" BALL IN HOLE
+const byte LAMP_IDX_GOBBLE_5          = 44;  // "5" BALL IN HOLE
+const byte LAMP_IDX_SPOT_NUMBER_LEFT  = 45;
+const byte LAMP_IDX_SPOT_NUMBER_RIGHT = 46;
+
+const byte LAMP_GROUP_NONE              =  0;
+const byte LAMP_GROUP_GI                =  1;
+const byte LAMP_GROUP_BUMPER            =  2;
+const byte LAMP_GROUP_WHITE             =  3;
+const byte LAMP_GROUP_RED               =  4;
+const byte LAMP_GROUP_HAT               =  5;
+const byte LAMP_GROUP_KICKOUT           =  6;
+const byte LAMP_GROUP_GOBBLE            =  7;
+
+// *** SWITCH COUNTS ***
+// Master has 40 switches, Slave has 2 (credit empty/full)
+const byte NUM_SWITCHES_MASTER          = 40;
+const byte NUM_SWITCHES_SLAVE           =  2;
+
+// Define array index constants - this list is rather arbitrary and doesn't relate to device number/pin numbers:
+// Flipper buttons are direct-wired to Arduino pins for faster response, so not included here.
+// CABINET SWITCHES:
+const byte SWITCH_IDX_START_BUTTON         =  0;
+const byte SWITCH_IDX_DIAG_1               =  1;  // Back
+const byte SWITCH_IDX_DIAG_2               =  2;  // Minus/Left
+const byte SWITCH_IDX_DIAG_3               =  3;  // Plus/Right
+const byte SWITCH_IDX_DIAG_4               =  4;  // Select
+const byte SWITCH_IDX_KNOCK_OFF            =  5;  // Quick press adds a credit; long press forces software reset (Slave and Master.)
+const byte SWITCH_IDX_COIN_MECH            =  6;
+const byte SWITCH_IDX_5_BALLS_IN_TROUGH    =  7;  // Detects if there are 5 balls present in the trough
+const byte SWITCH_IDX_BALL_IN_LIFT         =  8;  // (New) Ball present at bottom of ball lift
+const byte SWITCH_IDX_TILT_BOB             =  9;
+// PLAYFIELD SWITCHES:
+const byte SWITCH_IDX_BUMPER_S             = 10;  // 'S' bumper switch
+const byte SWITCH_IDX_BUMPER_C             = 11;  // 'C' bumper switch
+const byte SWITCH_IDX_BUMPER_R             = 12;  // 'R' bumper switch
+const byte SWITCH_IDX_BUMPER_E             = 13;  // 'E' bumper switch
+const byte SWITCH_IDX_BUMPER_A             = 14;  // 'A' bumper switch
+const byte SWITCH_IDX_BUMPER_M             = 15;  // 'M' bumper switch
+const byte SWITCH_IDX_BUMPER_O             = 16;  // 'O' bumper switch
+const byte SWITCH_IDX_KICKOUT_LEFT         = 17;
+const byte SWITCH_IDX_KICKOUT_RIGHT        = 18;
+const byte SWITCH_IDX_SLINGSHOT_LEFT       = 19;  // Two switches wired in parallel
+const byte SWITCH_IDX_SLINGSHOT_RIGHT      = 20;  // Two switches wired in parallel
+const byte SWITCH_IDX_HAT_LEFT_TOP         = 21;
+const byte SWITCH_IDX_HAT_LEFT_BOTTOM      = 22;
+const byte SWITCH_IDX_HAT_RIGHT_TOP        = 23;
+const byte SWITCH_IDX_HAT_RIGHT_BOTTOM     = 24;
+// Note that there is no "LEFT_SIDE_TARGET_1" on the playfield; starting left side targets at 2 so they match right-side target numbers.
+const byte SWITCH_IDX_LEFT_SIDE_TARGET_2   = 25;  // Long narrow side target near top left
+const byte SWITCH_IDX_LEFT_SIDE_TARGET_3   = 26;  // Upper switch above left kickout
+const byte SWITCH_IDX_LEFT_SIDE_TARGET_4   = 27;  // Lower switch above left kickout
+const byte SWITCH_IDX_LEFT_SIDE_TARGET_5   = 28;  // Below left kickout
+const byte SWITCH_IDX_RIGHT_SIDE_TARGET_1  = 29;  // Top right just below ball gate
+const byte SWITCH_IDX_RIGHT_SIDE_TARGET_2  = 30;  // Long narrow side target near top right
+const byte SWITCH_IDX_RIGHT_SIDE_TARGET_3  = 31;  // Upper switch above right kickout
+const byte SWITCH_IDX_RIGHT_SIDE_TARGET_4  = 32;  // Lower switch above right kickout
+const byte SWITCH_IDX_RIGHT_SIDE_TARGET_5  = 33;  // Below right kickout
+const byte SWITCH_IDX_GOBBLE               = 34;
+const byte SWITCH_IDX_DRAIN_LEFT           = 35;  // Left drain switch index in Centipede input shift register
+const byte SWITCH_IDX_DRAIN_CENTER         = 36;  // Center drain switch index in Centipede input shift register
+const byte SWITCH_IDX_DRAIN_RIGHT          = 37;  // Right drain switch index in Centipede input shift register
+// Flipper buttons now arrive via Centipede inputs (entries at the end of switchParm[]).
+const byte SWITCH_IDX_FLIPPER_LEFT_BUTTON  = 38;
+const byte SWITCH_IDX_FLIPPER_RIGHT_BUTTON = 39;
+const byte NUM_SWITCHES = 40;
+
 #endif

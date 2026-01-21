@@ -7,6 +7,24 @@
 #include <Arduino.h>
 #include <avr/pgmspace.h>
 
+// Name arrays used for diagnostic displays
+const char* const settingsCategoryNames[] PROGMEM = {
+  "Game Settings",
+  "Original Replays",
+  "Enhanced Replays"
+};
+
+const char* const gameSettingNames[] PROGMEM = {
+  "Music Theme",
+  "Ball Save Time",
+  "Mode 1: Bumper",
+  "Mode 2: Roll-A-Ball",
+  "Mode 3: Gobble",
+  "Mode 4: Reserved",
+  "Mode 5: Reserved",
+  "Mode 6: Reserved"
+};
+
 // ***************************************
 // ***** LAMP DESCRIPTIONS (PROGMEM) *****
 // ***************************************
@@ -991,29 +1009,5 @@ const unsigned int diagAudioTrackNums[] PROGMEM = {
   2051, 2052, 2053, 2054, 2055, 2056, 2057, 2058, 2059, 2060, 2061, 2062, 2063, 2064, 2065, 2066, 2067, 2068
 };
 const unsigned int NUM_DIAG_AUDIO_TRACKS = sizeof(diagAudioTrackNums) / sizeof(diagAudioTrackNums[0]);
-
-// ************************************************************************************
-// ***** HELPER FUNCTION TO RETRIEVE PROGMEM STRINGS *****
-// ************************************************************************************
-
-// Helper: copy a PROGMEM string from a PROGMEM array of pointers into a RAM buffer.
-// This safely handles the double indirection required for arrays of const char* PROGMEM.
-// Truncates to (t_destSize - 1) characters and null-terminates.
-void diagCopyProgmemString(const char* const* t_table, unsigned int t_index,
-  char* t_dest, byte t_destSize) {
-  // Get the pointer to the nth string (itself stored in PROGMEM)
-  const char* pStr = (const char*)pgm_read_word(&t_table[t_index]);
-
-  // Copy the string from PROGMEM into RAM buffer
-  byte i = 0;
-  for (; i < (byte)(t_destSize - 1); i++) {
-    char c = pgm_read_byte(pStr + i);
-    if (c == '\0') {
-      break;
-    }
-    t_dest[i] = c;
-  }
-  t_dest[i] = '\0';
-}
 
 #endif

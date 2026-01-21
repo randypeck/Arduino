@@ -83,8 +83,6 @@ const byte DEV_IDX_SELECT_BELL       =  5;
 const byte DEV_IDX_LAMP_SCORE        =  6;
 const byte DEV_IDX_LAMP_HEAD_GI_TILT =  7;
 
-const byte NUM_DEVS = 8;
-
 // DeviceParm table: { pinNum, powerInitial, timeOn, powerHold, countdown, queueCount }
 //   pinNum: Arduino pin number for this coil
 //   powerInitial: 0..255 for MOSFET coils and lamps
@@ -92,7 +90,7 @@ const byte NUM_DEVS = 8;
 //   powerHold: 0..255 PWM power level to hold after initial timeOn; 0 = turn off after timeOn
 //   countdown: current countdown in 10ms ticks; -1..-8 = rest period, 0 = idle, >0 = active
 //   queueCount: number of pending activation requests while coil busy/resting
-DeviceParmStruct deviceParm[NUM_DEVS] = {
+DeviceParmStruct deviceParm[NUM_DEVS_SLAVE] = {
   {  5, 100, 10, 0, 0, 0 },  // CREDIT UP.   timeOn 10 (=100ms); not score-motor paced.
   {  6, 140, 10, 0, 0, 0 },  // CREDIT DOWN. timeOn 10 (=100ms); not score-motor paced.
   {  7, 150,  5, 0, 0, 0 },  // 10K UP. 5 ticks ON (50ms) + 8 ticks rest (80ms) = 130ms cycle (<147ms).
@@ -553,7 +551,7 @@ void setAllDevicesOff() {
   // Set the output latch low first, then configure as OUTPUT.
   // This avoids a brief HIGH when changing direction.
   // Called at startup; safe to call again if a fatal error requires a known-safe hardware state.
-  for (int i = 0; i < NUM_DEVS; i++) {
+  for (int i = 0; i < NUM_DEVS_SLAVE; i++) {
     deviceParm[i].countdown = 0;     // 0 = idle (not active, not resting)
     deviceParm[i].queueCount = 0;    // Clear any pending activations
     digitalWrite(deviceParm[i].pinNum, LOW);
@@ -573,7 +571,7 @@ void setPWMFrequencies() {
 void clearAllPWM() {
   // Call this after PWM timers / prescalers have been configured.
   // On PWM-capable pins this clears compare outputs; harmless on non-PWM pins.
-  for (int i = 0; i < NUM_DEVS; i++) {
+  for (int i = 0; i < NUM_DEVS_SLAVE; i++) {
     analogWrite(deviceParm[i].pinNum, 0);
   }
 }
@@ -608,7 +606,7 @@ void activateDevice(byte t_devIdx) {
   // - If active (countdown > 0) or resting (countdown < 0) the request is queued.
   // - If idle (countdown == 0) and allowed, starts initial power phase.
   // Invalid index: halts system after forcing all outputs off (fatal configuration error).
-  if (t_devIdx >= NUM_DEVS) {
+  if (t_devIdx >= NUM_DEVS_SLAVE) {
     setAllDevicesOff();
     sprintf(lcdString, "DEV NUM ERR %u", t_devIdx); pLCD2004->println(lcdString);
     while (true) { }
@@ -632,7 +630,7 @@ void updateDeviceTimers() {
   // Rest phase: countdown < 0; increments toward 0; when reaches 0:
   //   - If queued requests exist and guard conditions pass, starts next activation.
   // Idle phase: countdown == 0; may start queued activation immediately.
-  for (byte i = 0; i < NUM_DEVS; ++i) {
+  for (byte i = 0; i < NUM_DEVS_SLAVE; ++i) {
     int8_t& ct = deviceParm[i].countdown;
 
     if (ct > 0) { // Active

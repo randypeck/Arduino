@@ -1,4 +1,4 @@
-// Screamo_Master.INO Rev: 01/19/26
+// Screamo_Master.INO Rev: 01/20/26c
 // 11/12/25: Moved Right Kickout from pin 13 to pin 44 to avoid MOSFET firing twice on power-up.  Don't use MOSFET on pin 13.
 // 12/28/25: Changed flipper inputs from direct Arduino inputs to Centipede inputs.
 // 01/07/26: Added "5 Balls in Trough" switch to Centipede inputs. All switches tested and working.
@@ -8,95 +8,13 @@
 #include <Pinball_Functions.h>
 #include <Tsunami.h>
 #include <avr/wdt.h>
-#include <EEPROM.h>               // For saving and recalling score, volume, etc., to persist between power cycles.
-#include <Pinball_Descriptions.h> 
+#include <Pinball_Descriptions.h>
+#include <Pinball_Diagnostics.h>
 
 const byte THIS_MODULE = ARDUINO_MAS;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "MASTER 01/19/26";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "MASTER 01/20/26";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which makes it a global.
 // And no need to pass lcdString[] to any functions that use it!
-
-// ******************************
-// ***** EEPROM ADDRESS MAP *****
-// ******************************
-
-// NEED ADDITIONAL for both Circus and Surf last song played
-
-const int EEPROM_ADDR_LAST_SCORE              =  0;  // 2-byte unsigned addr to store 0..999 score (uses addr 0 and 1)
-
-const int EEPROM_ADDR_TSUNAMI_GAIN            = 10;  // 1-byte signed: Overall gain (-40 to 0; default -10dB.)
-const int EEPROM_ADDR_TSUNAMI_GAIN_VOICE      = 11;  // 1-byte signed: Voice gain OFFSET +/- from overall. Default 0dB.
-const int EEPROM_ADDR_TSUNAMI_GAIN_SFX        = 12;  // 1-byte signed: SFX gain OFFSET +/- from overall. Default 0dB.
-const int EEPROM_ADDR_TSUNAMI_GAIN_MUSIC      = 13;  // 1-byte signed: Music gain OFFSET +/- from overall. Default 0dB.
-const int EEPROM_ADDR_TSUNAMI_DUCK_DB         = 14;  // 1-byte signed: Ducking gain OFFSET +/- from SFX and Music when Voice playing. Default -20dB.
-
-const int EEPROM_ADDR_THEME                   = 20;  // 1-byte unsigned: Circus or Surf Rock theme (music) selection
-const int EEPROM_ADDR_LAST_CIRCUS_SONG_PLAYED = 21;  // 1-byte unsigned: Last song number played (to avoid repeats) Approx 1..19
-const int EEPROM_ADDR_LAST_SURF_SONG_PLAYED   = 22;  // 1-byte unsigned: Last song number played (to avoid repeats) Approx 1..18
-
-const int EEPROM_ADDR_LAST_MODE_PLAYED        = 25;  // 1-byte unsigned: Last Enhanced mode played: Bumper Cars, Roll-A-Ball, or Gobble Hole Shooting Gallery
-
-const int EEPROM_ADDR_BALL_SAVE_TIME          = 30;  // 1-byte unsigned: Ball save time (seconds) (0=off, 1-30 seconds) from first point scored that ball.
-
-const int EEPROM_ADDR_MODE_1_TIME             = 31;  // 1-byte unsigned: Mode 1 time limit (in seconds)
-const int EEPROM_ADDR_MODE_2_TIME             = 32;  // 1-byte unsigned: i.e. "Roll-A-Ball" mode etc.
-const int EEPROM_ADDR_MODE_3_TIME             = 33;  // 1-byte unsigned
-const int EEPROM_ADDR_MODE_4_TIME             = 34;  // 1-byte unsigned
-const int EEPROM_ADDR_MODE_5_TIME             = 35;  // 1-byte unsigned
-const int EEPROM_ADDR_MODE_6_TIME             = 36;  // 1-byte unsigned
-
-const int EEPROM_ADDR_ORIGINAL_REPLAY_1       = 40;  // 2-byte unsigned: 1st replay score for Original/Impulse mode 0..999
-const int EEPROM_ADDR_ORIGINAL_REPLAY_2       = 42;  // 2-byte unsigned
-const int EEPROM_ADDR_ORIGINAL_REPLAY_3       = 44;  // 2-byte unsigned
-const int EEPROM_ADDR_ORIGINAL_REPLAY_4       = 46;  // 2-byte unsigned
-const int EEPROM_ADDR_ORIGINAL_REPLAY_5       = 48;  // 2-byte unsigned
-
-const int EEPROM_ADDR_ENHANCED_REPLAY_1       = 50;  // 2-byte unsigned: 1st replay score for Enhanced mode 0..999
-const int EEPROM_ADDR_ENHANCED_REPLAY_2       = 52;  // 2-byte unsigned
-const int EEPROM_ADDR_ENHANCED_REPLAY_3       = 54;  // 2-byte unsigned
-const int EEPROM_ADDR_ENHANCED_REPLAY_4       = 56;  // 2-byte unsigned
-const int EEPROM_ADDR_ENHANCED_REPLAY_5       = 58;  // 2-byte unsigned
-
-// Settings categories
-const byte SETTINGS_CAT_GAME    = 0;
-const byte SETTINGS_CAT_ORIG_REPLAY = 1;
-const byte SETTINGS_CAT_ENH_REPLAY  = 2;
-const byte NUM_SETTINGS_CATEGORIES = 3;
-
-const char* settingsCategoryNames[NUM_SETTINGS_CATEGORIES] = {
-  "Game Settings",
-  "Original Replays",
-  "Enhanced Replays"
-};
-
-// Game Settings parameter indices
-const byte GAME_SETTING_THEME      = 0;
-const byte GAME_SETTING_BALL_SAVE  = 1;
-const byte GAME_SETTING_MODE_1     = 2;
-const byte GAME_SETTING_MODE_2     = 3;
-const byte GAME_SETTING_MODE_3     = 4;
-const byte GAME_SETTING_MODE_4     = 5;
-const byte GAME_SETTING_MODE_5     = 6;
-const byte GAME_SETTING_MODE_6     = 7;
-const byte NUM_GAME_SETTINGS       = 8;
-
-const char* gameSettingNames[NUM_GAME_SETTINGS] = {
-  "Music Theme",
-  "Ball Save Time",
-  "Mode 1: Bumper",
-  "Mode 2: Roll-A-Ball",
-  "Mode 3: Gobble",
-  "Mode 4: Reserved",
-  "Mode 5: Reserved",
-  "Mode 6: Reserved"
-};
-
-// Theme selection values
-const byte THEME_CIRCUS = 0;
-const byte THEME_SURF   = 1;
-
-// Replay setting constants
-const byte NUM_REPLAY_SCORES = 5;
 
 bool initialBootDisplayShown = false;
 unsigned long bootDisplayStartMs = 0;
@@ -116,72 +34,12 @@ struct LampParmStruct {
   bool stateOn;      // true = lamp ON; false = lamp OFF
 };
 
-// Define array index constants - this list is rather arbitrary and doesn't relate to device number/pin number/relay numbers.
-const byte LAMP_IDX_GI_LEFT_TOP       =  0;
-const byte LAMP_IDX_GI_LEFT_CENTER_1  =  1;  // Above left kickout
-const byte LAMP_IDX_GI_LEFT_CENTER_2  =  2;  // Below left kickout
-const byte LAMP_IDX_GI_LEFT_BOTTOM    =  3;  // Left slingshot
-const byte LAMP_IDX_GI_RIGHT_TOP      =  4;
-const byte LAMP_IDX_GI_RIGHT_CENTER_1 =  5;  // Above right kickout
-const byte LAMP_IDX_GI_RIGHT_CENTER_2 =  6;  // Below right kickout
-const byte LAMP_IDX_GI_RIGHT_BOTTOM   =  7;  // Right slingshot
-const byte LAMP_IDX_S                 =  8;  // "S" bumper lamp
-const byte LAMP_IDX_C                 =  9;  // "C" bumper lamp
-const byte LAMP_IDX_R                 = 10;  // "R" bumper lamp
-const byte LAMP_IDX_E                 = 11;  // "E" bumper lamp
-const byte LAMP_IDX_A                 = 12;  // "A" bumper lamp
-const byte LAMP_IDX_M                 = 13;  // "M" bumper lamp
-const byte LAMP_IDX_O                 = 14;  // "O" bumper lamp
-const byte LAMP_IDX_WHITE_1           = 15;
-const byte LAMP_IDX_WHITE_2           = 16;
-const byte LAMP_IDX_WHITE_3           = 17;
-const byte LAMP_IDX_WHITE_4           = 18;
-const byte LAMP_IDX_WHITE_5           = 19;
-const byte LAMP_IDX_WHITE_6           = 20;
-const byte LAMP_IDX_WHITE_7           = 21;
-const byte LAMP_IDX_WHITE_8           = 22;
-const byte LAMP_IDX_WHITE_9           = 23;
-const byte LAMP_IDX_RED_1             = 24;
-const byte LAMP_IDX_RED_2             = 25;
-const byte LAMP_IDX_RED_3             = 26;
-const byte LAMP_IDX_RED_4             = 27;
-const byte LAMP_IDX_RED_5             = 28;
-const byte LAMP_IDX_RED_6             = 29;
-const byte LAMP_IDX_RED_7             = 30;
-const byte LAMP_IDX_RED_8             = 31;
-const byte LAMP_IDX_RED_9             = 32;
-const byte LAMP_IDX_HAT_LEFT_TOP      = 33;
-const byte LAMP_IDX_HAT_LEFT_BOTTOM   = 34;
-const byte LAMP_IDX_HAT_RIGHT_TOP     = 35;
-const byte LAMP_IDX_HAT_RIGHT_BOTTOM  = 36;
-const byte LAMP_IDX_KICKOUT_LEFT      = 37;
-const byte LAMP_IDX_KICKOUT_RIGHT     = 38;
-const byte LAMP_IDX_SPECIAL           = 39;  // Special When Lit above gobble hole
-const byte LAMP_IDX_GOBBLE_1          = 40;  // "1" BALL IN HOLE
-const byte LAMP_IDX_GOBBLE_2          = 41;  // "2" BALL IN HOLE
-const byte LAMP_IDX_GOBBLE_3          = 42;  // "3" BALL IN HOLE
-const byte LAMP_IDX_GOBBLE_4          = 43;  // "4" BALL IN HOLE
-const byte LAMP_IDX_GOBBLE_5          = 44;  // "5" BALL IN HOLE
-const byte LAMP_IDX_SPOT_NUMBER_LEFT  = 45;
-const byte LAMP_IDX_SPOT_NUMBER_RIGHT = 46;
-
-const byte NUM_LAMPS                  = 47;
-
-const byte LAMP_GROUP_NONE            =  0;
-const byte LAMP_GROUP_GI              =  1;
-const byte LAMP_GROUP_BUMPER          =  2;
-const byte LAMP_GROUP_WHITE           =  3;
-const byte LAMP_GROUP_RED             =  4;
-const byte LAMP_GROUP_HAT             =  5;
-const byte LAMP_GROUP_KICKOUT         =  6;
-const byte LAMP_GROUP_GOBBLE          =  7;
-
 const bool LAMP_ON                    = true;  // Or maybe these should be LOW / HIGH?
 const bool LAMP_OFF                   = false;
 
 // Populate lampParm with pin numbers, groups, and initial state OFF
 // Pin numbers range from 0 to 63 because these lamps are on Centipede #1 (outputs)
-LampParmStruct lampParm[NUM_LAMPS] = {
+LampParmStruct lampParm[NUM_LAMPS_MASTER] = {
   // pinNum, groupNum, stateOn
   { 52, LAMP_GROUP_GI,      LAMP_OFF }, // GI_LEFT_TOP       =  0
   { 34, LAMP_GROUP_GI,      LAMP_OFF }, // GI_LEFT_CENTER_1  =  1
@@ -248,56 +106,8 @@ struct SwitchParmStruct {
   byte loopCount;     // Current count of 10ms loops with stable state (initialized to zero)
 };
 
-// Define array index constants - this list is rather arbitrary and doesn't relate to device number/pin numbers:
-// Flipper buttons are direct-wired to Arduino pins for faster response, so not included here.
-// CABINET SWITCHES:
-const byte SWITCH_IDX_START_BUTTON         =  0;
-const byte SWITCH_IDX_DIAG_1               =  1;  // Back
-const byte SWITCH_IDX_DIAG_2               =  2;  // Minus/Left
-const byte SWITCH_IDX_DIAG_3               =  3;  // Plus/Right
-const byte SWITCH_IDX_DIAG_4               =  4;  // Select
-const byte SWITCH_IDX_KNOCK_OFF            =  5;  // Quick press adds a credit; long press forces software reset (Slave and Master.)
-const byte SWITCH_IDX_COIN_MECH            =  6;
-const byte SWITCH_IDX_5_BALLS_IN_TROUGH    =  7;  // Detects if there are 5 balls present in the trough
-const byte SWITCH_IDX_BALL_IN_LIFT         =  8;  // (New) Ball present at bottom of ball lift
-const byte SWITCH_IDX_TILT_BOB             =  9;
-// PLAYFIELD SWITCHES:
-const byte SWITCH_IDX_BUMPER_S             = 10;  // 'S' bumper switch
-const byte SWITCH_IDX_BUMPER_C             = 11;  // 'C' bumper switch
-const byte SWITCH_IDX_BUMPER_R             = 12;  // 'R' bumper switch
-const byte SWITCH_IDX_BUMPER_E             = 13;  // 'E' bumper switch
-const byte SWITCH_IDX_BUMPER_A             = 14;  // 'A' bumper switch
-const byte SWITCH_IDX_BUMPER_M             = 15;  // 'M' bumper switch
-const byte SWITCH_IDX_BUMPER_O             = 16;  // 'O' bumper switch
-const byte SWITCH_IDX_KICKOUT_LEFT         = 17;
-const byte SWITCH_IDX_KICKOUT_RIGHT        = 18;
-const byte SWITCH_IDX_SLINGSHOT_LEFT       = 19;  // Two switches wired in parallel
-const byte SWITCH_IDX_SLINGSHOT_RIGHT      = 20;  // Two switches wired in parallel
-const byte SWITCH_IDX_HAT_LEFT_TOP         = 21;
-const byte SWITCH_IDX_HAT_LEFT_BOTTOM      = 22;
-const byte SWITCH_IDX_HAT_RIGHT_TOP        = 23;
-const byte SWITCH_IDX_HAT_RIGHT_BOTTOM     = 24;
-// Note that there is no "LEFT_SIDE_TARGET_1" on the playfield; starting left side targets at 2 so they match right-side target numbers.
-const byte SWITCH_IDX_LEFT_SIDE_TARGET_2   = 25;  // Long narrow side target near top left
-const byte SWITCH_IDX_LEFT_SIDE_TARGET_3   = 26;  // Upper switch above left kickout
-const byte SWITCH_IDX_LEFT_SIDE_TARGET_4   = 27;  // Lower switch above left kickout
-const byte SWITCH_IDX_LEFT_SIDE_TARGET_5   = 28;  // Below left kickout
-const byte SWITCH_IDX_RIGHT_SIDE_TARGET_1  = 29;  // Top right just below ball gate
-const byte SWITCH_IDX_RIGHT_SIDE_TARGET_2  = 30;  // Long narrow side target near top right
-const byte SWITCH_IDX_RIGHT_SIDE_TARGET_3  = 31;  // Upper switch above right kickout
-const byte SWITCH_IDX_RIGHT_SIDE_TARGET_4  = 32;  // Lower switch above right kickout
-const byte SWITCH_IDX_RIGHT_SIDE_TARGET_5  = 33;  // Below right kickout
-const byte SWITCH_IDX_GOBBLE               = 34;
-const byte SWITCH_IDX_DRAIN_LEFT           = 35;  // Left drain switch index in Centipede input shift register
-const byte SWITCH_IDX_DRAIN_CENTER         = 36;  // Center drain switch index in Centipede input shift register
-const byte SWITCH_IDX_DRAIN_RIGHT          = 37;  // Right drain switch index in Centipede input shift register
-// Flipper buttons now arrive via Centipede inputs (entries at the end of switchParm[]).
-const byte SWITCH_IDX_FLIPPER_LEFT_BUTTON  = 38;
-const byte SWITCH_IDX_FLIPPER_RIGHT_BUTTON = 39;
-const byte NUM_SWITCHES = 40;
-
 // Store Centipede #2 pin numbers (64..127) for switches (original pins + 64)
-SwitchParmStruct switchParm[NUM_SWITCHES] = {
+SwitchParmStruct switchParm[NUM_SWITCHES_MASTER] = {
   { 118,  0,  0 },  // SWITCH_IDX_START_BUTTON         =  0  (54 + 64)
   { 115,  0,  0 },  // SWITCH_IDX_DIAG_1               =  1  (51 + 64)
   { 112,  0,  0 },  // SWITCH_IDX_DIAG_2               =  2  (48 + 64)
@@ -363,25 +173,7 @@ struct DeviceParmStruct {
   byte   queueCount;    // Number of pending activation requests while coil busy/resting
 };
 
-// Define array index constants - this list is rather arbitrary and doesn't relate to device number/pin numbers:
-const byte DEV_IDX_POP_BUMPER           =  0;
-const byte DEV_IDX_KICKOUT_LEFT         =  1;
-const byte DEV_IDX_KICKOUT_RIGHT        =  2;
-const byte DEV_IDX_SLINGSHOT_LEFT       =  3;
-const byte DEV_IDX_SLINGSHOT_RIGHT      =  4;
-const byte DEV_IDX_FLIPPER_LEFT         =  5;
-const byte DEV_IDX_FLIPPER_RIGHT        =  6;
-const byte DEV_IDX_BALL_TRAY_RELEASE    =  7;  // Original
-const byte DEV_IDX_SELECTION_UNIT       =  8;  // Sound FX only
-const byte DEV_IDX_RELAY_RESET          =  9;  // Sound FX only
-const byte DEV_IDX_BALL_TROUGH_RELEASE  = 10;  // New up/down post
-const byte DEV_IDX_MOTOR_SHAKER         = 11;  // 12vdc
-const byte DEV_IDX_KNOCKER              = 12;
-const byte DEV_IDX_MOTOR_SCORE          = 13;  // 50vac; sound FX only
-
-const byte NUM_DEVS                     = 14;
-
-DeviceParmStruct deviceParm[NUM_DEVS] = {
+DeviceParmStruct deviceParm[NUM_DEVS_MASTER] = {
   // pinNum, powerInitial, timeOn(ms), powerHold, countdown, queueCount
   {  5, 255,  5,   0, 0, 0 },  // POP_BUMPER          =  0, PWM MOSFET
   {  4, 190, 10,   0, 0, 0 },  // KICKOUT_LEFT        =  1, PWM MOSFET (cannot modify PWM freq.)
@@ -401,9 +193,6 @@ DeviceParmStruct deviceParm[NUM_DEVS] = {
   { 26, 255,  5,   0, 0, 0 },  // KNOCKER             = 12, Non-PWM MOSFET; on/off only.
   { 25, 255,  0,   0, 0, 0 }   // MOTOR_SCORE         = 13, A/C SSR; on/off only; NOT PWM.
 };
-
-const byte MOTOR_SHAKER_POWER_MIN =  70;  // Minimum power needed to start shaker motor; less will stall and overheat
-const byte MOTOR_SHAKER_POWER_MAX = 140;  // Maximum power before hats trigger
 
 // ******************************************
 // ***** AUDIO TRACK STRUCTS AND CONSTS *****
@@ -835,23 +624,23 @@ const byte NUM_MUS_CIRCUS = sizeof(musTracksCircus) / sizeof(musTracksCircus[0])
 
 // SURF music (2051-2068)
 const AudioMusTrackDef musTracksSurf[] = {
-  { 2051, 134 },  // Miserlou (2m14s)
-  { 2052, 191 },  // Bumble Bee Stomp (3m11s)
+  { 2051, 131 },  // Miserlou (2m11s)
+  { 2052, 185 },  // Bumble Bee Stomp (3m5s)
   { 2053, 177 },  // Wipe Out (2m57s)
   { 2054, 103 },  // Banzai Washout (1m43s)
   { 2055, 120 },  // Hava Nagila (2m0s)
   { 2056, 130 },  // Sabre Dance (2m10s)
-  { 2057, 143 },  // Malaguena (2m23s)
-  { 2058, 129 },  // Wildfire (2m9s)
-  { 2059, 116 },  // The Wedge (1m56s)
-  { 2060, 112 },  // Exotic (1m52s)
+  { 2057, 139 },  // Malaguena (2m19s)
+  { 2058,  98 },  // Wildfire (1m38s)
+  { 2059, 113 },  // The Wedge (1m53s)
+  { 2060, 108 },  // Exotic (1m48s)
   { 2061, 182 },  // The Victor (3m2s)
-  { 2062, 116 },  // Mr. Eliminator (1m56s)
-  { 2063,  93 },  // Night Rider (1m33s)
+  { 2062, 113 },  // Mr. Eliminator (1m53s)
+  { 2063,  90 },  // Night Rider (1m30s)
   { 2064,  97 },  // The Jester (1m37s)
-  { 2065, 131 },  // Pressure (2m11s)
+  { 2065, 129 },  // Pressure (2m9s)
   { 2066, 110 },  // Shootin Beavers (1m50s)
-  { 2067, 129 },  // Riders in the Sky (2m9s)
+  { 2067, 127 },  // Riders in the Sky (2m7s)
   { 2068, 114 }   // Bumble Bee Boogie (1m54s)
 };
 const byte NUM_MUS_SURF = sizeof(musTracksSurf) / sizeof(musTracksSurf[0]);
@@ -928,31 +717,16 @@ GameStateStruct gameState;
 // 8 ticks * 10ms = 80ms rest, ensuring coils can't rapid-fire dangerously.
 const int8_t COIL_REST_TICKS = -8;
 
-// *** CREDIT TRACKING ***
-// Credits are managed by Slave; Master only queries presence (has credits or not).
-// No need to track count - just query Slave when needed.
-bool lastKnownCreditStatus = false;  // Cached result of last credit query
-unsigned long lastCreditQueryMs = 0;
-const unsigned long CREDIT_QUERY_INTERVAL_MS = 500;  // Don't spam Slave with queries
-
 // *** FLIPPER STATE ***
 // Flippers need immediate response, tracked separately from other coils.
 bool leftFlipperHeld = false;
 bool rightFlipperHeld = false;
 
-// *** START BUTTON EDGE DETECTION ***
-byte startButtonLastState = 0;
-
-// Forward declarations for functions defined later
-void initGameState();
-bool canActivateDeviceNow(byte t_devIdx);
-void activateDevice(byte t_devIdx);
-void updateDeviceTimers();
-void releaseDevice(byte t_devIdx);
-void processFlippers();
-void requestCreditStatusFromSlave();
-void handleCreditStatusResponse(bool t_hasCredits);
-bool hasCredits();
+// Knockoff button state
+unsigned long knockoffPressStartMs = 0;
+bool knockoffBeingHeld = false;
+byte knockoffLastState = 0;
+const unsigned long KNOCKOFF_RESET_HOLD_MS = 1000;     // Hold knockoff for 1s to trigger reset
 
 // ********************************************************************************************************************
 // ********************************************************************************************************************
@@ -980,8 +754,6 @@ char         msgType          = ' ';
 // 10ms scheduler
 const unsigned int LOOP_TICK_MS = 10;
 unsigned long loopNextMillis = 0;
-
-int currentScore = 0; // Current game score (0..999).
 
 bool debugOn    = false;
 
@@ -1069,6 +841,9 @@ void loop() {
     return;
   }
 
+  // Okay we're going to start our main loop. Record start time for performance monitoring.
+  unsigned long loopStartMicros = micros();
+
   loopNextMillis = now + LOOP_TICK_MS;
 
   // Update Centipede #2 switch snapshot once per tick
@@ -1108,6 +883,18 @@ void loop() {
     // If we ever land here, fall back to a safe state (attract).
     modeCurrent = MODE_ATTRACT;
     break;
+  }
+
+  // Let's see if our loop took more than 9ms (90% of our 10ms budget):
+  if (modeCurrent != MODE_DIAGNOSTIC) {
+    unsigned long loopDuration = micros() - loopStartMicros;
+    if (loopDuration > 9000) {  // Warn if >9ms
+      Serial.print("SLOW LOOP: ");
+      Serial.println(loopDuration);
+      // Show warning on row 4 without clearing other rows
+      snprintf(lcdString, LCD_WIDTH + 1, "SLOW: %lu us", loopDuration);
+      lcdPrintRow(4, lcdString);
+    }
   }
 }  // End of loop()
 
@@ -1177,647 +964,51 @@ const byte DIAG_SUITE_COILS       = 3;
 const byte DIAG_SUITE_AUDIO       = 4;
 const byte DIAG_SUITE_SETTINGS    = 5;
 
-
-byte readThemeFromEEPROM() {
-  byte theme = EEPROM.read(EEPROM_ADDR_THEME);
-  if (theme > 1) theme = THEME_CIRCUS;  // Default to Circus if invalid
-  return theme;
-}
-
-void writeThemeToEEPROM(byte theme) {
-  if (theme <= 1) {
-    EEPROM.update(EEPROM_ADDR_THEME, theme);
-  }
-}
-
-byte readBallSaveTimeFromEEPROM() {
-  byte ballSave = EEPROM.read(EEPROM_ADDR_BALL_SAVE_TIME);
-  if (ballSave > 30) ballSave = 10;  // Default to 10 seconds if invalid
-  return ballSave;
-}
-
-void writeBallSaveTimeToEEPROM(byte seconds) {
-  if (seconds <= 30) {
-    EEPROM.update(EEPROM_ADDR_BALL_SAVE_TIME, seconds);
-  }
-}
-
-byte readModeTimeFromEEPROM(byte modeNum) {
-  // modeNum: 1-6
-  if (modeNum < 1 || modeNum > 6) return 60;
-  int addr = EEPROM_ADDR_MODE_1_TIME + (modeNum - 1);
-  byte modeTime = EEPROM.read(addr);
-  if (modeTime == 0 || modeTime > 250) modeTime = 60;  // Default 60 seconds
-  return modeTime;
-}
-
-void writeModeTimeToEEPROM(byte modeNum, byte seconds) {
-  if (modeNum < 1 || modeNum > 6) return;
-  if (seconds == 0 || seconds > 250) return;
-  int addr = EEPROM_ADDR_MODE_1_TIME + (modeNum - 1);
-  EEPROM.update(addr, seconds);
-}
-
-unsigned int readReplayScoreFromEEPROM(bool enhanced, byte replayNum) {
-  // replayNum: 1-5
-  if (replayNum < 1 || replayNum > 5) return 450;
-
-  int baseAddr = enhanced ? EEPROM_ADDR_ENHANCED_REPLAY_1 : EEPROM_ADDR_ORIGINAL_REPLAY_1;
-  int addr = baseAddr + ((replayNum - 1) * 2);  // 2 bytes per score
-
-  unsigned int score = 0;
-  EEPROM.get(addr, score);
-
-  // Validate: scores are 0..999 (in 10K units)
-  if (score > 999) {
-    // Set defaults: Original 450,600,700,800,900; Enhanced 500,650,750,850,950
-    if (enhanced) {
-      score = 450 + (replayNum * 50) + 50;  // 500,600,700,800,900 -> adjusted to 500,650,800,850,950
-      if (replayNum == 2) score = 650;
-      if (replayNum == 3) score = 750;
-      if (replayNum == 4) score = 850;
-      if (replayNum == 5) score = 950;
-    }
-    else {
-      score = 400 + (replayNum * 50) + 50;  // 450,550,650,750,850 -> adjusted to 450,600,700,800,900
-      if (replayNum == 2) score = 600;
-      if (replayNum == 3) score = 700;
-      if (replayNum == 4) score = 800;
-      if (replayNum == 5) score = 900;
-    }
-  }
-  return score;
-}
-
-void writeReplayScoreToEEPROM(bool enhanced, byte replayNum, unsigned int score) {
-  if (replayNum < 1 || replayNum > 5) return;
-  if (score > 999) return;
-
-  int baseAddr = enhanced ? EEPROM_ADDR_ENHANCED_REPLAY_1 : EEPROM_ADDR_ORIGINAL_REPLAY_1;
-  int addr = baseAddr + ((replayNum - 1) * 2);
-
-  EEPROM.put(addr, score);
-}
-
 // Add the main settings suite handler function:
 
-void diagRunSettings() {
-  // Three-level navigation:
-  // Level 0: Select category (Game/Orig Replay/Enh Replay) with LEFT/RIGHT, SELECT to enter
-  // Level 1: Select parameter within category with LEFT/RIGHT, SELECT to enter adjustment
-  // Level 2: Adjust value with LEFT/RIGHT, BACK to return to parameter selection
+// Find diagEnterSelectedSuite() and REPLACE the entire function:
 
-  byte categoryIdx = 0;
-  byte paramIdx = 0;
-  byte level = 0;  // 0 = category select, 1 = param select, 2 = value adjust
-
-  char buf[LCD_WIDTH + 1];
-  bool needsRedraw = true;
-
-  while (true) {
-    // Update switch states
-    for (int i = 0; i < 4; i++) {
-      switchOldState[i] = switchNewState[i];
-      switchNewState[i] = pShiftRegister->portRead(4 + i);
-    }
-
-    // Level 0: Category selection
-    if (level == 0) {
-      if (needsRedraw) {
-        lcdShowDiagScreen(
-          "SETTINGS",
-          settingsCategoryNames[categoryIdx],
-          "-/+ category SEL=enter",
-          "BACK=exit"
-        );
-        needsRedraw = false;
-      }
-
-      if (diagButtonPressed(0)) {  // BACK
-        return;  // Exit settings suite
-      }
-      if (diagButtonPressed(1)) {  // LEFT
-        if (categoryIdx == 0) {
-          categoryIdx = NUM_SETTINGS_CATEGORIES - 1;
-        }
-        else {
-          categoryIdx--;
-        }
-        paramIdx = 0;  // Reset param when changing category
-        needsRedraw = true;
-      }
-      if (diagButtonPressed(2)) {  // RIGHT
-        categoryIdx++;
-        if (categoryIdx >= NUM_SETTINGS_CATEGORIES) {
-          categoryIdx = 0;
-        }
-        paramIdx = 0;
-        needsRedraw = true;
-      }
-      if (diagButtonPressed(3)) {  // SELECT
-        level = 1;
-        paramIdx = 0;
-        needsRedraw = true;
-      }
-      continue;
-    }
-
-    // Level 1: Parameter selection
-    if (level == 1) {
-      if (needsRedraw) {
-        if (categoryIdx == SETTINGS_CAT_GAME) {
-          // Game Settings
-          lcdClearRow(0);
-          lcdPrintRow(0, "GAME SETTINGS");
-          lcdClearRow(1);
-          lcdPrintRow(1, gameSettingNames[paramIdx]);
-
-          // Show current value on row 2
-          lcdClearRow(2);
-          if (paramIdx == GAME_SETTING_THEME) {
-            byte theme = readThemeFromEEPROM();
-            sprintf(buf, "Value: %s", theme == THEME_CIRCUS ? "Circus" : "Surf");
-          }
-          else if (paramIdx == GAME_SETTING_BALL_SAVE) {
-            byte ballSave = readBallSaveTimeFromEEPROM();
-            sprintf(buf, "Value: %d sec", ballSave);
-          }
-          else {
-            byte modeTime = readModeTimeFromEEPROM(paramIdx - GAME_SETTING_MODE_1 + 1);
-            sprintf(buf, "Value: %d sec", modeTime);
-          }
-          lcdPrintRow(2, buf);
-
-          lcdClearRow(3);
-          lcdPrintRow(3, "-/+ SEL=adj BACK=up");
-
-        }
-        else if (categoryIdx == SETTINGS_CAT_ORIG_REPLAY) {
-          // Original Replay Scores (1-5)
-          lcdClearRow(0);
-          lcdPrintRow(0, "ORIGINAL REPLAYS");
-          lcdClearRow(1);
-          sprintf(buf, "Replay %d", paramIdx + 1);
-          lcdPrintRow(1, buf);
-
-          unsigned int score = readReplayScoreFromEEPROM(false, paramIdx + 1);
-          lcdClearRow(2);
-          sprintf(buf, "Score: %d.%dM", score / 100, (score / 10) % 10);
-          lcdPrintRow(2, buf);
-
-          lcdClearRow(3);
-          lcdPrintRow(3, "-/+ SEL=adj BACK=up");
-
-        }
-        else if (categoryIdx == SETTINGS_CAT_ENH_REPLAY) {
-          // Enhanced Replay Scores (1-5)
-          lcdClearRow(0);
-          lcdPrintRow(0, "ENHANCED REPLAYS");
-          lcdClearRow(1);
-          sprintf(buf, "Replay %d", paramIdx + 1);
-          lcdPrintRow(1, buf);
-
-          unsigned int score = readReplayScoreFromEEPROM(true, paramIdx + 1);
-          lcdClearRow(2);
-          sprintf(buf, "Score: %d.%dM", score / 100, (score / 10) % 10);
-          lcdPrintRow(2, buf);
-
-          lcdClearRow(3);
-          lcdPrintRow(3, "-/+ SEL=adj BACK=up");
-        }
-
-        needsRedraw = false;
-      }
-
-      if (diagButtonPressed(0)) {  // BACK
-        level = 0;
-        needsRedraw = true;
-        continue;
-      }
-
-      if (diagButtonPressed(1)) {  // LEFT
-        byte maxParams = (categoryIdx == SETTINGS_CAT_GAME) ? NUM_GAME_SETTINGS : NUM_REPLAY_SCORES;
-        if (paramIdx == 0) {
-          paramIdx = maxParams - 1;
-        }
-        else {
-          paramIdx--;
-        }
-        needsRedraw = true;
-      }
-
-      if (diagButtonPressed(2)) {  // RIGHT
-        byte maxParams = (categoryIdx == SETTINGS_CAT_GAME) ? NUM_GAME_SETTINGS : NUM_REPLAY_SCORES;
-        paramIdx++;
-        if (paramIdx >= maxParams) {
-          paramIdx = 0;
-        }
-        needsRedraw = true;
-      }
-
-      if (diagButtonPressed(3)) {  // SELECT
-        level = 2;
-        needsRedraw = true;
-      }
-      continue;
-    }
-
-    // Level 2: Value adjustment
-    if (level == 2) {
-      if (needsRedraw) {
-        if (categoryIdx == SETTINGS_CAT_GAME) {
-          lcdClearRow(0);
-          lcdPrintRow(0, "ADJUST VALUE");
-          lcdClearRow(1);
-          lcdPrintRow(1, gameSettingNames[paramIdx]);
-          lcdClearRow(3);
-          lcdPrintRow(3, "-/+ value BACK=done");
-
-          // Display initial value on row 2
-          lcdClearRow(2);
-          if (paramIdx == GAME_SETTING_THEME) {
-            byte theme = readThemeFromEEPROM();
-            sprintf(buf, "Value: %s", theme == THEME_CIRCUS ? "Circus" : "Surf");
-          } else if (paramIdx == GAME_SETTING_BALL_SAVE) {
-            byte ballSave = readBallSaveTimeFromEEPROM();
-            sprintf(buf, "Value: %d sec", ballSave);
-          } else {
-            byte modeTime = readModeTimeFromEEPROM(paramIdx - GAME_SETTING_MODE_1 + 1);
-            sprintf(buf, "Value: %d sec", modeTime);
-          }
-          lcdPrintRow(2, buf);
-          needsRedraw = false;
-        } else {
-          lcdClearRow(0);
-          const char* title = (categoryIdx == SETTINGS_CAT_ORIG_REPLAY) ? "ORIGINAL REPLAYS" : "ENHANCED REPLAYS";
-          lcdPrintRow(0, title);
-          lcdClearRow(1);
-          sprintf(buf, "Replay %d", paramIdx + 1);
-          lcdPrintRow(1, buf);
-          lcdClearRow(3);
-          lcdPrintRow(3, "-/+ value BACK=done");
-
-          // Display initial value on row 2
-          lcdClearRow(2);
-          bool enhanced = (categoryIdx == SETTINGS_CAT_ENH_REPLAY);
-          unsigned int score = readReplayScoreFromEEPROM(enhanced, paramIdx + 1);
-          sprintf(buf, "Score: %d.%dM", score / 100, (score / 10) % 10);
-          lcdPrintRow(2, buf);
-          needsRedraw = false;
-        }
-      }
-
-      if (diagButtonPressed(0)) {  // BACK
-        level = 1;
-        needsRedraw = true;
-        continue;
-      }
-
-      if (diagButtonPressed(1)) {  // LEFT (decrease)
-        if (categoryIdx == SETTINGS_CAT_GAME) {
-          if (paramIdx == GAME_SETTING_THEME) {
-            byte theme = readThemeFromEEPROM();
-            theme = (theme == THEME_CIRCUS) ? THEME_SURF : THEME_CIRCUS;
-            writeThemeToEEPROM(theme);
-            // Update display only after value changed
-            lcdClearRow(2);
-            sprintf(buf, "Value: %s", theme == THEME_CIRCUS ? "Circus" : "Surf");
-            lcdPrintRow(2, buf);
-          } else if (paramIdx == GAME_SETTING_BALL_SAVE) {
-            byte ballSave = readBallSaveTimeFromEEPROM();
-            if (ballSave > 0) {
-              ballSave--;
-              writeBallSaveTimeToEEPROM(ballSave);
-              lcdClearRow(2);
-              sprintf(buf, "Value: %d sec", ballSave);
-              lcdPrintRow(2, buf);
-            }
-          } else {
-            byte modeNum = paramIdx - GAME_SETTING_MODE_1 + 1;
-            byte modeTime = readModeTimeFromEEPROM(modeNum);
-            if (modeTime > 10) {
-              modeTime -= 5;
-              if (modeTime < 10) modeTime = 10;
-              writeModeTimeToEEPROM(modeNum, modeTime);
-              lcdClearRow(2);
-              sprintf(buf, "Value: %d sec", modeTime);
-              lcdPrintRow(2, buf);
-            }
-          }
-        } else {
-          // Replay scores: decrement by 10 (100K)
-          bool enhanced = (categoryIdx == SETTINGS_CAT_ENH_REPLAY);
-          unsigned int score = readReplayScoreFromEEPROM(enhanced, paramIdx + 1);
-          if (score >= 10) {
-            score -= 10;
-            writeReplayScoreToEEPROM(enhanced, paramIdx + 1, score);
-            lcdClearRow(2);
-            sprintf(buf, "Score: %d.%dM", score / 100, (score / 10) % 10);
-            lcdPrintRow(2, buf);
-          }
-        }
-      }
-
-      if (diagButtonPressed(2)) {  // RIGHT (increase)
-        if (categoryIdx == SETTINGS_CAT_GAME) {
-          if (paramIdx == GAME_SETTING_THEME) {
-            byte theme = readThemeFromEEPROM();
-            theme = (theme == THEME_CIRCUS) ? THEME_SURF : THEME_CIRCUS;
-            writeThemeToEEPROM(theme);
-            // Update display only after value changed
-            lcdClearRow(2);
-            sprintf(buf, "Value: %s", theme == THEME_CIRCUS ? "Circus" : "Surf");
-            lcdPrintRow(2, buf);
-          } else if (paramIdx == GAME_SETTING_BALL_SAVE) {
-            byte ballSave = readBallSaveTimeFromEEPROM();
-            if (ballSave < 30) {
-              ballSave++;
-              writeBallSaveTimeToEEPROM(ballSave);
-              lcdClearRow(2);
-              sprintf(buf, "Value: %d sec", ballSave);
-              lcdPrintRow(2, buf);
-            }
-          } else {
-            byte modeNum = paramIdx - GAME_SETTING_MODE_1 + 1;
-            byte modeTime = readModeTimeFromEEPROM(modeNum);
-            if (modeTime < 250) {
-              modeTime += 5;
-              if (modeTime > 250) modeTime = 250;
-              writeModeTimeToEEPROM(modeNum, modeTime);
-              lcdClearRow(2);
-              sprintf(buf, "Value: %d sec", modeTime);
-              lcdPrintRow(2, buf);
-            }
-          }
-        } else {
-          // Replay scores: increment by 10 (100K)
-          bool enhanced = (categoryIdx == SETTINGS_CAT_ENH_REPLAY);
-          unsigned int score = readReplayScoreFromEEPROM(enhanced, paramIdx + 1);
-          if (score < 990) {
-            score += 10;
-            if (score > 999) score = 999;
-            writeReplayScoreToEEPROM(enhanced, paramIdx + 1, score);
-            lcdClearRow(2);
-            sprintf(buf, "Score: %d.%dM", score / 100, (score / 10) % 10);
-            lcdPrintRow(2, buf);
-          }
-        }
-      }
-      if (diagButtonPressed(3)) {  // SELECT (no action in adjust mode)
-        // Ignore; only BACK exits
-      }
-      continue;
-    }
-  }
-}
-
-// Update diagEnterSelectedSuite() to include the new suite (around line 1477):
 void diagEnterSelectedSuite() {
   lcdClear();
+
+  // Execute the selected suite
   switch (diagnosticSuiteIdx) {
   case DIAG_SUITE_VOLUME:
-    diagRunVolume();
+    diagRunVolume(pLCD2004, pShiftRegister, pTsunami,
+      &tsunamiGainDb, &tsunamiVoiceGainDb, &tsunamiSfxGainDb,
+      &tsunamiMusicGainDb, &tsunamiDuckingDb,
+      switchOldState, switchNewState);
     break;
   case DIAG_SUITE_LAMPS:
-    diagRunLamps();
+    diagRunLamps(pLCD2004, pShiftRegister, pMessage, switchOldState, switchNewState);
     break;
   case DIAG_SUITE_SWITCHES:
-    diagRunSwitches();
+    diagRunSwitches(pLCD2004, pShiftRegister, pTsunami, switchOldState, switchNewState);
     break;
   case DIAG_SUITE_COILS:
-    diagRunCoils();
+    diagRunCoils(pLCD2004, pShiftRegister, pMessage, switchOldState, switchNewState);
     break;
   case DIAG_SUITE_AUDIO:
-    diagRunAudio();
-    break;
-  case DIAG_SUITE_SETTINGS:  // NEW
-    diagRunSettings();
+    diagRunAudio(pLCD2004, pShiftRegister, pTsunami,
+      tsunamiGainDb, tsunamiVoiceGainDb, tsunamiSfxGainDb, tsunamiMusicGainDb,
+      switchOldState, switchNewState);
+  break;  case DIAG_SUITE_SETTINGS:
+    diagRunSettings(pLCD2004, pShiftRegister, switchOldState, switchNewState);
     break;
   default:
     break;
   }
+
+  // SIMPLE FIX: Just wait a bit and reset button states
+  // The suite functions already handle their own button logic
+  delay(100);  // Brief delay to let user release buttons naturally
+
+  // Reset button states so we don't immediately trigger another action
+  resetDiagButtonStates();
+
   // After suite exits, refresh the menu display
   lcdClear();
   markDiagnosticsDisplayDirty(true);
-}
-
-// *** VOLUME SUITE ***
-void diagRunVolume() {
-  // Two-level navigation:
-  // Level 1: Select parameter with +/-, press SEL to enter adjustment mode
-  // Level 2: Adjust value with +/-, press BACK to return to parameter selection
-  byte paramIdx = 0;  // 0=Master, 1=Voice, 2=SFX, 3=Music, 4=Ducking
-  const byte NUM_PARAMS = 5;
-  const char* paramNames[NUM_PARAMS] = {
-    "Master",
-    "Voice Offset",
-    "SFX Offset",
-    "Music Offset",
-    "Duck Offset"
-  };
-
-  bool adjusting = false;  // false = selecting param, true = adjusting value
-  char buf[LCD_WIDTH + 1];
-
-  while (true) {
-    // Get current value for selected parameter
-    int8_t currentVal = 0;
-    switch (paramIdx) {
-    case 0: currentVal = tsunamiGainDb; break;
-    case 1: currentVal = tsunamiVoiceGainDb; break;
-    case 2: currentVal = tsunamiSfxGainDb; break;
-    case 3: currentVal = tsunamiMusicGainDb; break;
-    case 4: currentVal = tsunamiDuckingDb; break;
-    }
-
-    // Display current state
-    if (!adjusting) {
-      // Level 1: Parameter selection
-      lcdShowDiagScreen(
-        "VOLUME ADJUST",
-        paramNames[paramIdx],
-        "-/+ param SEL=enter",
-        "BACK=exit"
-      );
-      sprintf(buf, "Value: %4d dB", (int)currentVal);
-      lcdPrintRow(3, buf);
-    } else {
-      // Level 2: Value adjustment
-      lcdShowDiagScreen(
-        "VOLUME ADJUST",
-        paramNames[paramIdx],
-        "-/+ value",
-        "BACK=done"
-      );
-      sprintf(buf, "Value: %4d dB", (int)currentVal);
-      lcdPrintRow(3, buf);
-    }
-
-    // Button handling loop
-    while (true) {
-      for (int i = 0; i < 4; i++) {
-        switchOldState[i] = switchNewState[i];
-        switchNewState[i] = pShiftRegister->portRead(4 + i);
-      }
-
-      if (diagButtonPressed(0)) {  // BACK
-        if (adjusting) {
-          // Stop any test audio when exiting adjustment mode
-          if (pTsunami != nullptr) {
-            pTsunami->stopAllTracks();
-          }
-          adjusting = false;
-          break;  // Refresh display
-        } else {
-          // Exit volume suite entirely
-          return;
-        }
-      }
-
-      if (diagButtonPressed(1)) {  // Minus
-        if (!adjusting) {
-          // Navigate to previous parameter
-          if (paramIdx == 0) {
-            paramIdx = NUM_PARAMS - 1;
-          } else {
-            paramIdx--;
-          }
-          break;  // Refresh display
-        } else {
-          // Decrease current parameter value
-          switch (paramIdx) {
-          case 0:  // Master gain
-            audioAdjustMasterGain(-1);
-            if (pTsunami != nullptr) {
-              pTsunami->stopAllTracks();
-              delay(20);
-            }
-            audioPlayTrack(2001);  // Play music snippet for feedback
-            break;
-          case 1:  // Voice offset
-            tsunamiVoiceGainDb = constrain(tsunamiVoiceGainDb - 1, -20, 20);
-            audioSaveCategoryGains();
-            if (pTsunami != nullptr) {
-              pTsunami->stopAllTracks();
-              delay(20);
-            }
-            audioPlayTrackWithCategory(351, 0);  // Play voice with voice offset
-            break;
-          case 2:  // SFX offset
-            tsunamiSfxGainDb = constrain(tsunamiSfxGainDb - 1, -20, 20);
-            audioSaveCategoryGains();
-            if (pTsunami != nullptr) {
-              pTsunami->stopAllTracks();
-              delay(20);
-            }
-            audioPlayTrackWithCategory(1121, 1);  // Play SFX with SFX offset
-            break;
-          case 3:  // Music offset
-            tsunamiMusicGainDb = constrain(tsunamiMusicGainDb - 1, -20, 20);
-            audioSaveCategoryGains();
-            if (pTsunami != nullptr) {
-              pTsunami->stopAllTracks();
-              delay(20);
-            }
-            audioPlayTrackWithCategory(2001, 2);  // Play music with music offset
-            break;
-          case 4:  // Ducking offset
-            tsunamiDuckingDb = constrain(tsunamiDuckingDb - 1, -40, 0);
-            audioSaveDucking();
-            if (pTsunami != nullptr) {
-              pTsunami->stopAllTracks();
-              delay(20);
-            }
-            // Demonstrate ducking: music with ducking applied, then voice at full
-            audioPlayTrackWithCategory(2001, 2);  // Music with music offset
-            // Apply additional ducking to music
-            int duckGain = (int)tsunamiGainDb + (int)tsunamiMusicGainDb + (int)tsunamiDuckingDb;
-            if (duckGain < -70) duckGain = -70;
-            pTsunami->trackGain(2001, duckGain);
-            delay(100);
-            audioPlayTrackWithCategory(351, 0);   // Voice at full volume (voice offset applied)
-            break;
-          }
-          break;  // Refresh display
-        }
-      }
-
-      if (diagButtonPressed(2)) {  // Plus
-        if (!adjusting) {
-          // Navigate to next parameter
-          paramIdx++;
-          if (paramIdx >= NUM_PARAMS) {
-            paramIdx = 0;
-          }
-          break;  // Refresh display
-        }
-        else {
-          // Increase current parameter value
-          switch (paramIdx) {
-          case 0:  // Master gain
-            audioAdjustMasterGain(+1);
-            if (pTsunami != nullptr) {
-              pTsunami->stopAllTracks();
-              delay(20);
-            }
-            audioPlayTrack(2001);  // Play music snippet for feedback
-            break;
-          case 1:  // Voice offset
-            tsunamiVoiceGainDb = constrain(tsunamiVoiceGainDb + 1, -20, 20);
-            audioSaveCategoryGains();
-            if (pTsunami != nullptr) {
-              pTsunami->stopAllTracks();
-              delay(20);
-            }
-            audioPlayTrack(351);  // Play voice snippet
-            break;
-          case 2:  // SFX offset
-            tsunamiSfxGainDb = constrain(tsunamiSfxGainDb + 1, -20, 20);
-            audioSaveCategoryGains();
-            if (pTsunami != nullptr) {
-              pTsunami->stopAllTracks();
-              delay(20);
-            }
-            audioPlayTrack(1121);  // Play SFX: car honk
-            break;
-          case 3:  // Music offset
-            tsunamiMusicGainDb = constrain(tsunamiMusicGainDb + 1, -20, 20);
-            audioSaveCategoryGains();
-            if (pTsunami != nullptr) {
-              pTsunami->stopAllTracks();
-              delay(20);
-            }
-            audioPlayTrack(2001);  // Play music snippet
-            break;
-          case 4:  // Ducking offset
-            tsunamiDuckingDb = constrain(tsunamiDuckingDb + 1, -40, 0);
-            audioSaveDucking();
-            if (pTsunami != nullptr) {
-              pTsunami->stopAllTracks();
-              delay(20);
-            }
-            // Demonstrate ducking: play music first, then voice over it
-            audioPlayTrack(2001);  // Start music
-            delay(100);  // Brief delay to let music start
-            audioPlayTrack(351);   // Play voice over music
-            break;
-          }
-          break;  // Refresh display
-        }
-      }
-
-      if (diagButtonPressed(3)) {  // SELECT
-        if (!adjusting) {
-          // Enter adjustment mode for selected parameter
-          adjusting = true;
-          break;  // Refresh display
-        }
-        // Ignore SELECT while adjusting (only BACK exits adjustment mode)
-      }
-
-      delay(10);
-    }
-  }
 }
 
 // New helper function to set attract lamp state
@@ -1832,7 +1023,7 @@ void setAttractLamps() {
   }
 
   // Turn off everything else on Master
-  for (byte i = 0; i < NUM_LAMPS; i++) {
+  for (byte i = 0; i < NUM_LAMPS_MASTER; i++) {
     if (lampParm[i].groupNum != LAMP_GROUP_GI &&
       lampParm[i].groupNum != LAMP_GROUP_BUMPER) {
       pShiftRegister->digitalWrite(lampParm[i].pinNum, HIGH);  // OFF
@@ -1844,451 +1035,13 @@ void setAttractLamps() {
   pMessage->sendMAStoSLVTiltLamp(false);
 }
 
-// *** LAMP SUITE ***
-void diagRunLamps() {
-  // On entry: turn ALL lamps off for clean testing
-  for (byte i = 0; i < NUM_LAMPS; i++) {
-    pShiftRegister->digitalWrite(lampParm[i].pinNum, HIGH);
-  }
-  pMessage->sendMAStoSLVScoreAbs(0);
-  pMessage->sendMAStoSLVGILamp(false);
-  pMessage->sendMAStoSLVTiltLamp(false);
-
-  const byte NUM_SLAVE_LAMPS = 29;
-  const byte NUM_TOTAL_LAMPS = NUM_LAMPS + NUM_SLAVE_LAMPS;
-  byte lampIdx = 0;
-  char buf[LCD_WIDTH + 1];
-
-  // Turn on first lamp immediately
-  if (lampIdx < NUM_LAMPS) {
-    pShiftRegister->digitalWrite(lampParm[lampIdx].pinNum, LOW);
-  }
-
-  while (true) {
-    // Line 1: Title
-    lcdPrintRow(1, "LAMP TEST");
-
-    // Line 2: Lamp ID + name
-    if (lampIdx < NUM_LAMPS) {
-      char lampName[17];
-      diagCopyProgmemString(diagLampNames, lampIdx, lampName, sizeof(lampName));
-      sprintf(buf, "M%02d: %.15s", lampIdx, lampName);
-    }
-    else {
-      byte slaveLampIdx = lampIdx - NUM_LAMPS;
-      if (slaveLampIdx < 9) {
-        sprintf(buf, "S%02d: %dK", slaveLampIdx, (slaveLampIdx + 1) * 10);
-      }
-      else if (slaveLampIdx < 18) {
-        sprintf(buf, "S%02d: %dK", slaveLampIdx, (slaveLampIdx - 8) * 100);
-      }
-      else if (slaveLampIdx < 27) {
-        sprintf(buf, "S%02d: %dM", slaveLampIdx, (slaveLampIdx - 17));
-      }
-      else if (slaveLampIdx == 27) {
-        sprintf(buf, "S27: GI");
-      }
-      else {
-        sprintf(buf, "S28: TILT");
-      }
-    }
-    lcdPrintRow(2, buf);
-
-    // Lines 3-4: Status/info (no button instructions)
-    sprintf(buf, "Lamp %d of %d", lampIdx + 1, NUM_TOTAL_LAMPS);
-    lcdPrintRow(3, buf);
-    lcdPrintRow(4, "ON");
-
-    while (true) {
-      for (int i = 0; i < 4; i++) {
-        switchOldState[i] = switchNewState[i];
-        switchNewState[i] = pShiftRegister->portRead(4 + i);
-      }
-
-      if (diagButtonPressed(0)) {  // BACK
-        if (lampIdx < NUM_LAMPS) {
-          pShiftRegister->digitalWrite(lampParm[lampIdx].pinNum, HIGH);
-        }
-        else {
-          byte slaveLampIdx = lampIdx - NUM_LAMPS;
-          if (slaveLampIdx < 27) {
-            pMessage->sendMAStoSLVScoreAbs(0);
-          }
-          else if (slaveLampIdx == 27) {
-            pMessage->sendMAStoSLVGILamp(false);
-          }
-          else {
-            pMessage->sendMAStoSLVTiltLamp(false);
-          }
-        }
-        setAttractLamps();
-        return;
-      }
-
-      if (diagButtonPressed(1)) {  // Prev
-        if (lampIdx < NUM_LAMPS) {
-          pShiftRegister->digitalWrite(lampParm[lampIdx].pinNum, HIGH);
-        }
-        else {
-          byte slaveLampIdx = lampIdx - NUM_LAMPS;
-          if (slaveLampIdx < 27) {
-            pMessage->sendMAStoSLVScoreAbs(0);
-          }
-          else if (slaveLampIdx == 27) {
-            pMessage->sendMAStoSLVGILamp(false);
-          }
-          else {
-            pMessage->sendMAStoSLVTiltLamp(false);
-          }
-        }
-
-        if (lampIdx == 0) lampIdx = NUM_TOTAL_LAMPS - 1;
-        else lampIdx--;
-
-        if (lampIdx < NUM_LAMPS) {
-          pShiftRegister->digitalWrite(lampParm[lampIdx].pinNum, LOW);
-        }
-        else {
-          byte slaveLampIdx = lampIdx - NUM_LAMPS;
-          if (slaveLampIdx < 9) {
-            pMessage->sendMAStoSLVScoreAbs(slaveLampIdx + 1);
-          }
-          else if (slaveLampIdx < 18) {
-            pMessage->sendMAStoSLVScoreAbs((slaveLampIdx - 8) * 10);
-          }
-          else if (slaveLampIdx < 27) {
-            pMessage->sendMAStoSLVScoreAbs((slaveLampIdx - 17) * 100);
-          }
-          else if (slaveLampIdx == 27) {
-            pMessage->sendMAStoSLVGILamp(true);
-          }
-          else {
-            pMessage->sendMAStoSLVTiltLamp(true);
-          }
-        }
-        break;
-      }
-
-      if (diagButtonPressed(2)) {  // Next
-        if (lampIdx < NUM_LAMPS) {
-          pShiftRegister->digitalWrite(lampParm[lampIdx].pinNum, HIGH);
-        }
-        else {
-          byte slaveLampIdx = lampIdx - NUM_LAMPS;
-          if (slaveLampIdx < 27) {
-            pMessage->sendMAStoSLVScoreAbs(0);
-          }
-          else if (slaveLampIdx == 27) {
-            pMessage->sendMAStoSLVGILamp(false);
-          }
-          else {
-            pMessage->sendMAStoSLVTiltLamp(false);
-          }
-        }
-
-        lampIdx++;
-        if (lampIdx >= NUM_TOTAL_LAMPS) lampIdx = 0;
-
-        if (lampIdx < NUM_LAMPS) {
-          pShiftRegister->digitalWrite(lampParm[lampIdx].pinNum, LOW);
-        }
-        else {
-          byte slaveLampIdx = lampIdx - NUM_LAMPS;
-          if (slaveLampIdx < 9) {
-            pMessage->sendMAStoSLVScoreAbs(slaveLampIdx + 1);
-          }
-          else if (slaveLampIdx < 18) {
-            pMessage->sendMAStoSLVScoreAbs((slaveLampIdx - 8) * 10);
-          }
-          else if (slaveLampIdx < 27) {
-            pMessage->sendMAStoSLVScoreAbs((slaveLampIdx - 17) * 100);
-          }
-          else if (slaveLampIdx == 27) {
-            pMessage->sendMAStoSLVGILamp(true);
-          }
-          else {
-            pMessage->sendMAStoSLVTiltLamp(true);
-          }
-        }
-        break;
-      }
-
-      delay(10);
-    }
-  }
-}
-
-// *** SWITCH SUITE ***
-void diagRunSwitches() {
-  byte lastSwitch = 0xFF;
-  bool lastSwitchWasClosed = false;
-  char buf[LCD_WIDTH + 1];
-
-  lcdPrintRow(1, "SWITCH TEST");
-  lcdPrintRow(2, "Waiting...");
-  lcdPrintRow(3, "");
-  lcdPrintRow(4, "");
-
-  while (true) {
-    for (int i = 0; i < 4; i++) {
-      switchOldState[i] = switchNewState[i];
-      switchNewState[i] = pShiftRegister->portRead(4 + i);
-    }
-
-    if (diagButtonPressed(0)) {
-      return;
-    }
-
-    byte closedSwitch = 0xFF;
-    for (byte sw = 0; sw < NUM_SWITCHES; sw++) {
-      if (switchClosed(sw)) {
-        closedSwitch = sw;
-        break;
-      }
-    }
-
-    if (closedSwitch != lastSwitch) {
-      if (closedSwitch == 0xFF) {
-        if (lastSwitchWasClosed) {
-          audioPlayTrack(105);
-          lastSwitchWasClosed = false;
-        }
-        lcdPrintRow(2, "Waiting...");
-        lcdPrintRow(3, "");
-        lcdPrintRow(4, "");
-      }
-      else {
-        char swName[17];
-        diagCopyProgmemString(diagSwitchNames, closedSwitch, swName, sizeof(swName));
-        sprintf(buf, "SW%02d: %.14s", closedSwitch, swName);
-        lcdPrintRow(2, buf);
-        sprintf(buf, "Switch %d of %d", closedSwitch + 1, NUM_SWITCHES);
-        lcdPrintRow(3, buf);
-        sprintf(buf, "Pin: %d", switchParm[closedSwitch].pinNum);
-        lcdPrintRow(4, buf);
-        audioPlayTrack(104);
-        lastSwitchWasClosed = true;
-      }
-      lastSwitch = closedSwitch;
-    }
-    delay(10);
-  }
-}
-
-// *** COIL/MOTOR SUITE ***
-void diagRunCoils() {
-  const byte NUM_SLAVE_DEVS = 6;
-  const byte NUM_TOTAL_DEVS = NUM_DEVS + NUM_SLAVE_DEVS;
-  byte devIdx = 0;
-  char buf[LCD_WIDTH + 1];
-  bool motorRunning = false;
-
-  while (true) {
-    // Line 1: Title
-    lcdPrintRow(1, "COIL/MOTOR TEST");
-
-    // Line 2: Device ID + name
-    if (devIdx < NUM_DEVS) {
-      char devName[17];
-      diagCopyProgmemString(diagCoilNames, devIdx, devName, sizeof(devName));
-      sprintf(buf, "M%02d: %.15s", devIdx, devName);
-    }
-    else {
-      byte slaveDevIdx = devIdx - NUM_DEVS;
-      const char* slaveDevNames[6] = {
-        "Credit Up", "Credit Down", "10K Up", "10K Bell", "100K Bell", "Select Bell"
-      };
-      sprintf(buf, "S%02d: %.13s", slaveDevIdx, slaveDevNames[slaveDevIdx]);
-    }
-    lcdPrintRow(2, buf);
-
-    // Line 3: Device counter
-    sprintf(buf, "Device %d of %d", devIdx + 1, NUM_TOTAL_DEVS);
-    lcdPrintRow(3, buf);
-
-    // Line 4: Status
-    if (motorRunning) {
-      lcdPrintRow(4, "RUNNING");
-    }
-    else {
-      lcdPrintRow(4, "Ready");
-    }
-
-    while (true) {
-      for (int i = 0; i < 4; i++) {
-        switchOldState[i] = switchNewState[i];
-        switchNewState[i] = pShiftRegister->portRead(4 + i);
-      }
-
-      if (diagButtonPressed(0)) {  // BACK
-        if (motorRunning) {
-          if (devIdx == DEV_IDX_MOTOR_SHAKER) {
-            analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, 0);
-          }
-          else if (devIdx == DEV_IDX_MOTOR_SCORE) {
-            digitalWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, LOW);
-          }
-          motorRunning = false;
-        }
-        return;
-      }
-
-      if (diagButtonPressed(1)) {  // Prev
-        if (motorRunning) {
-          if (devIdx == DEV_IDX_MOTOR_SHAKER) {
-            analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, 0);
-          }
-          else if (devIdx == DEV_IDX_MOTOR_SCORE) {
-            digitalWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, LOW);
-          }
-          motorRunning = false;
-        }
-        if (devIdx == 0) devIdx = NUM_TOTAL_DEVS - 1;
-        else devIdx--;
-        break;
-      }
-
-      if (diagButtonPressed(2)) {  // Next
-        if (motorRunning) {
-          if (devIdx == DEV_IDX_MOTOR_SHAKER) {
-            analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, 0);
-          }
-          else if (devIdx == DEV_IDX_MOTOR_SCORE) {
-            digitalWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, LOW);
-          }
-          motorRunning = false;
-        }
-        devIdx++;
-        if (devIdx >= NUM_TOTAL_DEVS) devIdx = 0;
-        break;
-      }
-
-      if (diagButtonPressed(3)) {  // Fire/Start motor
-        if (devIdx == DEV_IDX_MOTOR_SHAKER) {
-          analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, MOTOR_SHAKER_POWER_MIN);
-          motorRunning = true;
-        }
-        else if (devIdx == DEV_IDX_MOTOR_SCORE) {
-          digitalWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, HIGH);
-          motorRunning = true;
-        }
-        else if (devIdx < NUM_DEVS) {
-          analogWrite(deviceParm[devIdx].pinNum, deviceParm[devIdx].powerInitial);
-          delay(deviceParm[devIdx].timeOn * 10);
-          analogWrite(deviceParm[devIdx].pinNum, 0);
-        }
-        else {
-          byte slaveDevIdx = devIdx - NUM_DEVS;
-          switch (slaveDevIdx) {
-          case 0: pMessage->sendMAStoSLVCreditInc(1); break;
-          case 1: pMessage->sendMAStoSLVCreditDec(); break;
-          case 2: pMessage->sendMAStoSLV10KUnitPulse(); break;
-          case 3: pMessage->sendMAStoSLVBell10K(); break;
-          case 4: pMessage->sendMAStoSLVBell100K(); break;
-          case 5: pMessage->sendMAStoSLVBellSelect(); break;
-          }
-        }
-      }
-
-      if (motorRunning && !switchClosed(SWITCH_IDX_DIAG_4)) {
-        if (devIdx == DEV_IDX_MOTOR_SHAKER) {
-          analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, 0);
-        }
-        else if (devIdx == DEV_IDX_MOTOR_SCORE) {
-          digitalWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, LOW);
-        }
-        motorRunning = false;
-      }
-
-      delay(10);
-    }
-  }
-}
-
-// *** AUDIO SUITE *** (Enhanced with descriptions)
-void diagRunAudio() {
-  unsigned int trackIdx = 0;
-  char buf[LCD_WIDTH + 1];
-  char line1[21];
-  char line2[21];
-
-  while (true) {
-    // Get actual track number from PROGMEM
-    unsigned int testTrack = pgm_read_word(&diagAudioTrackNums[trackIdx]);
-
-    // Get track descriptions from PROGMEM (should match trackIdx position)
-    diagCopyProgmemString(diagAudioLine1, trackIdx, line1, sizeof(line1));
-    diagCopyProgmemString(diagAudioLine2, trackIdx, line2, sizeof(line2));
-
-    // Line 1: Track number + category
-    lcdPrintRow(1, line1);
-
-    // Line 2: Description
-    lcdPrintRow(2, line2);
-
-    // Line 3: Track counter
-    sprintf(buf, "Track %d of %d", trackIdx + 1, NUM_DIAG_AUDIO_TRACKS);
-    lcdPrintRow(3, buf);
-
-    // Line 4: Show actual track number for verification
-    lcdPrintRow(4, "Ready");
-
-    while (true) {
-      for (int i = 0; i < 4; i++) {
-        switchOldState[i] = switchNewState[i];
-        switchNewState[i] = pShiftRegister->portRead(4 + i);
-      }
-
-      if (diagButtonPressed(0)) {  // BACK
-        if (pTsunami != nullptr) {
-          pTsunami->stopAllTracks();
-        }
-        return;
-      }
-
-      if (diagButtonPressed(1)) {  // Prev track
-        if (trackIdx > 0) {
-          trackIdx--;
-        }
-        else {
-          trackIdx = NUM_DIAG_AUDIO_TRACKS - 1;
-        }
-        break;  // Refresh display
-      }
-
-      if (diagButtonPressed(2)) {  // Next track
-        trackIdx++;
-        if (trackIdx >= NUM_DIAG_AUDIO_TRACKS) {
-          trackIdx = 0;
-        }
-        break;  // Refresh display
-      }
-
-      if (diagButtonPressed(3)) {  // Play
-        if (pTsunami != nullptr) {
-          pTsunami->stopAllTracks();
-          delay(50);
-          pTsunami->trackPlaySolo(testTrack, 0, false);
-          lcdPrintRow(4, "Playing...");
-          delay(200);  // Brief visual feedback
-        }
-        else {
-          lcdPrintRow(4, "Tsunami NULL!");
-        }
-      }
-
-      delay(10);
-    }
-  }
-}
-
 // ********************************************************************************************************************************
 // ********************************************************* FUNCTIONS ************************************************************
 // ********************************************************************************************************************************
 
 void setGILamps(bool t_on) {
   // Turn on or off all G.I. lamps
-  for (int i = 0; i < NUM_LAMPS; i++) {
+  for (int i = 0; i < NUM_LAMPS_MASTER; i++) {
     if (lampParm[i].groupNum == LAMP_GROUP_GI) {
       if (t_on) {
         pShiftRegister->digitalWrite(lampParm[i].pinNum, LOW);  // Active LOW
@@ -2303,7 +1056,7 @@ bool switchClosed(byte t_switchIdx) {
   // CALLER MUST ENSURE switchNewState[] HAS BEEN UPDATED BY CALLING portRead() FOR Centipede #2 INPUTS!!!
   // Accept only a switch index (0..NUM_SWITCHES-1).  The Centipede #2 pin for that switch
   // is looked up in switchParm[].pinNum (64..127).
-  if (t_switchIdx >= NUM_SWITCHES) {
+  if (t_switchIdx >= NUM_SWITCHES_MASTER) {
     return false;
   }
   byte pin = switchParm[t_switchIdx].pinNum; // Centipede pin number 64..127
@@ -2315,7 +1068,7 @@ bool switchClosed(byte t_switchIdx) {
 }
 
 bool switchClosedImmediate(byte t_switchIdx) {
-  if (t_switchIdx >= NUM_SWITCHES || pShiftRegister == nullptr) {
+  if (t_switchIdx >= NUM_SWITCHES_MASTER || pShiftRegister == nullptr) {
     return false;
   }
   return pShiftRegister->digitalRead(switchParm[t_switchIdx].pinNum) == LOW;
@@ -2424,6 +1177,34 @@ void initGameState() {
   gameState.hasScored = false;
 }
 
+// Handle knockoff button - long press resets system
+void handleKnockoffButton() {
+  bool knockoffPressed = switchClosed(SWITCH_IDX_KNOCK_OFF);
+  bool wasPressed = (knockoffLastState != 0);
+
+  if (knockoffPressed && !wasPressed) {
+    // Just pressed - record start time
+    knockoffPressStartMs = millis();
+    knockoffBeingHeld = true;
+  } else if (knockoffPressed && knockoffBeingHeld) {
+    // Being held - check if held long enough for reset
+    unsigned long holdTime = millis() - knockoffPressStartMs;
+    if (holdTime >= KNOCKOFF_RESET_HOLD_MS) {
+      // Long hold - trigger software reset of both Master and Slave
+      snprintf(lcdString, LCD_WIDTH + 1, "RESET TRIGGERED");
+      pLCD2004->println(lcdString);
+      pMessage->sendMAStoSLVCommandReset();
+      delay(100);
+      softwareReset();
+    }
+  } else if (!knockoffPressed && wasPressed) {
+    // Just released - no action on short press (credit logic removed)
+    knockoffBeingHeld = false;
+  }
+
+  knockoffLastState = knockoffPressed ? 1 : 0;
+}
+
 // ******************************************
 // ***** COIL / DEVICE TICK HANDLER *********
 // ******************************************
@@ -2450,7 +1231,7 @@ bool canActivateDeviceNow(byte t_devIdx) {
 // If device is busy (active or resting), request is queued.
 // If idle and allowed, starts immediately.
 void activateDevice(byte t_devIdx) {
-  if (t_devIdx >= NUM_DEVS) {
+  if (t_devIdx >= NUM_DEVS_MASTER) {
     sprintf(lcdString, "DEV ERR %u", t_devIdx);
     pLCD2004->println(lcdString);
     return;
@@ -2466,7 +1247,7 @@ void activateDevice(byte t_devIdx) {
 }
 
 void updateDeviceTimers() {
-  for (byte i = 0; i < NUM_DEVS; i++) {
+  for (byte i = 0; i < NUM_DEVS_MASTER; i++) {
     if (deviceParm[i].countdown > 0) {
       deviceParm[i].countdown--;
       if (deviceParm[i].countdown == 0) {
@@ -2505,7 +1286,7 @@ void updateDeviceTimers() {
 }
 
 void releaseDevice(byte t_devIdx) {
-  if (t_devIdx >= NUM_DEVS) {
+  if (t_devIdx >= NUM_DEVS_MASTER) {
     return;
   }
   analogWrite(deviceParm[t_devIdx].pinNum, 0);
@@ -2555,32 +1336,6 @@ void processFlippers() {
     releaseDevice(DEV_IDX_FLIPPER_RIGHT);
     rightFlipperHeld = false;
   }
-}
-
-// ******************************************
-// ***** CREDIT QUERY HELPER ****************
-// ******************************************
-
-// Query Slave for credit status (non-blocking).
-// Returns cached value; actual query happens asynchronously.
-// Call this when you need to know if credits are available.
-void requestCreditStatusFromSlave() {
-  unsigned long now = millis();
-  if (now - lastCreditQueryMs >= CREDIT_QUERY_INTERVAL_MS) {
-    pMessage->sendMAStoSLVCreditStatusQuery();
-    lastCreditQueryMs = now;
-  }
-}
-
-// Called when Slave responds with credit status.
-// Updates cached value.
-void handleCreditStatusResponse(bool t_hasCredits) {
-  lastKnownCreditStatus = t_hasCredits;
-}
-
-// Check if we have credits (uses cached value).
-bool hasCredits() {
-  return lastKnownCreditStatus;
 }
 
 // ********************************************************************************************************************************
@@ -2637,7 +1392,7 @@ void lcdShowDiagScreen(const char* line1, const char* line2, const char* line3, 
 void setAllDevicesOff() {
   // Set the output latch low first, then configure as OUTPUT.
   // This avoids a brief HIGH when changing direction.
-  for (int i = 0; i < NUM_DEVS; i++) {
+  for (int i = 0; i < NUM_DEVS_MASTER; i++) {
     digitalWrite(deviceParm[i].pinNum, LOW);  // set PORTx latch to 0 while pin still INPUT
     pinMode(deviceParm[i].pinNum, OUTPUT);    // now become driven LOW
   }
@@ -2661,7 +1416,7 @@ void setPWMFrequencies() {
 void clearAllPWM() {
   // Call this after PWM timers / prescalers have been configured.
   // On PWM-capable pins this clears compare outputs; harmless on non-PWM pins.
-  for (int i = 0; i < NUM_DEVS; i++) {
+  for (int i = 0; i < NUM_DEVS_MASTER; i++) {
     analogWrite(deviceParm[i].pinNum, 0);
   }
 }
@@ -2681,10 +1436,10 @@ void softwareReset() {
 
 // Attract mode: idle lamps/audio, wait for credits/start.
 void updateModeAttract() {
-  renderAttractDisplayIfNeeded();
+  // Handle knockoff button for reset functionality only
+  handleKnockoffButton();
 
   // Volume adjustment with +/- buttons
-  // If no music playing, start a test track so user can hear the change
   if (diagButtonPressed(1)) {  // Minus
     if (audioCurrentMusicTrack == 0) {
       audioStartMusicTrack(musTracksCircus[0].trackNum, musTracksCircus[0].lengthSeconds, false);
@@ -2699,10 +1454,10 @@ void updateModeAttract() {
   }
   if (diagButtonPressed(0)) {  // Back - stop any test music
     audioStopMusic();
-    markAttractDisplayDirty();  // Refresh display to show "Screamo Ready"
+    markAttractDisplayDirty();
   }
   if (diagButtonPressed(3)) {  // Enter diagnostics
-    audioStopMusic();  // Stop test music when entering diagnostics
+    audioStopMusic();
     resetDiagButtonStates();
     modeCurrent = MODE_DIAGNOSTIC;
     diagnosticSuiteIdx = 0;
@@ -2712,31 +1467,19 @@ void updateModeAttract() {
     return;
   }
 
-  // Additional attract-mode logic (credits/start) goes here.
+  renderAttractDisplayIfNeeded();
 }
 
-// Original mode: play game using EM rules, Slave drives score reels.
 void updateModeOriginal() {
-  // TODO: implement Original rules, scoring, ball handling.
-  // For now, just a placeholder.
+  // TODO: Implement Original style gameplay
 }
 
-// Enhanced mode: modern rules on top of EM hardware.
 void updateModeEnhanced() {
-  // TODO: main Enhanced game logic here.
-
-  // Volume adjustment - music should already be playing
-  if (diagButtonPressed(1)) {
-    audioAdjustMasterGainQuiet(-1);
-  }
-  if (diagButtonPressed(2)) {
-    audioAdjustMasterGainQuiet(+1);
-  }
+  // TODO: Implement Enhanced style gameplay
 }
 
-// Impulse mode: special limited-time / impulse-play mode as per overview.
 void updateModeImpulse() {
-  // TODO: implement Impulse rules.
+  // TODO: Implement Impulse style gameplay
 }
 
 // Tilt mode: frozen game, minimal response until cleared.
@@ -2783,53 +1526,27 @@ void audioApplyTrackGain(unsigned int t_trackNum, int8_t t_categoryOffset) {
 }
 
 void audioSaveMasterGain() {
-  EEPROM.update(EEPROM_ADDR_TSUNAMI_GAIN, (byte)tsunamiGainDb);
+  diagSaveMasterGain(tsunamiGainDb);
 }
 
 void audioLoadMasterGain() {
-  byte raw = EEPROM.read(EEPROM_ADDR_TSUNAMI_GAIN);
-  int8_t val = (int8_t)raw;
-  if (val < TSUNAMI_GAIN_DB_MIN || val > TSUNAMI_GAIN_DB_MAX) {
-    tsunamiGainDb = TSUNAMI_GAIN_DB_DEFAULT;
-    audioSaveMasterGain();
-  } else {
-    tsunamiGainDb = val;
-  }
+  diagLoadMasterGain(&tsunamiGainDb);
 }
 
 void audioSaveCategoryGains() {
-  EEPROM.update(EEPROM_ADDR_TSUNAMI_GAIN_VOICE, (byte)tsunamiVoiceGainDb);
-  EEPROM.update(EEPROM_ADDR_TSUNAMI_GAIN_SFX, (byte)tsunamiSfxGainDb);
-  EEPROM.update(EEPROM_ADDR_TSUNAMI_GAIN_MUSIC, (byte)tsunamiMusicGainDb);
+  diagSaveCategoryGains(tsunamiVoiceGainDb, tsunamiSfxGainDb, tsunamiMusicGainDb);
 }
 
 void audioLoadCategoryGains() {
-  const int8_t CAT_TRIM_MIN = -20;
-  const int8_t CAT_TRIM_MAX =  20;
-  int8_t v = (int8_t)EEPROM.read(EEPROM_ADDR_TSUNAMI_GAIN_VOICE);
-  int8_t s = (int8_t)EEPROM.read(EEPROM_ADDR_TSUNAMI_GAIN_SFX);
-  int8_t m = (int8_t)EEPROM.read(EEPROM_ADDR_TSUNAMI_GAIN_MUSIC);
-  if (v < CAT_TRIM_MIN || v > CAT_TRIM_MAX) v = 0;
-  if (s < CAT_TRIM_MIN || s > CAT_TRIM_MAX) s = 0;
-  if (m < CAT_TRIM_MIN || m > CAT_TRIM_MAX) m = 0;
-  tsunamiVoiceGainDb = v;
-  tsunamiSfxGainDb   = s;
-  tsunamiMusicGainDb = m;
-  audioSaveCategoryGains();
+  diagLoadCategoryGains(&tsunamiVoiceGainDb, &tsunamiSfxGainDb, &tsunamiMusicGainDb);
 }
 
 void audioSaveDucking() {
-  EEPROM.update(EEPROM_ADDR_TSUNAMI_DUCK_DB, (byte)tsunamiDuckingDb);
+  diagSaveDucking(tsunamiDuckingDb);
 }
 
 void audioLoadDucking() {
-  int8_t val = (int8_t)EEPROM.read(EEPROM_ADDR_TSUNAMI_DUCK_DB);
-  if (val < -40 || val > 0) {
-    tsunamiDuckingDb = -20;  // Default
-    audioSaveDucking();
-  } else {
-    tsunamiDuckingDb = val;
-  }
+  diagLoadDucking(&tsunamiDuckingDb);
 }
 
 // Stop all playback on Tsunami and restore gains from EEPROM.
