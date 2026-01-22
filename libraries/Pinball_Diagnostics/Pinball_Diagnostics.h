@@ -1,4 +1,4 @@
-// PINBALL_DIAGNOSTICS.H Rev: 01/20/26.
+// PINBALL_DIAGNOSTICS.H Rev: 01/21/26.
 // Handles diagnostic test suites and EEPROM settings management for Screamo pinball
 // Simple procedural interface - pass hardware pointers to functions as needed
 
@@ -82,28 +82,22 @@ void diagRunAudio(Pinball_LCD* pLCD, Pinball_Centipede* pShift, Tsunami* pTsunam
 void diagRunSettings(Pinball_LCD* pLCD, Pinball_Centipede* pShift,
   unsigned int* pSwitchOld, unsigned int* pSwitchNew);
 
-// *** HELPER FUNCTIONS ***
-// Internal helpers used by diagnostic suites
-
-// Audio gain adjustment with display feedback
-void diagAdjustMasterGain(int8_t deltaDb, int8_t* pGainDb, Tsunami* pTsunami, Pinball_LCD* pLCD);
-void diagAdjustMasterGainQuiet(int8_t deltaDb, int8_t* pGainDb, Tsunami* pTsunami, Pinball_LCD* pLCD);
-
-// Apply gains to Tsunami hardware
-void diagApplyMasterGain(int8_t gainDb, Tsunami* pTsunami);
-void diagApplyTrackGain(unsigned int trackNum, int8_t categoryOffset, int8_t masterGain, Tsunami* pTsunami);
-
-// Save/load gains from EEPROM
-void diagSaveMasterGain(int8_t gainDb);
-void diagLoadMasterGain(int8_t* pGainDb);
-void diagSaveCategoryGains(int8_t voiceGain, int8_t sfxGain, int8_t musicGain);
-void diagLoadCategoryGains(int8_t* pVoiceGain, int8_t* pSfxGain, int8_t* pMusicGain);
-void diagSaveDucking(int8_t duckingDb);
-void diagLoadDucking(int8_t* pDuckingDb);
-
-// Play audio with category-specific gain
-void diagPlayTrackWithCategory(unsigned int trackNum, byte category,
-  int8_t masterGain, int8_t voiceGain, int8_t sfxGain, int8_t musicGain,
-  Tsunami* pTsunami);
+// ****************************************
+// ***** REMOVED: Audio functions now in Pinball_Audio.h/.cpp
+// ****************************************
+// The following function declarations have been REMOVED and moved to Pinball_Audio.h:
+// - diagAdjustMasterGain()
+// - diagAdjustMasterGainQuiet()
+// - diagApplyMasterGain() -> audioApplyMasterGain()
+// - diagApplyTrackGain() -> audioApplyTrackGain()
+// - diagSaveMasterGain() -> audioSaveMasterGain()
+// - diagLoadMasterGain() -> audioLoadMasterGain()
+// - diagSaveCategoryGains() -> audioSaveCategoryGains()
+// - diagLoadCategoryGains() -> audioLoadCategoryGains()
+// - diagSaveDucking() -> audioSaveDucking()
+// - diagLoadDucking() -> audioLoadDucking()
+// - diagPlayTrackWithCategory() -> audioPlayTrackWithCategory()
+//
+// Use #include <Pinball_Audio.h> instead
 
 #endif // PINBALL_DIAGNOSTICS_H

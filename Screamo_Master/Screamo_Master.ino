@@ -1,4 +1,4 @@
-// Screamo_Master.INO Rev: 01/20/26c
+// Screamo_Master.INO Rev: 01/21/26
 // 11/12/25: Moved Right Kickout from pin 13 to pin 44 to avoid MOSFET firing twice on power-up.  Don't use MOSFET on pin 13.
 // 12/28/25: Changed flipper inputs from direct Arduino inputs to Centipede inputs.
 // 01/07/26: Added "5 Balls in Trough" switch to Centipede inputs. All switches tested and working.
@@ -10,9 +10,11 @@
 #include <avr/wdt.h>
 #include <Pinball_Descriptions.h>
 #include <Pinball_Diagnostics.h>
+#include <Pinball_Audio.h>
+#include <Pinball_Audio_Tracks.h>  // Audio track definitions (COM, SFX, MUS)
 
 const byte THIS_MODULE = ARDUINO_MAS;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "MASTER 01/20/26";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "MASTER 01/21/26";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which makes it a global.
 // And no need to pass lcdString[] to any functions that use it!
 
@@ -194,457 +196,6 @@ DeviceParmStruct deviceParm[NUM_DEVS_MASTER] = {
   { 25, 255,  0,   0, 0, 0 }   // MOTOR_SCORE         = 13, A/C SSR; on/off only; NOT PWM.
 };
 
-// ******************************************
-// ***** AUDIO TRACK STRUCTS AND CONSTS *****
-// ******************************************
-
-// *** STRUCTURE DEFINITIONS ***
-
-// COM (Voice/Speech) tracks - need length for ducking timing, priority for preemption
-struct AudioComTrackDef {
-  unsigned int trackNum;
-  byte         lengthTenths;  // 0.1s units (16 = 1.6s, max 255 = 25.5s)
-  byte         priority;      // AUDIO_PRIORITY_LOW/MED/HIGH
-};
-
-// SFX tracks - no length needed (except special cases handled separately)
-struct AudioSfxTrackDef {
-  unsigned int trackNum;
-  byte         flags;  // AUDIO_FLAG_LOOP, etc.
-};
-
-// MUS (Music) tracks - need length for sequencing to next song
-struct AudioMusTrackDef {
-  unsigned int trackNum;
-  byte         lengthSeconds;  // seconds (max 255 = 4m15s)
-};
-
-// *** COM TRACK ARRAYS ***
-// Organized by category for easy maintenance
-
-// DIAG COM tracks (101-102, 111-117)
-const AudioComTrackDef comTracksDiag[] = {
-  { 101, 15, AUDIO_PRIORITY_MED },   // Entering diagnostics
-  { 102, 17, AUDIO_PRIORITY_MED },   // Exiting diagnostics
-  { 111,  6, AUDIO_PRIORITY_MED },   // Lamps
-  { 112,  7, AUDIO_PRIORITY_MED },   // Switches
-  { 113,  7, AUDIO_PRIORITY_MED },   // Coils
-  { 114,  7, AUDIO_PRIORITY_MED },   // Motors
-  { 115,  7, AUDIO_PRIORITY_MED },   // Music
-  { 116, 12, AUDIO_PRIORITY_MED },   // Sound Effects
-  { 117,  7, AUDIO_PRIORITY_MED }    // Comments
-};
-const byte NUM_COM_DIAG = sizeof(comTracksDiag) / sizeof(comTracksDiag[0]);
-
-// TILT WARNING COM tracks (201-205)
-const AudioComTrackDef comTracksTiltWarning[] = {
-  { 201, 26, AUDIO_PRIORITY_HIGH },  // Shake it again...
-  { 202, 15, AUDIO_PRIORITY_HIGH },  // Easy there, Hercules
-  { 203, 21, AUDIO_PRIORITY_HIGH },  // Whoa there, King Kong
-  { 204,  6, AUDIO_PRIORITY_HIGH },  // Careful
-  { 205,  6, AUDIO_PRIORITY_HIGH }   // Watch it
-};
-const byte NUM_COM_TILT_WARNING = sizeof(comTracksTiltWarning) / sizeof(comTracksTiltWarning[0]);
-
-// TILT COM tracks (212-216)
-const AudioComTrackDef comTracksTilt[] = {
-  { 212, 28, AUDIO_PRIORITY_HIGH },  // Nice goin Hercules...
-  { 213, 32, AUDIO_PRIORITY_HIGH },  // Congratulations King Kong...
-  { 214, 19, AUDIO_PRIORITY_HIGH },  // Ya broke it ya big palooka
-  { 215, 27, AUDIO_PRIORITY_HIGH },  // This aint the bumper cars...
-  { 216, 29, AUDIO_PRIORITY_HIGH }   // Tilt! Thats what ya get...
-};
-const byte NUM_COM_TILT = sizeof(comTracksTilt) / sizeof(comTracksTilt[0]);
-
-// BALL MISSING COM tracks (301-304)
-const AudioComTrackDef comTracksBallMissing[] = {
-  { 301, 55, AUDIO_PRIORITY_MED },   // Theres a ball missing...
-  { 302, 53, AUDIO_PRIORITY_MED },   // Press the ball lift rod...
-  { 303, 46, AUDIO_PRIORITY_MED },   // Shoot any balls...
-  { 304, 41, AUDIO_PRIORITY_MED }    // Theres still a ball missing...
-};
-const byte NUM_COM_BALL_MISSING = sizeof(comTracksBallMissing) / sizeof(comTracksBallMissing[0]);
-
-// START REJECT COM tracks (312-330)
-const AudioComTrackDef comTracksStartReject[] = {
-  { 312, 36, AUDIO_PRIORITY_MED },   // No free admission today...
-  { 313, 19, AUDIO_PRIORITY_MED },   // Go ask yer mommy...
-  { 314, 19, AUDIO_PRIORITY_MED },   // I told yas ta SCRAM
-  { 315, 18, AUDIO_PRIORITY_MED },   // Ya aint gettin in...
-  { 316, 19, AUDIO_PRIORITY_MED },   // Any o yous kids got a cigarette
-  { 317, 19, AUDIO_PRIORITY_MED },   // Go shake down da couch...
-  { 318, 28, AUDIO_PRIORITY_MED },   // When Is a kid...
-  { 319, 26, AUDIO_PRIORITY_MED },   // This aint a charity...
-  { 320, 25, AUDIO_PRIORITY_MED },   // Whadda I look like...
-  { 321, 27, AUDIO_PRIORITY_MED },   // No ticket, no tumblin...
-  { 322, 30, AUDIO_PRIORITY_MED },   // Quit pressin buttons...
-  { 323, 33, AUDIO_PRIORITY_MED },   // Im losin money...
-  { 324, 21, AUDIO_PRIORITY_MED },   // Ya broke, go sell a balloon
-  { 325, 24, AUDIO_PRIORITY_MED },   // Step right up, after ya pay
-  { 326, 30, AUDIO_PRIORITY_MED },   // Dis aint da soup kitchen...
-  { 327, 24, AUDIO_PRIORITY_MED },   // Beat it kid...
-  { 328, 21, AUDIO_PRIORITY_MED },   // Yas tryin ta sneak in...
-  { 329, 26, AUDIO_PRIORITY_MED },   // Come back when yas got...
-  { 330, 21, AUDIO_PRIORITY_MED }    // No coin, no joyride
-};
-const byte NUM_COM_START_REJECT = sizeof(comTracksStartReject) / sizeof(comTracksStartReject[0]);
-
-// START COM tracks (351-357, 402)
-const AudioComTrackDef comTracksStart[] = {
-  { 351, 17, AUDIO_PRIORITY_MED },   // Okay kid, youre in
-  { 352, 46, AUDIO_PRIORITY_MED },   // Press start again for a wilder ride...
-  { 353, 36, AUDIO_PRIORITY_MED },   // Keep pressin Start...
-  { 354, 19, AUDIO_PRIORITY_MED },   // Second guest, cmon in
-  { 355, 18, AUDIO_PRIORITY_MED },   // Third guest, youre in
-  { 356, 22, AUDIO_PRIORITY_MED },   // Fourth guest, through the turnstile
-  { 357, 25, AUDIO_PRIORITY_MED },   // The parks full...
-  { 402, 35, AUDIO_PRIORITY_MED }    // Hey Gang, Lets Ride the Screamo
-};
-const byte NUM_COM_START = sizeof(comTracksStart) / sizeof(comTracksStart[0]);
-
-// PLAYER COM tracks (451-454)
-const AudioComTrackDef comTracksPlayer[] = {
-  { 451, 11, AUDIO_PRIORITY_MED },   // Guest 1
-  { 452, 13, AUDIO_PRIORITY_MED },   // Guest 2
-  { 453, 13, AUDIO_PRIORITY_MED },   // Guest 3
-  { 454, 13, AUDIO_PRIORITY_MED }    // Guest 4
-};
-const byte NUM_COM_PLAYER = sizeof(comTracksPlayer) / sizeof(comTracksPlayer[0]);
-
-// BALL COM tracks (461-465)
-const AudioComTrackDef comTracksBall[] = {
-  { 461, 11, AUDIO_PRIORITY_MED },   // Ball 1
-  { 462, 10, AUDIO_PRIORITY_MED },   // Ball 2
-  { 463, 11, AUDIO_PRIORITY_MED },   // Ball 3
-  { 464, 12, AUDIO_PRIORITY_MED },   // Ball 4
-  { 465, 12, AUDIO_PRIORITY_MED }    // Ball 5
-};
-const byte NUM_COM_BALL = sizeof(comTracksBall) / sizeof(comTracksBall[0]);
-
-// BALL 1 COMMENT COM tracks (511-519) - for P2-P4 first ball
-const AudioComTrackDef comTracksBall1Comment[] = {
-  { 511, 11, AUDIO_PRIORITY_LOW },   // Climb aboard
-  { 512, 14, AUDIO_PRIORITY_LOW },   // Explore the park
-  { 513, 14, AUDIO_PRIORITY_LOW },   // Fire away
-  { 514,  9, AUDIO_PRIORITY_LOW },   // Launch it
-  { 515, 17, AUDIO_PRIORITY_LOW },   // Lets find a ride
-  { 516, 18, AUDIO_PRIORITY_LOW },   // Show em how its done
-  { 517,  8, AUDIO_PRIORITY_LOW },   // Youre up
-  { 518, 16, AUDIO_PRIORITY_LOW },   // Your turn to ride
-  { 519, 13, AUDIO_PRIORITY_LOW }    // Lets ride
-};
-const byte NUM_COM_BALL1_COMMENT = sizeof(comTracksBall1Comment) / sizeof(comTracksBall1Comment[0]);
-
-// BALL 5 COMMENT COM tracks (531-540)
-const AudioComTrackDef comTracksBall5Comment[] = {
-  { 531, 18, AUDIO_PRIORITY_LOW },   // Dont embarrass yourself
-  { 532, 16, AUDIO_PRIORITY_LOW },   // Its now or never
-  { 533, 17, AUDIO_PRIORITY_LOW },   // Last ride of the day
-  { 534, 12, AUDIO_PRIORITY_LOW },   // Make it flashy
-  { 535, 10, AUDIO_PRIORITY_LOW },   // No pressure
-  { 536, 17, AUDIO_PRIORITY_LOW },   // This ball decides it
-  { 537, 17, AUDIO_PRIORITY_LOW },   // This is it
-  { 538, 15, AUDIO_PRIORITY_LOW },   // This is your last ticket
-  { 539, 11, AUDIO_PRIORITY_LOW },   // Last ball
-  { 540, 11, AUDIO_PRIORITY_LOW }    // Make it count
-};
-const byte NUM_COM_BALL5_COMMENT = sizeof(comTracksBall5Comment) / sizeof(comTracksBall5Comment[0]);
-
-// GAME OVER COM tracks (551-577)
-const AudioComTrackDef comTracksGameOver[] = {
-  { 551, 17, AUDIO_PRIORITY_MED },   // End of the ride, thrillseeker
-  { 552, 25, AUDIO_PRIORITY_MED },   // Hope you enjoyed the ride...
-  { 553, 15, AUDIO_PRIORITY_MED },   // Its curtains for you, pal
-  { 554, 19, AUDIO_PRIORITY_MED },   // Its game over for you, dude
-  { 555, 30, AUDIO_PRIORITY_MED },   // No more rides for you...
-  { 556, 17, AUDIO_PRIORITY_MED },   // No more tickets for this ride
-  { 557, 20, AUDIO_PRIORITY_MED },   // Pack it up...
-  { 558, 47, AUDIO_PRIORITY_MED },   // Randy warned me...
-  { 559, 17, AUDIO_PRIORITY_MED },   // Rides over, move along
-  { 560, 35, AUDIO_PRIORITY_MED },   // Screamo is now closed, but please...
-  { 561, 31, AUDIO_PRIORITY_MED },   // Step right down...
-  { 562, 18, AUDIO_PRIORITY_MED },   // Thats all she wrote...
-  { 563, 33, AUDIO_PRIORITY_MED },   // The fat lady has sung...
-  { 564, 22, AUDIO_PRIORITY_MED },   // Screamo is now closed, pal
-  { 565, 15, AUDIO_PRIORITY_MED },   // Youre out of the running...
-  { 566, 20, AUDIO_PRIORITY_MED },   // The shows over for you...
-  { 567, 16, AUDIO_PRIORITY_MED },   // Youre out of tickets...
-  { 568, 40, AUDIO_PRIORITY_MED },   // Thats the end of the line...
-  { 569, 36, AUDIO_PRIORITY_MED },   // The Park is Now Closed...
-  { 570, 34, AUDIO_PRIORITY_MED },   // Screamo is parked...
-  { 571, 27, AUDIO_PRIORITY_MED },   // Youve hit the brakes...
-  { 572, 39, AUDIO_PRIORITY_MED },   // Youve reached the end...
-  { 573, 28, AUDIO_PRIORITY_MED },   // You gave it a whirl...
-  { 574, 32, AUDIO_PRIORITY_MED },   // Your Ride is Over Park Now Closed
-  { 575, 26, AUDIO_PRIORITY_MED },   // Your tickets punched...
-  { 576, 42, AUDIO_PRIORITY_MED },   // Your Ride is Over Safety Bar
-  { 577, 27, AUDIO_PRIORITY_MED }    // Your ride is over; better luck...
-};
-const byte NUM_COM_GAME_OVER = sizeof(comTracksGameOver) / sizeof(comTracksGameOver[0]);
-
-// SHOOT COM tracks (611-620)
-const AudioComTrackDef comTracksShoot[] = {
-  { 611, 37, AUDIO_PRIORITY_LOW },   // Press the Ball Lift rod...
-  { 612, 28, AUDIO_PRIORITY_LOW },   // This ride will be a lot more fun...
-  { 613, 26, AUDIO_PRIORITY_LOW },   // I recommend you consider...
-  { 614, 28, AUDIO_PRIORITY_LOW },   // Dont be afraid of the ride...
-  { 615, 23, AUDIO_PRIORITY_LOW },   // For Gods sake shoot the ball
-  { 616, 25, AUDIO_PRIORITY_LOW },   // No dilly dallying...
-  { 617, 25, AUDIO_PRIORITY_LOW },   // Now would be a good time...
-  { 618, 29, AUDIO_PRIORITY_LOW },   // Now would be an excellent time...
-  { 619, 13, AUDIO_PRIORITY_LOW },   // Shoot the Ball
-  { 620, 35, AUDIO_PRIORITY_LOW }    // This would be an excellent time... (annoyed)
-};
-const byte NUM_COM_SHOOT = sizeof(comTracksShoot) / sizeof(comTracksShoot[0]);
-
-// BALL SAVED COM tracks (631-636, 641)
-const AudioComTrackDef comTracksBallSaved[] = {
-  { 631, 25, AUDIO_PRIORITY_MED },   // Ball saved, launch again
-  { 632, 24, AUDIO_PRIORITY_MED },   // Heres another ball keep shooting
-  { 633, 20, AUDIO_PRIORITY_MED },   // Keep going shoot again
-  { 634, 21, AUDIO_PRIORITY_MED },   // Ball saved, ride again
-  { 635, 18, AUDIO_PRIORITY_MED },   // Ball saved, shoot again
-  { 636, 25, AUDIO_PRIORITY_MED },   // Ball saved; get back on the ride
-  { 641, 25, AUDIO_PRIORITY_MED }    // Heres your ball back... (mode end)
-};
-const byte NUM_COM_BALL_SAVED = sizeof(comTracksBallSaved) / sizeof(comTracksBallSaved[0]);
-
-// BALL SAVED URGENT COM tracks (651-662)
-const AudioComTrackDef comTracksBallSavedUrgent[] = {
-  { 651, 20, AUDIO_PRIORITY_MED },   // Heres another ball; send it
-  { 652, 25, AUDIO_PRIORITY_MED },   // Heres another ball; fire at will
-  { 653, 22, AUDIO_PRIORITY_MED },   // Heres a new ball; fire away
-  { 654, 21, AUDIO_PRIORITY_MED },   // Heres a new ball; quick, shoot it
-  { 655, 21, AUDIO_PRIORITY_MED },   // Heres another ball; shoot it now
-  { 656, 18, AUDIO_PRIORITY_MED },   // Hurry, shoot another ball
-  { 657, 15, AUDIO_PRIORITY_MED },   // Quick, shoot again
-  { 658, 21, AUDIO_PRIORITY_MED },   // Keep going; shoot another ball
-  { 659, 26, AUDIO_PRIORITY_MED },   // Its still your turn; keep shooting
-  { 660, 10, AUDIO_PRIORITY_MED },   // Shoot again
-  { 661, 24, AUDIO_PRIORITY_MED },   // For Gods sake shoot another ball
-  { 662, 18, AUDIO_PRIORITY_MED }    // Quick shoot another ball
-};
-const byte NUM_COM_BALL_SAVED_URGENT = sizeof(comTracksBallSavedUrgent) / sizeof(comTracksBallSavedUrgent[0]);
-
-// MULTIBALL COM tracks (671-675)
-const AudioComTrackDef comTracksMultiball[] = {
-  { 671, 34, AUDIO_PRIORITY_HIGH },  // First ball locked...
-  { 672, 36, AUDIO_PRIORITY_HIGH },  // Second ball locked...
-  { 673, 14, AUDIO_PRIORITY_HIGH },  // Multiball
-  { 674, 33, AUDIO_PRIORITY_HIGH },  // Multiball; all rides are running
-  { 675, 34, AUDIO_PRIORITY_HIGH }   // Every bumper is worth double...
-};
-const byte NUM_COM_MULTIBALL = sizeof(comTracksMultiball) / sizeof(comTracksMultiball[0]);
-
-// COMPLIMENT COM tracks (701-714)
-const AudioComTrackDef comTracksCompliment[] = {
-  { 701,  9, AUDIO_PRIORITY_LOW },   // Good shot
-  { 702, 20, AUDIO_PRIORITY_LOW },   // Awesome great work
-  { 703, 10, AUDIO_PRIORITY_LOW },   // Great job
-  { 704, 13, AUDIO_PRIORITY_LOW },   // Great shot
-  { 705, 10, AUDIO_PRIORITY_LOW },   // Youve done it
-  { 706, 15, AUDIO_PRIORITY_LOW },   // Mission accomplished
-  { 707,  9, AUDIO_PRIORITY_LOW },   // Youve done it
-  { 708, 13, AUDIO_PRIORITY_LOW },   // You did it
-  { 709, 11, AUDIO_PRIORITY_LOW },   // Amazing
-  { 710, 12, AUDIO_PRIORITY_LOW },   // Great job
-  { 711, 27, AUDIO_PRIORITY_LOW },   // Great shot nicely done
-  { 712, 11, AUDIO_PRIORITY_LOW },   // Well done
-  { 713, 11, AUDIO_PRIORITY_LOW },   // Great work
-  { 714, 20, AUDIO_PRIORITY_LOW }    // You did it great shot
-};
-const byte NUM_COM_COMPLIMENT = sizeof(comTracksCompliment) / sizeof(comTracksCompliment[0]);
-
-// DRAIN COM tracks (721-748)
-const AudioComTrackDef comTracksDrain[] = {
-  { 721, 23, AUDIO_PRIORITY_LOW },   // Did you forget where the flipper buttons are
-  { 722, 19, AUDIO_PRIORITY_LOW },   // Gravity called and you answered
-  { 723, 19, AUDIO_PRIORITY_LOW },   // Have you been to an eye doctor lately
-  { 724, 20, AUDIO_PRIORITY_LOW },   // Ill Pretend I Didnt See That
-  { 725, 11, AUDIO_PRIORITY_LOW },   // Gravity wins
-  { 726, 19, AUDIO_PRIORITY_LOW },   // Im So Sorry For Your Loss
-  { 727,  9, AUDIO_PRIORITY_LOW },   // That was quick
-  { 728, 36, AUDIO_PRIORITY_LOW },   // Maybe try playing with your eyes open...
-  { 729, 29, AUDIO_PRIORITY_LOW },   // Nice drain, was that part of your strategy
-  { 730, 20, AUDIO_PRIORITY_LOW },   // Oh I Didnt See That Coming
-  { 731, 14, AUDIO_PRIORITY_LOW },   // Oh Thats Humiliating
-  { 732, 11, AUDIO_PRIORITY_LOW },   // So long, ball
-  { 733, 12, AUDIO_PRIORITY_LOW },   // Thats gotta hurt
-  { 734, 23, AUDIO_PRIORITY_LOW },   // Thats The Saddest Thing Ive Ever Seen
-  { 735,  7, AUDIO_PRIORITY_LOW },   // Yikes
-  { 736, 17, AUDIO_PRIORITY_LOW },   // Oh that hurt to watch
-  { 737, 17, AUDIO_PRIORITY_LOW },   // That Was Just Terrible
-  { 738, 39, AUDIO_PRIORITY_LOW },   // Your ball saw the drain...
-  { 739, 11, AUDIO_PRIORITY_LOW },   // Whoopsie daisy
-  { 740, 11, AUDIO_PRIORITY_LOW },   // Get outta there, kid
-  { 741, 13, AUDIO_PRIORITY_LOW },   // Hey, wrong way
-  { 742, 14, AUDIO_PRIORITY_LOW },   // Kid not that way
-  { 743, 12, AUDIO_PRIORITY_LOW },   // Leaving so soon
-  { 744, 12, AUDIO_PRIORITY_LOW },   // No no no
-  { 745, 15, AUDIO_PRIORITY_LOW },   // Not that way
-  { 746, 11, AUDIO_PRIORITY_LOW },   // Not the exit
-  { 747,  8, AUDIO_PRIORITY_LOW },   // Oh boy
-  { 748, 11, AUDIO_PRIORITY_LOW }    // Where ya goin, kid
-};
-const byte NUM_COM_DRAIN = sizeof(comTracksDrain) / sizeof(comTracksDrain[0]);
-
-// AWARD COM tracks (811-842)
-const AudioComTrackDef comTracksAward[] = {
-  { 811, 15, AUDIO_PRIORITY_HIGH },  // Special is lit
-  { 812, 19, AUDIO_PRIORITY_HIGH },  // Reeee-plaaay
-  { 821, 32, AUDIO_PRIORITY_HIGH },  // You lit three in a row, replay
-  { 822, 44, AUDIO_PRIORITY_HIGH },  // You lit all four corners, five replays
-  { 823, 46, AUDIO_PRIORITY_HIGH },  // You lit one, two and three, twenty replays
-  { 824, 40, AUDIO_PRIORITY_HIGH },  // Five balls in the Gobble Hole - replay
-  { 831, 18, AUDIO_PRIORITY_HIGH },  // You spelled SCREAMO
-  { 841, 19, AUDIO_PRIORITY_HIGH },  // EXTRA BALL
-  { 842, 20, AUDIO_PRIORITY_HIGH }   // Heres another ball; send it
-};
-const byte NUM_COM_AWARD = sizeof(comTracksAward) / sizeof(comTracksAward[0]);
-
-// MODE COM tracks (1002-1003, 1005, 1101, 1111, 1201, 1211, 1301, 1311)
-const AudioComTrackDef comTracksMode[] = {
-  { 1002,  8, AUDIO_PRIORITY_HIGH },  // Jackpot
-  { 1003, 13, AUDIO_PRIORITY_HIGH },  // Ten seconds left
-  { 1005,  8, AUDIO_PRIORITY_HIGH },  // Time
-  { 1101, 93, AUDIO_PRIORITY_HIGH },  // Lets ride the Bumper Cars
-  { 1111, 18, AUDIO_PRIORITY_MED },   // Keep smashing the bumpers
-  { 1201, 82, AUDIO_PRIORITY_HIGH },  // Lets play Roll-A-Ball
-  { 1211, 18, AUDIO_PRIORITY_MED },   // Keep rolling over the hats
-  { 1301, 71, AUDIO_PRIORITY_HIGH },  // Lets visit the Shooting Gallery
-  { 1311, 19, AUDIO_PRIORITY_MED }    // Keep shooting at the Gobble Hole
-};
-const byte NUM_COM_MODE = sizeof(comTracksMode) / sizeof(comTracksMode[0]);
-
-// *** SFX TRACK ARRAY ***
-const AudioSfxTrackDef sfxTracks[] = {
-  // DIAG SFX
-  { 103, AUDIO_FLAG_NONE },   // Diagnostics continuous tone
-  { 104, AUDIO_FLAG_NONE },   // Switch Close 1000hz
-  { 105, AUDIO_FLAG_NONE },   // Switch Open 500hz
-  // TILT SFX
-  { 211, AUDIO_FLAG_NONE },   // Buzzer
-  // START SFX
-  { 311, AUDIO_FLAG_NONE },   // Car honk aoooga
-  { 401, AUDIO_FLAG_NONE },   // Scream player 1
-  { 403, AUDIO_FLAG_LOOP },   // Lift, loopable (120s)
-  { 404, AUDIO_FLAG_NONE },   // First drop multi-screams
-  // MODE COMMON SFX
-  { 1001, AUDIO_FLAG_NONE },  // School Bell stinger start
-  { 1004, AUDIO_FLAG_NONE },  // Timer countdown
-  { 1006, AUDIO_FLAG_NONE },  // Factory whistle stinger end
-  // MODE BUMPER CAR HIT SFX (1121-1133)
-  { 1121, AUDIO_FLAG_NONE },  // Car honk
-  { 1122, AUDIO_FLAG_NONE },  // Car honk la cucaracha
-  { 1123, AUDIO_FLAG_NONE },  // Car honk 2x
-  { 1124, AUDIO_FLAG_NONE },  // Car honk 2x
-  { 1125, AUDIO_FLAG_NONE },  // Car honk 2x
-  { 1126, AUDIO_FLAG_NONE },  // Car honk 2x
-  { 1127, AUDIO_FLAG_NONE },  // Car honk 2x
-  { 1128, AUDIO_FLAG_NONE },  // Car honk 2x rubber
-  { 1129, AUDIO_FLAG_NONE },  // Car honk 2x rubber
-  { 1130, AUDIO_FLAG_NONE },  // Car honk aoooga
-  { 1131, AUDIO_FLAG_NONE },  // Car honk diesel train
-  { 1132, AUDIO_FLAG_NONE },  // Car honk
-  { 1133, AUDIO_FLAG_NONE },  // Car honk truck air horn
-  // MODE BUMPER CAR MISS SFX (1141-1148)
-  { 1141, AUDIO_FLAG_NONE },  // Car crash
-  { 1142, AUDIO_FLAG_NONE },  // Car crash
-  { 1143, AUDIO_FLAG_NONE },  // Car crash
-  { 1144, AUDIO_FLAG_NONE },  // Car crash
-  { 1145, AUDIO_FLAG_NONE },  // Car crash x
-  { 1146, AUDIO_FLAG_NONE },  // Cat screech
-  { 1147, AUDIO_FLAG_NONE },  // Car crash x
-  { 1148, AUDIO_FLAG_NONE },  // Car crash x
-  // MODE BUMPER CAR ACHIEVED SFX
-  { 1197, AUDIO_FLAG_NONE },  // Bell ding ding ding
-  // MODE ROLL-A-BALL HIT SFX (1221-1225)
-  { 1221, AUDIO_FLAG_NONE },  // Bowling strike
-  { 1222, AUDIO_FLAG_NONE },  // Bowling strike
-  { 1223, AUDIO_FLAG_NONE },  // Bowling strike
-  { 1224, AUDIO_FLAG_NONE },  // Bowling strike
-  { 1225, AUDIO_FLAG_NONE },  // Bowling strike
-  // MODE ROLL-A-BALL MISS SFX (1241-1254)
-  { 1241, AUDIO_FLAG_NONE },  // Glass
-  { 1242, AUDIO_FLAG_NONE },  // Glass
-  { 1243, AUDIO_FLAG_NONE },  // Glass
-  { 1244, AUDIO_FLAG_NONE },  // Glass
-  { 1245, AUDIO_FLAG_NONE },  // Glass
-  { 1246, AUDIO_FLAG_NONE },  // Glass
-  { 1247, AUDIO_FLAG_NONE },  // Glass
-  { 1248, AUDIO_FLAG_NONE },  // Glass
-  { 1249, AUDIO_FLAG_NONE },  // Glass
-  { 1250, AUDIO_FLAG_NONE },  // Glass
-  { 1251, AUDIO_FLAG_NONE },  // Glass
-  { 1252, AUDIO_FLAG_NONE },  // Glass
-  { 1253, AUDIO_FLAG_NONE },  // Glass
-  { 1254, AUDIO_FLAG_NONE },  // Goat sound
-  // MODE ROLL-A-BALL ACHIEVED SFX
-  { 1297, AUDIO_FLAG_NONE },  // Ta da
-  // MODE GOBBLE HOLE HIT SFX
-  { 1321, AUDIO_FLAG_NONE },  // Slide whistle down
-  // MODE GOBBLE HOLE MISS SFX (1341-1348)
-  { 1341, AUDIO_FLAG_NONE },  // Ricochet
-  { 1342, AUDIO_FLAG_NONE },  // Ricochet
-  { 1343, AUDIO_FLAG_NONE },  // Ricochet
-  { 1344, AUDIO_FLAG_NONE },  // Ricochet
-  { 1345, AUDIO_FLAG_NONE },  // Ricochet
-  { 1346, AUDIO_FLAG_NONE },  // Ricochet
-  { 1347, AUDIO_FLAG_NONE },  // Ricochet
-  { 1348, AUDIO_FLAG_NONE },  // Ricochet
-  // MODE GOBBLE HOLE ACHIEVED SFX
-  { 1397, AUDIO_FLAG_NONE }   // Applause mixed
-};
-const byte NUM_SFX_TRACKS = sizeof(sfxTracks) / sizeof(sfxTracks[0]);
-
-// *** MUSIC TRACK ARRAYS ***
-// CIRCUS music (2001-2019)
-const AudioMusTrackDef musTracksCircus[] = {
-  { 2001, 147 },  // Barnum and Baileys Favorite (2m27s)
-  { 2002, 156 },  // Rensaz Race March (2m36s)
-  { 2003,  77 },  // Twelfth Street Rag (1m17s)
-  { 2004, 195 },  // Chariot Race, Ben Hur March (3m15s)
-  { 2005,  58 },  // Organ Grinders Serenade (0m58s)
-  { 2006, 155 },  // Hands Across the Sea (2m35s)
-  { 2007, 132 },  // Field Artillery March (2m12s)
-  { 2008, 102 },  // You Flew Over (1m42s)
-  { 2009,  65 },  // Unter dem Doppeladler (1m5s)
-  { 2010, 100 },  // Ragtime Cowboy Joe (1m40s)
-  { 2011, 183 },  // Billboard March (3m3s)
-  { 2012, 110 },  // El capitan (1m50s)
-  { 2013, 119 },  // Smiles (1m59s)
-  { 2014, 151 },  // Spirit of St. Louis March (2m31s)
-  { 2015, 115 },  // The Free Lance (1m55s)
-  { 2016, 139 },  // The Roxy March (2m19s)
-  { 2017, 119 },  // The Stars and Stripes Forever (1m59s)
-  { 2018, 141 },  // The Washington Post (2m21s)
-  { 2019, 154 }   // Bombasto (2m34s)
-};
-const byte NUM_MUS_CIRCUS = sizeof(musTracksCircus) / sizeof(musTracksCircus[0]);
-
-// SURF music (2051-2068)
-const AudioMusTrackDef musTracksSurf[] = {
-  { 2051, 131 },  // Miserlou (2m11s)
-  { 2052, 185 },  // Bumble Bee Stomp (3m5s)
-  { 2053, 177 },  // Wipe Out (2m57s)
-  { 2054, 103 },  // Banzai Washout (1m43s)
-  { 2055, 120 },  // Hava Nagila (2m0s)
-  { 2056, 130 },  // Sabre Dance (2m10s)
-  { 2057, 139 },  // Malaguena (2m19s)
-  { 2058,  98 },  // Wildfire (1m38s)
-  { 2059, 113 },  // The Wedge (1m53s)
-  { 2060, 108 },  // Exotic (1m48s)
-  { 2061, 182 },  // The Victor (3m2s)
-  { 2062, 113 },  // Mr. Eliminator (1m53s)
-  { 2063,  90 },  // Night Rider (1m30s)
-  { 2064,  97 },  // The Jester (1m37s)
-  { 2065, 129 },  // Pressure (2m9s)
-  { 2066, 110 },  // Shootin Beavers (1m50s)
-  { 2067, 127 },  // Riders in the Sky (2m7s)
-  { 2068, 114 }   // Bumble Bee Boogie (1m54s)
-};
-const byte NUM_MUS_SURF = sizeof(musTracksSurf) / sizeof(musTracksSurf[0]);
-
 // *** AUDIO PLAYBACK STATE ***
 unsigned int audioCurrentComTrack   = 0;  // Currently playing COM track (0 = none)
 unsigned int audioCurrentSfxTrack   = 0;  // Currently playing SFX track (0 = none)
@@ -655,9 +206,7 @@ unsigned long audioLiftLoopStartMillis = 0;  // When lift loop started (for re-l
 
 // *** TSUNAMI GAIN SETTINGS ***
 // Master gain can range from -40dB to 0dB (full level); defaults to -10dB to allow some headroom.
-const int8_t TSUNAMI_GAIN_DB_DEFAULT = -10;
-const int8_t TSUNAMI_GAIN_DB_MIN     = -40;
-const int8_t TSUNAMI_GAIN_DB_MAX     =   0;
+// NOTE: Constants now defined in Pinball_Audio.h to avoid duplication
 
 int8_t tsunamiGainDb      = TSUNAMI_GAIN_DB_DEFAULT;  // Persisted Tsunami master gain
 int8_t tsunamiVoiceGainDb = 0;  // Per-category relative gain (COM/Voice)
@@ -712,6 +261,35 @@ struct GameStateStruct {
 
 GameStateStruct gameState;
 
+// Start button state
+struct StartButtonState {
+  byte pressCount;           // Presses in current window
+  unsigned long firstPressMs; // When window opened
+  unsigned long lastPressMs;  // Last press time
+  bool windowOpen;           // True if counting presses
+};
+
+StartButtonState startButtonState = { 0, 0, 0, false };
+
+// Start button timing constants
+const unsigned long START_DEBOUNCE_MS = 100;     // Minimum time between presses
+
+byte startButtonLastState = 0;  // For edge detection
+
+// ******************************************
+// ***** START BUTTON TAP DETECTION *********
+// ******************************************
+
+// Start button tap detection window
+const unsigned long START_STYLE_DETECT_WINDOW_MS = 500;  // 500ms to detect double-tap for Enhanced
+
+// Start button tap detection state (constants defined in Pinball_Consts.h)
+byte currentStartTapState = START_TAP_IDLE;
+
+unsigned long startTapFirstPressMs = 0;
+bool startGameRequested = false;
+byte startTapLastButtonState = 0;
+
 // Coil rest period: after timeOn expires and powerHold==0, coil enters rest for this many ticks.
 // Negative countdown values indicate rest period; 0 = idle; positive = active.
 // 8 ticks * 10ms = 80ms rest, ensuring coils can't rapid-fire dangerously.
@@ -727,6 +305,15 @@ unsigned long knockoffPressStartMs = 0;
 bool knockoffBeingHeld = false;
 byte knockoffLastState = 0;
 const unsigned long KNOCKOFF_RESET_HOLD_MS = 1000;     // Hold knockoff for 1s to trigger reset
+
+// ******************************************
+// ***** CREDIT SYSTEM ********************
+// ******************************************
+
+// Credits are managed by Slave - we query/command via RS485
+// No local credit tracking needed
+
+byte coinLastState = 0;  // For edge detection
 
 // ********************************************************************************************************************
 // ********************************************************************************************************************
@@ -748,7 +335,7 @@ Pinball_Centipede* pShiftRegister = nullptr;  // Only need ONE object for one or
 Tsunami* pTsunami = nullptr;  // Tsunami WAV player object pointer
 
 // *** MISC CONSTANTS AND GLOBALS ***
-byte         modeCurrent      = MODE_ATTRACT;  // MODE_UNDEFINED;  Just to get going; maybe change to ATTRACT later.
+byte         modeCurrent      = MODE_ATTRACT;
 char         msgType          = ' ';
 
 // 10ms scheduler
@@ -843,7 +430,6 @@ void loop() {
 
   // Okay we're going to start our main loop. Record start time for performance monitoring.
   unsigned long loopStartMicros = micros();
-
   loopNextMillis = now + LOOP_TICK_MS;
 
   // Update Centipede #2 switch snapshot once per tick
@@ -852,11 +438,20 @@ void loop() {
     switchNewState[i] = pShiftRegister->portRead(4 + i);  // ports 4..7 => inputs
   }
 
-  // Process device timers FIRST - ensures coil state is current before any activation attempts
+  // ALWAYS process (every tick, all modes except diagnostic)
   updateDeviceTimers();
-
-  // Process flippers immediately for responsive feel (every tick, regardless of mode)
   processFlippers();
+
+  // Process these in all modes (including diagnostic for safety reset)
+  processKnockoffButton();
+
+  // Process coin entry in Attract and Game modes only
+  if (modeCurrent == MODE_ATTRACT ||
+    modeCurrent == MODE_ORIGINAL ||
+    modeCurrent == MODE_ENHANCED ||
+    modeCurrent == MODE_IMPULSE) {
+    processCoinEntry();
+  }
 
   // Dispatch by mode
   switch (modeCurrent) {
@@ -864,13 +459,9 @@ void loop() {
     updateModeAttract();
     break;
   case MODE_ORIGINAL:
-    updateModeOriginal();
-    break;
   case MODE_ENHANCED:
-    updateModeEnhanced();
-    break;
   case MODE_IMPULSE:
-    updateModeImpulse();
+    updateModeGame();
     break;
   case MODE_TILT:
     updateModeTilt();
@@ -1177,8 +768,8 @@ void initGameState() {
   gameState.hasScored = false;
 }
 
-// Handle knockoff button - long press resets system
-void handleKnockoffButton() {
+// Process knockoff button - long press resets system (runs every tick, all modes)
+void processKnockoffButton() {
   bool knockoffPressed = switchClosed(SWITCH_IDX_KNOCK_OFF);
   bool wasPressed = (knockoffLastState != 0);
 
@@ -1198,11 +789,256 @@ void handleKnockoffButton() {
       softwareReset();
     }
   } else if (!knockoffPressed && wasPressed) {
-    // Just released - no action on short press (credit logic removed)
+    // Just released - short press gives a credit
+    pMessage->sendMAStoSLVCreditInc(1);
     knockoffBeingHeld = false;
   }
 
   knockoffLastState = knockoffPressed ? 1 : 0;
+}
+
+// ******************************************
+// ***** COIN ENTRY PROCESSING **************
+// ******************************************
+
+// Process coin switch - tell Slave to add credit on closure edge
+void processCoinEntry() {
+  bool coinClosed = switchClosed(SWITCH_IDX_COIN_MECH);
+  bool wasClosed = (coinLastState != 0);
+
+  if (coinClosed && !wasClosed) {
+    // Coin switch just closed - tell Slave to add a credit
+    pMessage->sendMAStoSLVCreditInc(1);
+
+    // Play coin sound
+    // TODO: audioPlayCoinSound();
+
+    // Update display if in attract mode (query Slave for actual count)
+    if (modeCurrent == MODE_ATTRACT) {
+      // We don't display credit count - Slave handles that on its own display
+      // Could show a brief "CREDIT ADDED" message
+      lcdPrintRow(2, "CREDIT ADDED");
+      delay(500);
+      markAttractDisplayDirty();
+    }
+  }
+
+  coinLastState = coinClosed ? 1 : 0;
+}
+
+// ******************************************
+// ***** START BUTTON PROCESSING ************
+// ******************************************
+
+// Process start button tap detection and player addition
+// Called every tick from updateModeAttract()
+void processStartButtonTapDetection() {
+  bool startPressed = switchClosed(SWITCH_IDX_START_BUTTON);
+  bool wasPressed = (startTapLastButtonState != 0);
+  unsigned long now = millis();
+
+  // Detect press edge (button just pressed)
+  if (startPressed && !wasPressed) {
+
+    // Debounce: ignore if too soon after last press
+    if (now - startButtonState.lastPressMs < START_DEBOUNCE_MS) {
+      startTapLastButtonState = 1;
+      return;
+    }
+    startButtonState.lastPressMs = now;
+
+    // Handle based on current state
+    switch (currentStartTapState) {
+
+    case START_TAP_IDLE:
+      // First press - start detection window
+      currentStartTapState = START_TAP_WAITING;
+      startTapFirstPressMs = now;
+      startGameRequested = false;
+      break;
+
+    case START_TAP_WAITING:
+      // Second press within 500ms window - Enhanced style!
+      if (now - startTapFirstPressMs < START_STYLE_DETECT_WINDOW_MS) {
+        // Query credits
+        pMessage->sendMAStoSLVCreditStatusQuery();
+        delay(10);  // Brief wait for response
+
+        bool creditsAvailable = false;
+        bool gotResponse = false;
+        unsigned long queryStart = millis();
+
+        while (millis() - queryStart < 50) {
+          byte msgType = pMessage->available();
+          if (msgType == RS485_TYPE_SLV_TO_MAS_CREDIT_STATUS) {
+            pMessage->getSLVtoMASCreditStatus(&creditsAvailable);
+            gotResponse = true;
+            break;
+          }
+          delay(1);
+        }
+
+        if (gotResponse && creditsAvailable) {
+          // Deduct credit and start Enhanced style
+          pMessage->sendMAStoSLVCreditDec();
+          currentStartTapState = START_TAP_ENHANCED;
+          startButtonState.pressCount = 1;  // Player 1
+          startGameRequested = true;
+
+          // Play SCREAM sound effect
+          // TODO: Play scream
+
+          lcdClear();
+          lcdPrintRow(1, "ENHANCED STYLE");
+          lcdPrintRow(2, "PLAYER 1");
+        } else {
+          // No credits - play horn and announcement
+          // TODO: Play Aoooga horn
+          // TODO: Play "no credit" announcement
+          lcdPrintRow(2, "INSERT COIN");
+          currentStartTapState = START_TAP_IDLE;
+        }
+      }
+      break;
+
+    case START_TAP_ORIGINAL:
+      // Second press AFTER 500ms - switch to Impulse style
+      currentStartTapState = START_TAP_IMPULSE;
+      lcdPrintRow(1, "IMPULSE STYLE");
+      // No additional credit deducted
+      break;
+
+    case START_TAP_ENHANCED:
+      // Additional Start press in Enhanced - try to add player
+      if (startButtonState.pressCount < 4) {
+        // Query credits
+        pMessage->sendMAStoSLVCreditStatusQuery();
+        delay(10);
+
+        bool creditsAvailable = false;
+        bool gotResponse = false;
+        unsigned long queryStart = millis();
+
+        while (millis() - queryStart < 50) {
+          byte msgType = pMessage->available();
+          if (msgType == RS485_TYPE_SLV_TO_MAS_CREDIT_STATUS) {
+            pMessage->getSLVtoMASCreditStatus(&creditsAvailable);
+            gotResponse = true;
+            break;
+          }
+          delay(1);
+        }
+
+        if (gotResponse && creditsAvailable) {
+          // Deduct credit and add player
+          pMessage->sendMAStoSLVCreditDec();
+          startButtonState.pressCount++;
+
+          // Duck music and play appropriate announcement
+          // TODO: Duck music if playing
+          switch (startButtonState.pressCount) {
+          case 2:
+            // TODO: Play "Second guest, c'mon in!"
+            break;
+          case 3:
+            // TODO: Play "Third guest, you're in!"
+            break;
+          case 4:
+            // TODO: Play "Fourth guest, through the turnstile!"
+            break;
+          }
+
+          snprintf(lcdString, LCD_WIDTH + 1, "PLAYER %d ADDED", startButtonState.pressCount);
+          lcdPrintRow(2, lcdString);
+        } else {
+          // No credits - play horn and announcement
+          // TODO: Play Aoooga horn
+          // TODO: Play "no credit" announcement
+          lcdPrintRow(2, "NO CREDITS");
+        }
+      } else {
+        // Already 4 players
+        // TODO: Play "park's full" announcement
+        lcdPrintRow(2, "4 PLAYERS MAX");
+      }
+      break;
+
+    case START_TAP_IMPULSE:
+      // Ignore additional presses in Impulse mode
+      break;
+    }
+  }
+
+  // Check if 500ms window has expired (transition from WAITING to ORIGINAL)
+  if (currentStartTapState == START_TAP_WAITING) {
+    if (now - startTapFirstPressMs >= START_STYLE_DETECT_WINDOW_MS) {
+      // 500ms expired, no 2nd tap - Original style
+
+      // Query credits
+      pMessage->sendMAStoSLVCreditStatusQuery();
+      delay(10);
+
+      bool creditsAvailable = false;
+      bool gotResponse = false;
+      unsigned long queryStart = millis();
+
+      while (millis() - queryStart < 50) {
+        byte msgType = pMessage->available();
+        if (msgType == RS485_TYPE_SLV_TO_MAS_CREDIT_STATUS) {
+          pMessage->getSLVtoMASCreditStatus(&creditsAvailable);
+          gotResponse = true;
+          break;
+        }
+        delay(1);
+      }
+
+      if (gotResponse && creditsAvailable) {
+        // Deduct credit and start Original style
+        pMessage->sendMAStoSLVCreditDec();
+        currentStartTapState = START_TAP_ORIGINAL;
+        startButtonState.pressCount = 1;  // Single player
+        startGameRequested = true;
+
+        lcdClear();
+        lcdPrintRow(1, "ORIGINAL STYLE");
+        lcdPrintRow(2, "PLAYER 1");
+      } else {
+        // No credits - reset
+        currentStartTapState = START_TAP_IDLE;
+      }
+    }
+  }
+
+  startTapLastButtonState = startPressed ? 1 : 0;
+}
+
+// Check if we should start a game (called from updateModeAttract)
+bool shouldStartGame() {
+  if (startGameRequested) {
+    startGameRequested = false;
+    return true;
+  }
+  return false;
+}
+
+// Check if first point has been scored (called when score changes)
+// This closes the Enhanced player addition window
+void checkFirstPointScored() {
+  if (currentStartTapState == START_TAP_ENHANCED && !gameState.hasScored) {
+    // First point scored in Enhanced mode - close player addition window
+    gameState.hasScored = true;
+
+    // TODO: Close Ball Tray
+    // TODO: Stop Ball 1 Lift sounds if playing
+    // TODO: Play First Hill Screaming sounds
+    // TODO: Increase Shaker Motor speed
+    // TODO: Start first music track
+
+    lcdPrintRow(3, "Game started!");
+
+    // Reset tap detection state
+    currentStartTapState = START_TAP_IDLE;
+  }
 }
 
 // ******************************************
@@ -1436,8 +1272,51 @@ void softwareReset() {
 
 // Attract mode: idle lamps/audio, wait for credits/start.
 void updateModeAttract() {
-  // Handle knockoff button for reset functionality only
-  handleKnockoffButton();
+  // Process start button tap detection
+  processStartButtonTapDetection();
+
+  // Check if we should start a game
+  if (shouldStartGame()) {
+    // Determine mode based on tap state
+    byte numPlayers = startButtonState.pressCount;
+
+    switch (currentStartTapState) {
+    case START_TAP_ORIGINAL:
+      modeCurrent = MODE_ORIGINAL;
+      break;
+    case START_TAP_ENHANCED:
+      modeCurrent = MODE_ENHANCED;
+      break;
+    case START_TAP_IMPULSE:
+      modeCurrent = MODE_IMPULSE;
+      break;
+    default:
+      return;  // Shouldn't happen
+    }
+
+    // Initialize game state
+    gameState.numPlayers = numPlayers;
+    gameState.currentPlayer = 1;
+    gameState.currentBall = 1;
+    for (byte i = 0; i < 4; i++) {
+      gameState.score[i] = 0;
+    }
+    gameState.tiltWarnings = 0;
+    gameState.tilted = false;
+    gameState.ballInPlay = false;
+    gameState.ballSaveActive = false;
+    gameState.hasScored = false;
+
+    // Set up game display
+    lcdClear();
+    snprintf(lcdString, LCD_WIDTH + 1, "PLAYER 1  BALL 1");
+    lcdPrintRow(1, lcdString);
+    snprintf(lcdString, LCD_WIDTH + 1, "SCORE: 0");
+    lcdPrintRow(2, lcdString);
+
+    // TODO: Start game sequence (mode-specific)
+    return;
+  }
 
   // Volume adjustment with +/- buttons
   if (diagButtonPressed(1)) {  // Minus
@@ -1470,16 +1349,230 @@ void updateModeAttract() {
   renderAttractDisplayIfNeeded();
 }
 
-void updateModeOriginal() {
-  // TODO: Implement Original style gameplay
+// ********************************************************************************************************************************
+// ************************************************* GAME MODE (Original/Enhanced/Impulse) ****************************************
+// ********************************************************************************************************************************
+
+void updateModeGame() {
+  // Handle tilt check first
+  if (gameState.tilted) {
+    // Already tilted - wait for ball to drain, then move to next ball/player
+    // TODO: Check drain switches
+    return;
+  }
+
+  // Check for tilt
+  if (switchClosed(SWITCH_IDX_TILT_BOB)) {
+    gameState.tiltWarnings++;
+    if (gameState.tiltWarnings >= 3) {
+      // TILT!
+      gameState.tilted = true;
+      gameState.ballInPlay = false;
+      audioStopAllMusic();
+      // TODO: Play tilt sound, show TILT on display and lamps
+      lcdPrintRow(1, "*** TILT ***");
+      return;
+    } else {
+      // Warning
+      // TODO: Play warning sound
+      snprintf(lcdString, LCD_WIDTH + 1, "WARNING %d", gameState.tiltWarnings);
+      lcdPrintRow(4, lcdString);
+    }
+  }
+
+  // If ball not in play, we need to dispense one
+  if (!gameState.ballInPlay) {
+    // Check if 5 balls are in trough (ready to dispense)
+    if (switchClosed(SWITCH_IDX_5_BALLS_IN_TROUGH)) {
+      // Dispense a ball
+      activateDevice(DEV_IDX_BALL_TROUGH_RELEASE);
+      gameState.ballInPlay = true;
+      gameState.ballLaunchMs = millis();
+      gameState.hasScored = false;
+      gameState.tiltWarnings = 0;
+      gameState.tilted = false;
+
+      // Start ball save timer (mode-dependent)
+      // TODO: Read ball save time from EEPROM
+      gameState.ballSaveActive = true;
+      gameState.ballSaveEndMs = millis() + 10000UL;  // 10 second ball save
+
+      // Update display
+      snprintf(lcdString, LCD_WIDTH + 1, "PLAYER %d  BALL %d",
+        gameState.currentPlayer, gameState.currentBall);
+      lcdPrintRow(1, lcdString);
+    }
+    return;
+  }
+
+  // Ball is in play - process playfield switches
+  processPlayfieldSwitches();
+
+  // Check for drain
+  if (switchClosed(SWITCH_IDX_DRAIN_LEFT) ||
+    switchClosed(SWITCH_IDX_DRAIN_CENTER) ||
+    switchClosed(SWITCH_IDX_DRAIN_RIGHT)) {
+
+    // Ball save check
+    if (gameState.ballSaveActive && millis() < gameState.ballSaveEndMs) {
+      // Ball saved! Dispense another
+      gameState.ballInPlay = false;  // Will dispense on next tick
+      // TODO: Play ball saved sound
+      lcdPrintRow(4, "BALL SAVED!");
+      return;
+    }
+
+    // Ball is lost
+    gameState.ballInPlay = false;
+    gameState.ballSaveActive = false;
+
+    // Check for end of ball
+    handleEndOfBall();
+  }
 }
 
-void updateModeEnhanced() {
-  // TODO: Implement Enhanced style gameplay
+// Process all playfield scoring switches
+void processPlayfieldSwitches() {
+  // Pop bumpers
+  for (byte i = SWITCH_IDX_BUMPER_S; i <= SWITCH_IDX_BUMPER_O; i++) {
+    if (switchClosed(i)) {
+      activateDevice(DEV_IDX_POP_BUMPER);
+      addScore(1);  // 10,000 points (1 unit)
+      gameState.hasScored = true;
+      // Light corresponding bumper lamp
+      // TODO: Bumper lamp logic
+    }
+  }
+
+  // Slingshots
+  if (switchClosed(SWITCH_IDX_SLINGSHOT_LEFT)) {
+    activateDevice(DEV_IDX_SLINGSHOT_LEFT);
+    addScore(1);
+    gameState.hasScored = true;
+  }
+  if (switchClosed(SWITCH_IDX_SLINGSHOT_RIGHT)) {
+    activateDevice(DEV_IDX_SLINGSHOT_RIGHT);
+    addScore(1);
+    gameState.hasScored = true;
+  }
+
+  // Kickout holes
+  if (switchClosed(SWITCH_IDX_KICKOUT_LEFT)) {
+    // Ball is in left kickout - score and kick it out
+    addScore(5);  // 50,000 points
+    gameState.hasScored = true;
+    activateDevice(DEV_IDX_KICKOUT_LEFT);
+  }
+  if (switchClosed(SWITCH_IDX_KICKOUT_RIGHT)) {
+    addScore(5);
+    gameState.hasScored = true;
+    activateDevice(DEV_IDX_KICKOUT_RIGHT);
+  }
+
+  // Hat switches (rollovers)
+  if (switchClosed(SWITCH_IDX_HAT_LEFT_TOP) ||
+    switchClosed(SWITCH_IDX_HAT_LEFT_BOTTOM) ||
+    switchClosed(SWITCH_IDX_HAT_RIGHT_TOP) ||
+    switchClosed(SWITCH_IDX_HAT_RIGHT_BOTTOM)) {
+    addScore(1);
+    gameState.hasScored = true;
+  }
+
+  // Side targets
+  // TODO: Add side target processing
+
+  // Gobble hole
+  if (switchClosed(SWITCH_IDX_GOBBLE)) {
+    addScore(10);  // 100,000 points
+    gameState.hasScored = true;
+    // TODO: Gobble hole special logic
+  }
 }
 
-void updateModeImpulse() {
-  // TODO: Implement Impulse style gameplay
+// Add score to current player (in 10K units)
+void addScore(uint16_t units) {
+  byte playerIdx = gameState.currentPlayer - 1;  // Convert to 0-indexed
+  uint16_t newScore = gameState.score[playerIdx] + units;
+  if (newScore > 999) newScore = 999;  // Cap at 9,990,000
+  gameState.score[playerIdx] = newScore;
+
+  // Check if this is the first point (closes Enhanced player addition window)
+  checkFirstPointScored();
+
+  // Update display
+  unsigned long displayScore = (unsigned long)newScore * 10000UL;
+  snprintf(lcdString, LCD_WIDTH + 1, "SCORE: %lu", displayScore);
+  lcdPrintRow(2, lcdString);
+
+  // Send score to Slave for reel display
+  pMessage->sendMAStoSLVScoreAbs(newScore);
+}
+
+// Handle end of ball - advance player/ball or end game
+void handleEndOfBall() {
+  // Check if this was the last ball for this player
+  if (gameState.currentBall >= 5) {
+    // Last ball - check if more players
+    if (gameState.currentPlayer >= gameState.numPlayers) {
+      // Game over!
+      handleGameOver();
+      return;
+    } else {
+      // Next player, ball 1
+      gameState.currentPlayer++;
+      gameState.currentBall = 1;
+    }
+  } else {
+    // Same player, next ball
+    gameState.currentBall++;
+  }
+
+  // Reset per-ball state
+  gameState.tiltWarnings = 0;
+  gameState.tilted = false;
+
+  // Update display
+  snprintf(lcdString, LCD_WIDTH + 1, "PLAYER %d  BALL %d",
+    gameState.currentPlayer, gameState.currentBall);
+  lcdPrintRow(1, lcdString);
+
+  // Show this player's score
+  byte playerIdx = gameState.currentPlayer - 1;
+  unsigned long displayScore = (unsigned long)gameState.score[playerIdx] * 10000UL;
+  snprintf(lcdString, LCD_WIDTH + 1, "SCORE: %lu", displayScore);
+  lcdPrintRow(2, lcdString);
+
+  // Send score to Slave
+  pMessage->sendMAStoSLVScoreAbs(gameState.score[playerIdx]);
+}
+
+// Handle game over - return to attract mode
+void handleGameOver() {
+  // TODO: Play game over sound, show final scores
+  lcdClear();
+  lcdPrintRow(1, "GAME OVER");
+
+  // Show high score or final score
+  byte highPlayer = 0;
+  uint16_t highScore = 0;
+  for (byte i = 0; i < gameState.numPlayers; i++) {
+    if (gameState.score[i] > highScore) {
+      highScore = gameState.score[i];
+      highPlayer = i + 1;
+    }
+  }
+  unsigned long displayScore = (unsigned long)highScore * 10000UL;
+  snprintf(lcdString, LCD_WIDTH + 1, "P%d: %lu", highPlayer, displayScore);
+  lcdPrintRow(2, lcdString);
+
+  delay(3000);  // Show for 3 seconds
+
+  // Return to attract mode
+  modeCurrent = MODE_ATTRACT;
+  initGameState();
+  setAttractLamps();
+  lcdClear();
+  markAttractDisplayDirty();
 }
 
 // Tilt mode: frozen game, minimal response until cleared.
@@ -1498,59 +1591,23 @@ void updateModeDiagnostic() {
 // ************************************
 // ***** TSUNAMI HELPER FUNCTIONS *****
 // ************************************
+// NOTE: All audio helper functions have been moved to Pinball_Audio.h/.cpp
+// The following functions are now in the Pinball_Audio library:
+// - audioApplyMasterGain() - Apply master gain to all Tsunami outputs
+// - audioApplyTrackGain() - Apply category-specific gain to a track
+// - audioSaveMasterGain() - Save master gain to EEPROM
+// - audioLoadMasterGain() - Load master gain from EEPROM
+// - audioSaveCategoryGains() - Save category gains to EEPROM
+// - audioLoadCategoryGains() - Load category gains from EEPROM
+// - audioSaveDucking() - Save ducking level to EEPROM
+// - audioLoadDucking() - Load ducking level from EEPROM
+// - audioPlayTrackWithCategory() - Play track with category-specific gain
+// - audioPlayTrack() - Play track (defaults to SFX)
+// - audioStopTrack() - Stop a specific track
+// - audioRandomInt() - Pseudo-random number generator
+//
+// These functions remain here as wrappers that call Pinball_Audio functions:
 
-// Master gain applies to all outputs; category gains are applied per-track on top of master.
-void audioApplyMasterGain() {
-  if (pTsunami == nullptr) {
-    return;
-  }
-  int gain = (int)tsunamiGainDb;
-  for (int out = 0; out < TSUNAMI_NUM_OUTPUTS; out++) {
-    pTsunami->masterGain(out, gain);
-  }
-}
-
-// Apply category-specific gain offset to a track after starting it.
-// Call this immediately after trackPlay() to apply voice/sfx/music offsets.
-void audioApplyTrackGain(unsigned int t_trackNum, int8_t t_categoryOffset) {
-  if (pTsunami == nullptr) {
-    return;
-  }
-  // Calculate total gain: master + category offset
-  int totalGain = (int)tsunamiGainDb + (int)t_categoryOffset;
-  // Clamp to valid range
-  if (totalGain < -70) totalGain = -70;
-  if (totalGain > 10) totalGain = 10;
-  // Apply to this specific track
-  pTsunami->trackGain((int)t_trackNum, totalGain);
-}
-
-void audioSaveMasterGain() {
-  diagSaveMasterGain(tsunamiGainDb);
-}
-
-void audioLoadMasterGain() {
-  diagLoadMasterGain(&tsunamiGainDb);
-}
-
-void audioSaveCategoryGains() {
-  diagSaveCategoryGains(tsunamiVoiceGainDb, tsunamiSfxGainDb, tsunamiMusicGainDb);
-}
-
-void audioLoadCategoryGains() {
-  diagLoadCategoryGains(&tsunamiVoiceGainDb, &tsunamiSfxGainDb, &tsunamiMusicGainDb);
-}
-
-void audioSaveDucking() {
-  diagSaveDucking(tsunamiDuckingDb);
-}
-
-void audioLoadDucking() {
-  diagLoadDucking(&tsunamiDuckingDb);
-}
-
-// Stop all playback on Tsunami and restore gains from EEPROM.
-// Call once during setup() after pTsunami->start().
 void audioResetTsunamiState() {
   if (pTsunami == nullptr) {
     return;
@@ -1559,11 +1616,11 @@ void audioResetTsunamiState() {
   for (int trk = 1; trk <= 256; trk++) {
     pTsunami->trackStop(trk);
   }
-  // Reload and apply gains from EEPROM
-  audioLoadMasterGain();
-  audioLoadCategoryGains();
-  audioLoadDucking();  // Add this line
-  audioApplyMasterGain();
+  // Reload and apply gains from EEPROM using Pinball_Audio functions
+  audioLoadMasterGain(&tsunamiGainDb);
+  audioLoadCategoryGains(&tsunamiVoiceGainDb, &tsunamiSfxGainDb, &tsunamiMusicGainDb);
+  audioLoadDucking(&tsunamiDuckingDb);
+  audioApplyMasterGain(tsunamiGainDb, pTsunami);
   // Clear "currently playing" bookkeeping
   audioCurrentComTrack   = 0;
   audioCurrentSfxTrack   = 0;
@@ -1576,71 +1633,29 @@ void audioAdjustMasterGain(int8_t t_deltaDb) {
   if (newVal > TSUNAMI_GAIN_DB_MAX) newVal = TSUNAMI_GAIN_DB_MAX;
   if ((int8_t)newVal == tsunamiGainDb) return;
   tsunamiGainDb = (int8_t)newVal;
-  audioApplyMasterGain();
-  audioSaveMasterGain();
+  audioApplyMasterGain(tsunamiGainDb, pTsunami);  // CHANGED: Pass parameters
+  audioSaveMasterGain(tsunamiGainDb);  // CHANGED: Pass parameter
   sprintf(lcdString, "Vol %3d dB", (int)tsunamiGainDb);
-  lcdPrintRow(4, lcdString);  // Changed from pLCD2004->println()
+  lcdPrintRow(4, lcdString);
 }
 
-// Play a track with category-specific gain applied.
-// category: 0=voice, 1=sfx, 2=music
-void audioPlayTrackWithCategory(unsigned int t_trackNum, byte t_category) {
-  if (pTsunami == nullptr || t_trackNum == 0) {
-    return;
-  }
-  pTsunami->trackPlayPoly((int)t_trackNum, 0, false);
-
-  // Apply category-specific gain offset
-  int8_t offset = 0;
-  switch (t_category) {
-  case 0: offset = tsunamiVoiceGainDb; break;
-  case 1: offset = tsunamiSfxGainDb; break;
-  case 2: offset = tsunamiMusicGainDb; break;
-  }
-  audioApplyTrackGain(t_trackNum, offset);
-}
-
-// Legacy version for backward compatibility (defaults to SFX)
-void audioPlayTrack(unsigned int t_trackNum) {
-  audioPlayTrackWithCategory(t_trackNum, 1); // Default to SFX category
-}
-
-// Simple primitive to stop a track by number.
-void audioStopTrack(unsigned int t_trackNum) {
-  if (pTsunami == nullptr || t_trackNum == 0) {
-    return;
-  }
-  pTsunami->trackStop((int)t_trackNum);
-}
-
-// Stop all currently playing music.
-void audioStopAllMusic() {
-  if (audioCurrentMusicTrack != 0) {
-    audioStopTrack(audioCurrentMusicTrack);
-    audioCurrentMusicTrack = 0;
-  }
-}
-
-// Very simple pseudo-random index 0..(n-1).
-int audioRandomInt(int t_maxExclusive) {
-  if (t_maxExclusive <= 0) {
-    return 0;
-  }
-  return (int)(millis() % (unsigned long)t_maxExclusive);
-}
-
-// Adjust master gain without playing any audio feedback.
-// Use this during gameplay or attract mode.
 void audioAdjustMasterGainQuiet(int8_t t_deltaDb) {
   int newVal = (int)tsunamiGainDb + (int)t_deltaDb;
   if (newVal < TSUNAMI_GAIN_DB_MIN) newVal = TSUNAMI_GAIN_DB_MIN;
   if (newVal > TSUNAMI_GAIN_DB_MAX) newVal = TSUNAMI_GAIN_DB_MAX;
   if ((int8_t)newVal == tsunamiGainDb) return;
   tsunamiGainDb = (int8_t)newVal;
-  audioApplyMasterGain();
-  audioSaveMasterGain();
+  audioApplyMasterGain(tsunamiGainDb, pTsunami);  // CHANGED: Pass parameters
+  audioSaveMasterGain(tsunamiGainDb);  // CHANGED: Pass parameter
   sprintf(lcdString, "Vol %3d dB", (int)tsunamiGainDb);
-  lcdPrintRow(4, lcdString);  // Changed from pLCD2004->println()
+  lcdPrintRow(4, lcdString);
+}
+
+void audioStopAllMusic() {
+  if (audioCurrentMusicTrack != 0) {
+    audioStopTrack(audioCurrentMusicTrack, pTsunami);  // CHANGED: Pass pTsunami
+    audioCurrentMusicTrack = 0;
+  }
 }
 
 // Check if current music track has finished playing (based on start time and length).
@@ -1676,8 +1691,8 @@ bool audioStartMusicTrack(unsigned int t_trackNum, byte t_lengthSeconds, bool t_
   }
   pTsunami->trackPlayPoly((int)t_trackNum, 0, false);
 
-  // Apply music category gain offset
-  audioApplyTrackGain(t_trackNum, tsunamiMusicGainDb);
+  // Apply music category gain offset using Pinball_Audio function
+  audioApplyTrackGain(t_trackNum, tsunamiMusicGainDb, tsunamiGainDb, pTsunami);  // CHANGED: Pass all parameters
 
   return true;
 }
@@ -1722,5 +1737,3 @@ void audioStartMainMusic() {
   // Start a random circus track (or surf based on theme setting - TODO)
   audioStartRandomCircusMusic();
 }
-
-

@@ -1,4 +1,4 @@
-// PINBALL_DIAGNOSTICS.CPP Rev: 01/20/26.
+// PINBALL_DIAGNOSTICS.CPP Rev: 01/21/26.
 // Implementation of diagnostic test suites and EEPROM settings management
 
 #include "Pinball_Diagnostics.h"
@@ -9,6 +9,7 @@
 #include <Pinball_Message.h>
 #include <Pinball_Consts.h>
 #include <Pinball_Descriptions.h>
+#include <Pinball_Audio.h>  // NEW: Use consolidated audio functions
 
 // External references to arrays defined in Screamo_Master.ino
 extern struct LampParmStruct {
@@ -34,7 +35,7 @@ extern struct DeviceParmStruct {
 
 extern const byte NUM_LAMPS_MASTER;
 extern const byte NUM_SWITCHES_MASTER;
-extern const byte NUM_DEVS_MASTER ;
+extern const byte NUM_DEVS_MASTER;
 extern const byte MOTOR_SHAKER_POWER_MIN;
 extern const byte DEV_IDX_MOTOR_SHAKER;
 extern const byte DEV_IDX_MOTOR_SCORE;
@@ -149,104 +150,18 @@ void diagWriteReplayScoreToEEPROM(bool enhanced, byte replayNum, unsigned int sc
 }
 
 // ****************************************
-// ***** TSUNAMI GAIN HELPERS *************
+// ***** REMOVED: Audio functions now in Pinball_Audio.h/.cpp
 // ****************************************
-
-void diagSaveMasterGain(int8_t gainDb) {
-  EEPROM.update(EEPROM_ADDR_TSUNAMI_GAIN, (byte)gainDb);
-}
-
-void diagLoadMasterGain(int8_t* pGainDb) {
-  const int8_t GAIN_MIN = -40;
-  const int8_t GAIN_MAX = 0;
-  const int8_t GAIN_DEFAULT = -10;
-
-  byte raw = EEPROM.read(EEPROM_ADDR_TSUNAMI_GAIN);
-  int8_t val = (int8_t)raw;
-  if (val < GAIN_MIN || val > GAIN_MAX) {
-    *pGainDb = GAIN_DEFAULT;
-    diagSaveMasterGain(GAIN_DEFAULT);
-  } else {
-    *pGainDb = val;
-  }
-}
-
-void diagSaveCategoryGains(int8_t voiceGain, int8_t sfxGain, int8_t musicGain) {
-  EEPROM.update(EEPROM_ADDR_TSUNAMI_GAIN_VOICE, (byte)voiceGain);
-  EEPROM.update(EEPROM_ADDR_TSUNAMI_GAIN_SFX, (byte)sfxGain);
-  EEPROM.update(EEPROM_ADDR_TSUNAMI_GAIN_MUSIC, (byte)musicGain);
-}
-
-void diagLoadCategoryGains(int8_t* pVoiceGain, int8_t* pSfxGain, int8_t* pMusicGain) {
-  const int8_t CAT_MIN = -20;
-  const int8_t CAT_MAX = 20;
-
-  int8_t v = (int8_t)EEPROM.read(EEPROM_ADDR_TSUNAMI_GAIN_VOICE);
-  int8_t s = (int8_t)EEPROM.read(EEPROM_ADDR_TSUNAMI_GAIN_SFX);
-  int8_t m = (int8_t)EEPROM.read(EEPROM_ADDR_TSUNAMI_GAIN_MUSIC);
-
-  if (v < CAT_MIN || v > CAT_MAX) v = 0;
-  if (s < CAT_MIN || s > CAT_MAX) s = 0;
-  if (m < CAT_MIN || m > CAT_MAX) m = 0;
-
-  *pVoiceGain = v;
-  *pSfxGain = s;
-  *pMusicGain = m;
-
-  diagSaveCategoryGains(v, s, m);
-}
-
-void diagSaveDucking(int8_t duckingDb) {
-  EEPROM.update(EEPROM_ADDR_TSUNAMI_DUCK_DB, (byte)duckingDb);
-}
-
-void diagLoadDucking(int8_t* pDuckingDb) {
-  int8_t val = (int8_t)EEPROM.read(EEPROM_ADDR_TSUNAMI_DUCK_DB);
-  if (val < -40 || val > 0) {
-    *pDuckingDb = -20;
-    diagSaveDucking(-20);
-  } else {
-    *pDuckingDb = val;
-  }
-}
-
-void diagApplyMasterGain(int8_t gainDb, Tsunami* pTsunami) {
-  if (pTsunami == nullptr) {
-    return;
-  }
-  int gain = (int)gainDb;
-  for (int out = 0; out < TSUNAMI_NUM_OUTPUTS; out++) {
-    pTsunami->masterGain(out, gain);
-  }
-}
-
-void diagApplyTrackGain(unsigned int trackNum, int8_t categoryOffset, int8_t masterGain, Tsunami* pTsunami) {
-  if (pTsunami == nullptr) {
-    return;
-  }
-  int totalGain = (int)masterGain + (int)categoryOffset;
-  if (totalGain < -70) totalGain = -70;
-  if (totalGain > 10) totalGain = 10;
-  pTsunami->trackGain((int)trackNum, totalGain);
-}
-
-void diagPlayTrackWithCategory(unsigned int trackNum, byte category,
-  int8_t masterGain, int8_t voiceGain, int8_t sfxGain, int8_t musicGain,
-  Tsunami* pTsunami) {
-  if (pTsunami == nullptr || trackNum == 0) {
-    return;
-  }
-
-  pTsunami->trackPlayPoly((int)trackNum, 0, false);
-
-  int8_t offset = 0;
-  switch (category) {
-  case 0: offset = voiceGain; break;
-  case 1: offset = sfxGain; break;
-  case 2: offset = musicGain; break;
-  }
-  diagApplyTrackGain(trackNum, offset, masterGain, pTsunami);
-}
+// The following functions have been REMOVED and moved to Pinball_Audio library:
+// - diagSaveMasterGain() -> audioSaveMasterGain()
+// - diagLoadMasterGain() -> audioLoadMasterGain()
+// - diagSaveCategoryGains() -> audioSaveCategoryGains()
+// - diagLoadCategoryGains() -> audioLoadCategoryGains()
+// - diagSaveDucking() -> audioSaveDucking()
+// - diagLoadDucking() -> audioLoadDucking()
+// - diagApplyMasterGain() -> audioApplyMasterGain()
+// - diagApplyTrackGain() -> audioApplyTrackGain()
+// - diagPlayTrackWithCategory() -> audioPlayTrackWithCategory()
 
 // ****************************************
 // ***** INTERNAL HELPER FUNCTIONS ********
@@ -289,22 +204,6 @@ static void diagLcdPrintRow(byte row, const char* text, Pinball_LCD* pLCD) {
   pLCD->printRowCol(row, 1, buf);
 }
 
-/*  *** MAYBE HANDY FOR FUTURE USE ***
-static void diagLcdClearRow(byte row, Pinball_LCD* pLCD) {
-  if (pLCD != nullptr) {
-    pLCD->clearRow(row);
-  }
-}
-
-static void diagLcdShowScreen(const char* line1, const char* line2, const char* line3, const char* line4, Pinball_LCD* pLCD) {
-  diagLcdPrintRow(1, line1, pLCD);
-  diagLcdPrintRow(2, line2, pLCD);
-  diagLcdPrintRow(3, line3, pLCD);
-  diagLcdPrintRow(4, line4, pLCD);
-}
-*/
-
-// RENAMED to avoid LTO collision with any other file
 static void diagCopyStringFromProgmem(const char* const* table, unsigned int index, char* dest, byte maxLen) {
   const char* src = (const char*)pgm_read_word(&table[index]);
   strncpy_P(dest, src, maxLen - 1);
@@ -335,7 +234,6 @@ void diagRunVolume(Pinball_LCD* pLCD, Pinball_Centipede* pShift, Tsunami* pTsuna
   byte diagButtonState[4] = { 0, 0, 0, 0 };
 
   // CRITICAL FIX: Sync button states to current reality before starting
-  // This prevents carry-over button presses from suite launch
   for (int i = 0; i < 4; i++) {
     pSwitchNew[i] = pShift->portRead(4 + i);
   }
@@ -348,19 +246,16 @@ void diagRunVolume(Pinball_LCD* pLCD, Pinball_Centipede* pShift, Tsunami* pTsuna
     diagButtonState[i] = closedNow ? 1 : 0;
   }
 
-  // Track last displayed value to avoid over-refresh
   int8_t lastDisplayedValue = 0;
   byte lastDisplayedParam = 0xFF;
   bool needsFullRedraw = true;
 
   while (true) {
-    // Update switches
     for (int i = 0; i < 4; i++) {
       pSwitchOld[i] = pSwitchNew[i];
       pSwitchNew[i] = pShift->portRead(4 + i);
     }
 
-    // Get current value
     int8_t currentVal = 0;
     switch (paramIdx) {
     case 0: currentVal = *pTsunamiGainDb; break;
@@ -370,7 +265,6 @@ void diagRunVolume(Pinball_LCD* pLCD, Pinball_Centipede* pShift, Tsunami* pTsuna
     case 4: currentVal = *pDuckingDb; break;
     }
 
-    // Redraw entire screen when mode or parameter changes
     if (needsFullRedraw || lastDisplayedParam != paramIdx) {
       diagLcdPrintRow(1, "VOLUME ADJUST", pLCD);
       diagLcdPrintRow(2, paramNames[paramIdx], pLCD);
@@ -393,7 +287,6 @@ void diagRunVolume(Pinball_LCD* pLCD, Pinball_Centipede* pShift, Tsunami* pTsuna
       lastDisplayedValue = currentVal;
     }
 
-    // Button handling
     if (diagSwitchPressed(0, diagButtonState, pSwitchOld, pSwitchNew)) {  // BACK
       if (adjusting) {
         if (pTsunami != nullptr) {
@@ -415,58 +308,57 @@ void diagRunVolume(Pinball_LCD* pLCD, Pinball_Centipede* pShift, Tsunami* pTsuna
         }
         needsFullRedraw = true;
       } else {
-        // Decrease value
         switch (paramIdx) {
         case 0:
           *pTsunamiGainDb = constrain(*pTsunamiGainDb - 1, -40, 0);
-          diagApplyMasterGain(*pTsunamiGainDb, pTsunami);
-          diagSaveMasterGain(*pTsunamiGainDb);
+          audioApplyMasterGain(*pTsunamiGainDb, pTsunami);  // CHANGED: Use Pinball_Audio
+          audioSaveMasterGain(*pTsunamiGainDb);  // CHANGED: Use Pinball_Audio
           if (pTsunami != nullptr) {
             pTsunami->stopAllTracks();
             delay(20);
-            diagPlayTrackWithCategory(2001, 2, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);
+            audioPlayTrackWithCategory(2001, AUDIO_CATEGORY_MUSIC, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);  // CHANGED
           }
           break;
         case 1:
           *pVoiceGainDb = constrain(*pVoiceGainDb - 1, -20, 20);
-          diagSaveCategoryGains(*pVoiceGainDb, *pSfxGainDb, *pMusicGainDb);
+          audioSaveCategoryGains(*pVoiceGainDb, *pSfxGainDb, *pMusicGainDb);  // CHANGED: Use Pinball_Audio
           if (pTsunami != nullptr) {
             pTsunami->stopAllTracks();
             delay(20);
-            diagPlayTrackWithCategory(351, 0, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);
+            audioPlayTrackWithCategory(351, AUDIO_CATEGORY_VOICE, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);  // CHANGED
           }
           break;
         case 2:
           *pSfxGainDb = constrain(*pSfxGainDb - 1, -20, 20);
-          diagSaveCategoryGains(*pVoiceGainDb, *pSfxGainDb, *pMusicGainDb);
+          audioSaveCategoryGains(*pVoiceGainDb, *pSfxGainDb, *pMusicGainDb);  // CHANGED: Use Pinball_Audio
           if (pTsunami != nullptr) {
             pTsunami->stopAllTracks();
             delay(20);
-            diagPlayTrackWithCategory(1121, 1, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);
+            audioPlayTrackWithCategory(1121, AUDIO_CATEGORY_SFX, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);  // CHANGED
           }
           break;
         case 3:
           *pMusicGainDb = constrain(*pMusicGainDb - 1, -20, 20);
-          diagSaveCategoryGains(*pVoiceGainDb, *pSfxGainDb, *pMusicGainDb);
+          audioSaveCategoryGains(*pVoiceGainDb, *pSfxGainDb, *pMusicGainDb);  // CHANGED: Use Pinball_Audio
           if (pTsunami != nullptr) {
             pTsunami->stopAllTracks();
             delay(20);
-            diagPlayTrackWithCategory(2001, 2, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);
+            audioPlayTrackWithCategory(2001, AUDIO_CATEGORY_MUSIC, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);  // CHANGED
           }
           break;
         case 4:
           *pDuckingDb = constrain(*pDuckingDb - 1, -40, 0);
-          diagSaveDucking(*pDuckingDb);
+          audioSaveDucking(*pDuckingDb);  // CHANGED: Use Pinball_Audio
           if (pTsunami != nullptr) {
             pTsunami->stopAllTracks();
             delay(20);
-            diagPlayTrackWithCategory(2001, 2, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);
+            audioPlayTrackWithCategory(2001, AUDIO_CATEGORY_MUSIC, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);  // CHANGED
             delay(100);
             int duckGain = (int)(*pTsunamiGainDb) + (int)(*pMusicGainDb) + (int)(*pDuckingDb);
             if (duckGain < -70) duckGain = -70;
             pTsunami->trackGain(2001, duckGain);
             delay(100);
-            diagPlayTrackWithCategory(351, 0, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);
+            audioPlayTrackWithCategory(351, AUDIO_CATEGORY_VOICE, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);  // CHANGED
           }
           break;
         }
@@ -481,54 +373,53 @@ void diagRunVolume(Pinball_LCD* pLCD, Pinball_Centipede* pShift, Tsunami* pTsuna
         }
         needsFullRedraw = true;
       } else {
-        // Increase value
         switch (paramIdx) {
         case 0:
           *pTsunamiGainDb = constrain(*pTsunamiGainDb + 1, -40, 0);
-          diagApplyMasterGain(*pTsunamiGainDb, pTsunami);
-          diagSaveMasterGain(*pTsunamiGainDb);
+          audioApplyMasterGain(*pTsunamiGainDb, pTsunami);  // CHANGED: Use Pinball_Audio
+          audioSaveMasterGain(*pTsunamiGainDb);  // CHANGED: Use Pinball_Audio
           if (pTsunami != nullptr) {
             pTsunami->stopAllTracks();
             delay(20);
-            diagPlayTrackWithCategory(2001, 2, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);
+            audioPlayTrackWithCategory(2001, AUDIO_CATEGORY_MUSIC, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);  // CHANGED
           }
           break;
         case 1:
           *pVoiceGainDb = constrain(*pVoiceGainDb + 1, -20, 20);
-          diagSaveCategoryGains(*pVoiceGainDb, *pSfxGainDb, *pMusicGainDb);
+          audioSaveCategoryGains(*pVoiceGainDb, *pSfxGainDb, *pMusicGainDb);  // CHANGED: Use Pinball_Audio
           if (pTsunami != nullptr) {
             pTsunami->stopAllTracks();
             delay(20);
-            diagPlayTrackWithCategory(351, 0, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);
+            audioPlayTrackWithCategory(351, AUDIO_CATEGORY_VOICE, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);  // CHANGED
           }
           break;
         case 2:
           *pSfxGainDb = constrain(*pSfxGainDb + 1, -20, 20);
-          diagSaveCategoryGains(*pVoiceGainDb, *pSfxGainDb, *pMusicGainDb);
+          audioSaveCategoryGains(*pVoiceGainDb, *pSfxGainDb, *pMusicGainDb);  // CHANGED: Use Pinball_Audio
           if (pTsunami != nullptr) {
             pTsunami->stopAllTracks();
             delay(20);
-            diagPlayTrackWithCategory(1121, 1, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);
+            audioPlayTrackWithCategory(1121, AUDIO_CATEGORY_SFX, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);  // CHANGED
           }
           break;
         case 3:
           *pMusicGainDb = constrain(*pMusicGainDb + 1, -20, 20);
-          diagSaveCategoryGains(*pVoiceGainDb, *pSfxGainDb, *pMusicGainDb);
+          audioSaveCategoryGains(*pVoiceGainDb, *pSfxGainDb, *pMusicGainDb);  // CHANGED: Use Pinball_Audio
           if (pTsunami != nullptr) {
             pTsunami->stopAllTracks();
             delay(20);
-            diagPlayTrackWithCategory(2001, 2, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);
+            audioPlayTrackWithCategory(2001, AUDIO_CATEGORY_MUSIC, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);  // CHANGED
           }
           break;
         case 4:
           *pDuckingDb = constrain(*pDuckingDb + 1, -40, 0);
-          diagSaveDucking(*pDuckingDb);
+          audioSaveDucking(*pDuckingDb);  // CHANGED: Use Pinball_Audio
           if (pTsunami != nullptr) {
             pTsunami->stopAllTracks();
             delay(20);
-            diagPlayTrackWithCategory(2001, 2, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);
+            audioPlayTrackWithCategory(2001, AUDIO_CATEGORY_MUSIC, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);  // CHANGED
             delay(100);
-            diagPlayTrackWithCategory(351, 0, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);
+            audioPlayTrackWithCategory(351, AUDIO_CATEGORY_VOICE, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);  // CHANGED
           }
           break;
         }
@@ -982,21 +873,15 @@ void diagRunAudio(Pinball_LCD* pLCD, Pinball_Centipede* pShift, Tsunami* pTsunam
         delay(50);
 
         // Determine category and apply appropriate gain
-        int8_t categoryOffset = sfxGainDb; // Default SFX
+        byte category = AUDIO_CATEGORY_SFX; // Default SFX
         if (testTrack >= 2001 && testTrack <= 2068) {
-          categoryOffset = musicGainDb; // Music
+          category = AUDIO_CATEGORY_MUSIC; // Music
         } else if (testTrack >= 101 && testTrack <= 999) {
-          categoryOffset = voiceGainDb; // Voice/COM
+          category = AUDIO_CATEGORY_VOICE; // Voice/COM
         }
 
-        // Play with category-specific gain
-        pTsunami->trackPlaySolo((int)testTrack, 0, false);
-
-        // Apply combined gain: master + category offset
-        int totalGain = (int)masterGainDb + (int)categoryOffset;
-        if (totalGain < -70) totalGain = -70;
-        if (totalGain > 10) totalGain = 10;
-        pTsunami->trackGain((int)testTrack, totalGain);
+        // CHANGED: Use Pinball_Audio function
+        audioPlayTrackWithCategory(testTrack, category, masterGainDb, voiceGainDb, sfxGainDb, musicGainDb, pTsunami);
 
         diagLcdPrintRow(4, "Playing...", pLCD);
         delay(200);
@@ -1024,7 +909,7 @@ void diagRunSettings(Pinball_LCD* pLCD, Pinball_Centipede* pShift,
     "ENHANCED REPLAYS"
   };
 
-  char buf[21];  // LCD_WIDTH + 1
+  char buf[21];
   byte diagButtonState[4] = { 0, 0, 0, 0 };
   bool needsRedraw = true;
 
@@ -1063,8 +948,6 @@ void diagRunSettings(Pinball_LCD* pLCD, Pinball_Centipede* pShift,
         diagLcdPrintRow(1, categoryNames[categoryIdx], pLCD);
 
         if (categoryIdx == SETTINGS_CAT_GAME) {
-          // SPECIAL FIX: gameSettingNames stores RAM strings in PROGMEM array
-          // Read pointer from PROGMEM, then copy as normal RAM string
           const char* paramNamePtr = (const char*)pgm_read_word(&gameSettingNames[paramIdx]);
           diagLcdPrintRow(2, paramNamePtr, pLCD);
         } else {
@@ -1080,7 +963,6 @@ void diagRunSettings(Pinball_LCD* pLCD, Pinball_Centipede* pShift,
         diagLcdPrintRow(1, "ADJUST VALUE", pLCD);
 
         if (categoryIdx == SETTINGS_CAT_GAME) {
-          // SPECIAL FIX: Read pointer from PROGMEM, use as RAM string
           const char* paramNamePtr = (const char*)pgm_read_word(&gameSettingNames[paramIdx]);
           diagLcdPrintRow(2, paramNamePtr, pLCD);
 
@@ -1111,7 +993,7 @@ void diagRunSettings(Pinball_LCD* pLCD, Pinball_Centipede* pShift,
       needsRedraw = false;
     }
 
-    // Button handling (unchanged)
+    // Button handling
     if (diagSwitchPressed(0, diagButtonState, pSwitchOld, pSwitchNew)) {  // BACK
       if (level == 2) {
         level = 1;

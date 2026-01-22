@@ -1,4 +1,4 @@
-// PINBALL_CONSTS.H Rev: 01/19/26.
+// PINBALL_CONSTS.H Rev: 01/21/26.
 
 #ifndef PINBALL_CONSTS_H
 #define PINBALL_CONSTS_H
@@ -121,6 +121,13 @@ const byte PIN_OUT_LED                 = 13;  // Built-in LED always pin 13
 // SLAVE ARDUINO HEAD DIRECT INPUT PIN NUMBERS (Switches):
 const byte PIN_IN_SWITCH_CREDIT_EMPTY       =  2;  // Input : Credit wheel "Empty" switch.  Pulled LOW when empty.
 const byte PIN_IN_SWITCH_CREDIT_FULL        =  3;  // Input : Credit wheel "Full" switch.  Pulled LOW when full.
+
+// Start button tap detection states
+const byte START_TAP_IDLE      = 0;  // No detection in progress
+const byte START_TAP_WAITING   = 1;  // Waiting for possible 2nd tap (within 500ms)
+const byte START_TAP_ORIGINAL  = 2;  // Original style selected (500ms expired, no 2nd tap)
+const byte START_TAP_ENHANCED  = 3;  // Enhanced style selected (2nd tap within 500ms)
+const byte START_TAP_IMPULSE   = 4;  // Impulse style (2nd tap after 500ms, before first point)
 
 // ********************************
 // ***** AUDIO TRACK CONSTANTS ****

@@ -273,23 +273,110 @@ Screamo runs in several styles. Unless otherwise noted, Master is style authorit
 
 ### 4.4 Start Button Tap Detection Summary
 
-| Action             | Timing                                      | Result         |
-|--------------------|---------------------------------------------|----------------|
-| Single tap         | No second press within 500ms                | Original Style |
-| Double tap         | Second press within 500ms                   | Enhanced Style |
-| Delayed second tap | Second press after 500ms                    | Impulse Style  |
+**Window Timing:**
+- Double-tap window: 500ms (configurable via 'START_WINDOW_MS' in code)
+- Player addition window: Remains open until first point is scored (Enhanced style only)
 
-**Note:** The 500ms double-tap window is configurable in Master software.
+**Three Start Patterns:**
 
-**Design rationale**: This scheme keeps Enhanced style hidden from casual players who simply press Start once. Players who know about Enhanced style can quickly double-tap. Players who know about Impulse style can deliberately delay their second tap. No audio cues are given until after a style is selected, preserving the "secret" nature of Enhanced and Impulse styles for unsuspecting players.
+| Pattern     | Timing                                     | Credits Deducted          | Result                                                                               |
+|-------------|--------------------------------------------|---------------------------|--------------------------------------------------------------------------------------|
+| Single tap  | No 2nd press w/in 500ms                    | 1 credit                  | Original Style; Game starts immediately after 500ms expires                          |
+| Delayed tap | 2nd press > 500ms but before 1st pt scored | 0 additional credits      | Impulse Style; Switches from Original to Impulse mode, no add'l credit deducted      |
+| Double tap  | 2nd press w/in 500ms                       | 1 credit + 1/add'l player | Enhanced Style; Game starts, add'l Start presses add players 2-4 until 1st pt scored |
+
+**Detailed Behavior:**
+
+**Original Style (Single Tap; 500ms expires):**
+
+T =   0ms: Start pressed (1st time) Start 500ms timer; DO NOT deduct credit yet
+           DO NOT start game yet
+           Monitor for 2nd Start press
+T = 500ms: Timer expires, no 2nd press detected
+           Check credits:
+             IF credits: Deduct 1 credit Start Original Style game immediately (mechanical sounds only)
+             IF no credits: Do nothing, stay in Attract mode
+
+**Impulse Style (Delayed Tap - after 500ms):**
+
+T =   0ms: Start pressed (1st time) Start 500ms timer; DO NOT deduct credit yet
+           DO NOT start game yet
+           Monitor for 2nd Start press
+T = 500ms: Timer expires, no 2nd press
+           Check credits:
+             IF credits: Deduct 1 credit Start Original Style game immediately (mechanical sounds only)
+             IF no credits: Do nothing, stay in Attract mode
+T = 700ms: Start pressed (2nd time, AFTER 500ms expired and BEFORE first point scored) Original Style -> Impulse Style
+           NO additional credit deducted
+           Switch flipper behavior to Impulse mode
+           Continue play (already started as Original)
+
+**Enhanced Style (Double Tap - within 500ms):**
+
+T =   0ms: Start pressed (1st time) Start 500ms timer; DO NOT deduct credit yet
+           DO NOT start game yet
+           Monitor for 2nd Start press
+T = 200ms: Start pressed (2nd time, within 500ms) Enhanced Style detected
+           Check credits:
+             IF credits: Deduct 1 credit Play SCREAM sound effect Start Enhanced game sequence Player 1 added Enter player addition window (until first point scored)
+             Monitor for: coin inserts, knockoff presses, Start presses
+             IF no credits: Play Aoooga horn + "no credit" announcement Stay in Attract mode
+T = 200ms+: Player Addition Window (Enhanced only, UNTIL FIRST POINT SCORED) monitor continuously for:
+           A) Start pressed again:
+              IF players < 4 AND credits:
+                Deduct 1 credit
+                Add player (2, 3, or 4)
+                Duck music, play announcement ("Second guest, c'mon in!")
+                Continue monitoring
+              IF players < 4 AND no credits:
+                Play Aoooga horn + random "no credit" announcement
+                Continue monitoring (can still add coins and retry)
+              IF players = 4:
+                Play "park's full" announcement
+                Continue monitoring
+           B) Coin inserted OR Knockoff pressed:
+              Add 1 credit
+              Fire knocker
+              Continue monitoring
+              (Player can now press Start to add another player)       
+           C) First point scored:
+              Close player addition window
+              Start normal Enhanced gameplay
+
+**Key Points:**
+1. **First credit deduction happens:**
+   - Original: When 500ms timer expires (if credits available)
+   - Enhanced: Immediately on 2nd press within 500ms (if credits available)
+   - Impulse: Same as Original (no additional deduction on 2nd press)
+
+2. **Additional credits deducted (Enhanced only):**
+   - One credit per additional player (players 2-4)
+   - Only until first point is scored
+
+3. **Zero credits behavior:**
+   - Original/Impulse: Silent, stay in Attract mode
+   - Enhanced (initial): Aoooga horn + announcement, then Attract mode
+   - Enhanced (adding players): Aoooga horn + announcement, stay in player addition window
+
+4. **Continuous monitoring (Enhanced player addition window):**
+   - Coin inserts and Knockoff presses always add credits
+   - Start presses attempt to add players if < 4 (success depends on credits)
+   - Window closes when first point is scored
+
+5. **No audio until style is determined:**
+   - Keeps Enhanced/Impulse styles hidden from casual players
+   - Original/Impulse: Only mechanical EM sounds
+   - Enhanced: Scream + voice lines + music
 
 **Start button during gameplay:**
-- **Before first point scored (any style):**
-  - Original/Impulse: Extra Start presses are ignored.
-  - Enhanced: Start presses attempt to add players 2-4 (see Section 12.2).
-- **After first point scored (any style):**
+- **Before first point scored:**
+  - Original/Impulse: Second press changes to Impulse; additional Start presses are ignored.
+  - Enhanced: Start presses attempt to add players 2-4 (see above).
+- **After first point scored (any style) and if credits:**
   - Pressing Start immediately ends the current game and begins tap detection for a new game.
   - This matches the behavior of an original, unmodified 1954 Screamo.
+- **After first point scored (any style) and if no credits:**
+  - Do nothing; stay in current game until it ends normally.
 
 ### 4.5 Game Over / Attract Mode
 
