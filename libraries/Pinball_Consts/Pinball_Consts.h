@@ -146,7 +146,7 @@ const byte AUDIO_PRIORITY_HIGH = 3;  // Critical (mode end, tilt, awards)
 // Diagnostics
 const unsigned int TRACK_DIAG_ENTER             =  101;
 const unsigned int TRACK_DIAG_EXIT              =  102;
-const unsigned int TRACK_DIAG_TONE              =  103;
+const unsigned int TRACK_DIAG_CRITICAL_ERROR    =  103;
 const unsigned int TRACK_DIAG_SWITCH_CLOSE      =  104;
 const unsigned int TRACK_DIAG_SWITCH_OPEN       =  105;
 const unsigned int TRACK_DIAG_LAMPS             =  111;

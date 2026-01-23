@@ -336,7 +336,7 @@ const byte NUM_COM_MODE = sizeof(comTracksMode) / sizeof(comTracksMode[0]);
 // *** SFX TRACK ARRAY ***
 const AudioSfxTrackDef sfxTracks[] = {
   // DIAG SFX
-  { 103, AUDIO_FLAG_NONE },   // Diagnostics continuous tone
+  { 103, AUDIO_FLAG_NONE },   // Critical error
   { 104, AUDIO_FLAG_NONE },   // Switch Close 1000hz
   { 105, AUDIO_FLAG_NONE },   // Switch Open 500hz
   // TILT SFX

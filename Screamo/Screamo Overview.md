@@ -1,5 +1,5 @@
 # 1954 Williams Screamo - Modernized Control System Overview
-Rev: 01-19-26b.  Re-stated by Claude Opus 4.5.
+Rev: 01-23-26.  Revised by Claude Opus 4.5.
 
 ## 1. Introduction
 
@@ -146,7 +146,9 @@ Understanding how the ball moves through the machine is critical for game logic:
 
 **Physical Areas (from playfield to shooter lane):**
 
-1. **Playfield**: Where the ball is in play.
+1. **Playfield**: Where the ball is in play. Balls can drain from the playfield only two ways:
+   - Via one of the three bottom Drain Rollovers (left, center, right; each of which has a rollover switch that closes whenever a ball drains over it).
+   - Via the Gobble Hole (a hole near the center of the playfield; this hole also has a switch that closes whenever a ball drains through it).
 
 2. **Ball Tray**: A collection area at the very bottom of the playfield that catches balls draining via the three bottom Drain Rollovers (left, center, right). The Ball Tray holds balls until the Ball Tray Release coil is fired, which opens the tray and allows balls to drop into the Ball Trough below.
 
@@ -158,63 +160,143 @@ Understanding how the ball moves through the machine is critical for game logic:
 
 4. **Ball Trough Release**: A new up/down post mechanism ('DEV_IDX_BALL_TROUGH_RELEASE') that releases one ball at a time from the Ball Trough into the Ball Lift. Each pulse releases exactly one ball.
 
-5. **Ball Lift**: A vertical channel where balls wait after being released from the Ball Trough. The Ball Lift has a switch ('SWITCH_IDX_BALL_IN_LIFT') at its base that detects when a ball is present. The player pushes the ball up through the Ball Lift using the Ball Lift Rod (a manually-operated plunger), which launches the ball into the Shooter Lane.
+5. **Ball Lift**: A vertical channel where balls wait after being released from the Ball Trough. The Ball Lift has a switch (`SWITCH_IDX_BALL_IN_LIFT`) at its base that detects when a ball is present. The player manually pushes the ball up through the Ball Lift using the Ball Lift Rod (a manually-operated plunger), which moves the ball from the base of the lift into the Shooter Lane. **The ball lift does NOT automatically launch balls.**
 
-6. **Shooter Lane**: The lane at the top of the Ball Lift where the ball rests before the player uses the shooter to launch it onto the playfield.
+   **Ball Lift Switch Behavior:**
+   - Switch CLOSED: A ball is resting at the base of the Ball Lift, ready for the player to push up.
+   - Switch OPEN: Either no ball is present, OR the player is actively pushing the Ball Lift Rod (which lifts any ball out of the switch detection area).
+   
+   **Important Ball Lift Considerations:**
+   - If the Ball Lift Rod is partially or fully pressed when we fire `DEV_IDX_BALL_TROUGH_RELEASE`, the released ball will be blocked and cannot drop into the base of the lift until the rod is fully released.
+   - If a ball is already at the base of the lift (`SWITCH_IDX_BALL_IN_LIFT` closed), we should NOT release another ball - doing so could cause a jam.
+   - During Multiball or Modes, if we release a ball to the lift but the player ignores it (focused on other balls), that ball remains at the base of the lift. When we later need to give them their next ball, we simply use the ball already waiting there rather than releasing another.
+   - While physically possible for two balls to occupy the Ball Lift simultaneously, this would cause a jam. If this occurs, the player can clear it by pressing the Ball Lift Rod fully to let balls drop into the Shooter Lane. Our software should avoid this situation by checking `SWITCH_IDX_BALL_IN_LIFT` before releasing a ball.
 
+6. **Shooter Lane**: The lane at the top of the Ball Lift where the ball rests before the player uses the shooter (main plunger) to launch it onto the playfield. **The player must pull and release the shooter to launch the ball.**
 
 **Ball Flow Summary:**
 ~~~
-Playfield | +---> Drain Rollovers (L/C/R) ---> Ball Tray ---> [Ball Tray Release coil] ---> Ball Trough | [Ball Trough Release coil] | v Ball Lift (SWITCH_IDX_BALL_IN_LIFT) | [Player pushes Ball Lift Rod] | v Shooter Lane | [Player shoots] | v Playfield
-            +---> Gobble Hole -------------------------------------------------directly---> Ball Trough |
+Playfield
+    |
+    +---> Drain Rollovers (L/C/R) ---> Ball Tray ---> [Ball Tray Release coil] ---> Ball Trough
+    |                                                                                    |
+    |                                                                        [Ball Trough Release coil]
+    |                                                                                    |
+    |                                                                                    v
+    |                                                                              Ball Lift (SWITCH_IDX_BALL_IN_LIFT)
+    |                                                                                    |
+    |                                                                        [Player pushes Ball Lift Rod]
+    |                                                                                    |
+    |                                                                                    v
+    |                                                                              Shooter Lane
+    |                                                                                    |
+    |                                                                           [Player shoots]
+    |                                                                                    |
+    +<-----------------------------------------------------------------------------------+
+
+Playfield
+    |
+    +---> Gobble Hole -------------------------------------------------directly---> Ball Trough
+                                                                                         |
+                                                                             [Ball Trough Release coil]
+                                                                                         |
+                                                                                         v
+                                                                                   Ball Lift
+                                                                                         |
+                                                                             [Player pushes Ball Lift Rod]
+                                                                                         |
+                                                                                         v
+                                                                                   Shooter Lane
+                                                                                         |
+                                                                                  [Player shoots]
+                                                                                         |
+    +<-----------------------------------------------------------------------------------+
 ~~~
+
+**Switch Reliability Notes:**
+
+- The `SWITCH_IDX_GOBBLE` (Gobble Hole) switch closes reliably every time a ball enters the Gobble Hole. With our 10ms main loop checking switch states, it is extremely unlikely to miss a ball. However, our ball tracking logic should be resilient - if we somehow miss detecting a Gobble drain, the worst consequence should be the player not receiving points for that drain, not a corrupted ball count that breaks the game.
+
+- The `SWITCH_IDX_5_BALLS_IN_TROUGH` switch reliably indicates when exactly five balls are present in the Ball Trough. When OPEN, we know at least one ball is elsewhere (playfield, Ball Tray, Ball Lift, Shooter Lane, or stuck somewhere).
+
 **Key Software Implications:**
 - When balls drain via Drain Rollovers, the Ball Tray collects them. Software must fire 'DEV_IDX_BALL_TRAY_RELEASE' to drop them into the Ball Trough before they can be dispensed.
 - When balls drain via Gobble Hole, they go directly to the Ball Trough (no Ball Tray Release needed).
-- To dispense a ball to the player, fire 'DEV_IDX_BALL_TROUGH_RELEASE' to release one ball from the Ball Trough into the Ball Lift.
+- To dispense a ball to the player, when the Ball Lift switch is open (no ball present in lift), fire 'DEV_IDX_BALL_TROUGH_RELEASE' to release one ball from the Ball Trough into the Ball Lift.
 - The 'SWITCH_IDX_BALL_IN_LIFT' switch tells software when a ball is ready for the player to push into the Shooter Lane.
 - The 'SWITCH_IDX_5_BALLS_IN_TROUGH' switch tells software whether all five balls are accounted for in the Ball Trough.
 
-**Ball Location Tracking (Master Software)**
+### 3.5 Ball Tracking
 
-Master must track ball locations to properly manage ball dispensing, especially for Enhanced Style features like Ball Save, Multiball, and timed Modes. Key tracking requirements:
+Master tracks all five balls at all times during gameplay.
 
-1. **Balls in Ball Tray**: Incremented each time a Drain Rollover switch (`SWITCH_IDX_DRAIN_LEFT`, `SWITCH_IDX_DRAIN_CENTER`, `SWITCH_IDX_DRAIN_RIGHT`) closes. These balls are NOT immediately available for dispensing.
+#### 3.5.1 Ball Locations
 
-2. **Balls in Ball Trough**: 
-   - Incremented when `SWITCH_IDX_GOBBLE` closes (Gobble Hole drains directly to trough).
-   - Incremented when Ball Tray is opened and balls drop (after firing `DEV_IDX_BALL_TRAY_RELEASE`).
-   - Decremented when `DEV_IDX_BALL_TROUGH_RELEASE` is fired to dispense a ball.
-   - The `SWITCH_IDX_5_BALLS_IN_TROUGH` switch provides a sanity check (closed = 5 balls present).
+Each ball can be in one of these locations:
+- **TRAY**: In the ball tray (above trough, drains when tray opens)
+- **TROUGH**: In the ball trough (ready to dispense)
+- **LIFT**: At the base of the ball lift (waiting for player to lift)
+- **PLAYFIELD**: On the playfield (in active play), including shooter lane
+- **KICKOUT_LEFT**: Captured in left kickout hole
+- **KICKOUT_RIGHT**: Captured in right kickout hole
 
-3. **Ball Tray Release Logic**:
-   - Before dispensing a ball via `DEV_IDX_BALL_TROUGH_RELEASE`, check if there are balls available in the Ball Trough.
-   - If the Ball Trough is empty (or nearly empty) but balls are tracked in the Ball Tray, fire `DEV_IDX_BALL_TRAY_RELEASE` first to drop them into the Ball Trough.
-   - This is critical during Multiball and timed Modes when balls must be quickly returned to the player.
+#### 3.5.2 Ball Counting Rules
 
-4. **Ball Tray Open/Close Behavior**:
-   - At game start: Ball Tray opens and remains open until the first point is scored, then closes.
-   - During gameplay: Ball Tray remains closed. Balls draining via Drain Rollovers accumulate in the Ball Tray.
-   - When a new ball is needed (drain, Ball Save, Mode ball replacement): 
-     - If Ball Trough has balls available, dispense directly.
-     - If Ball Trough is empty but Ball Tray has balls, open Ball Tray briefly to drop balls into Trough, then dispense.
+- **5-balls-in-trough switch**: Only indicates all 5 balls are in trough; does not provide count of fewer balls
+- **Ball-in-lift switch**: Indicates exactly one ball is at lift base
+- **Kickout switches**: Each indicates one ball captured in that hole
 
-5. **Why This Matters**:
-   - In Original/Impulse Style: Simpler tracking; Ball Tray stays open until first point, then we don't worry much about ball locations.
-   - In Enhanced Style: Precise tracking needed for Ball Save (return ball quickly), Multiball (track multiple balls), and timed Modes (pause timer while fetching replacement ball).
+Ball counts are derived from:
+1. Initial state: All 5 balls assumed in tray or trough at game start
+2. Dispense event: Decrement trough count when ball released to lift
+3. Lift cleared (ball-in-lift switch opens after being closed): Ball now on playfield/shooter lane
+4. Drain detected: Ball returning to tray (bottom rollovers) or trough (gobble hole)
+5. Kickout capture: Ball in kickout (detected by kickout switch)
+6. Kickout eject: Ball returns to playfield
 
-**Example Scenario - Enhanced Style Multiball**:
-- Player has 2 balls locked in kickouts, 1 ball in play.
-- Ball in play drains via center Drain Rollover into Ball Tray.
-- Ball Tray now has 1 ball; Ball Trough has 2 balls.
-- Multiball starts: need to release locked balls + give player a new ball.
-- Fire both kickouts to release locked balls onto playfield.
-- To dispense the 3rd ball: Ball Trough has 2, so dispense one.
-- Now: 3 balls on playfield, 1 in Ball Trough, 1 in Ball Tray.
-- If another ball drains to Ball Tray and we need to replace it quickly:
-  - Fire `DEV_IDX_BALL_TRAY_RELEASE` to drop both Ball Tray balls into Trough.
-  - Fire `DEV_IDX_BALL_TROUGH_RELEASE` to dispense one ball to Ball Lift.
-    - After firing Ball Trough Release coil, always confirm `SWITCH_IDX_BALL_IN_LIFT` is closed.  If that switch doesn't close within a reasonable time (e.g., 2 seconds), we have a rather serious and unexpected error to deal with.
+#### 3.5.3 Sanity Checks
+
+Master periodically validates ball counts:
+- If 5-balls-in-trough switch is closed, ballsInTrough must be 5
+- Total of all locations must equal 5
+- If mismatch detected, log warning but do not interrupt gameplay
+
+### 3.6 Ball Tray Management
+
+The Ball Tray holds balls that have drained via the three bottom rollovers (left, center, right). Balls that drain via the Gobble Hole bypass the tray and go directly to the trough.
+
+#### 3.6.1 Ball Tray Solenoid Characteristics
+
+- **Initial Power**: 200 (PWM 0-255)
+- **Hold Power**: 40 (PWM 0-255) - sufficient to keep tray open, minimizes heat
+- **Activation Time**: 200ms at initial power before reducing to hold power
+
+**Important:** While the solenoid can be held indefinitely at hold power, it will warm up over time. Minimize hold duration when possible.
+
+#### 3.6.2 Ball Tray States by Game Phase
+
+| Phase                               | Original/Impulse | Enhanced    |
+|-------------------------------------|------------------|-------------|
+| Attract                             | Closed           | Closed      |
+| Ball Recovery (waiting for 5 balls) | Open (held)      | Open (held) |
+| Gameplay (before first score)       | Open (held)      | Open (held) |
+| Gameplay (after first score)        | Closed           | See 3.6.3   |
+| Game Over                           | Closed           | Closed      |
+
+#### 3.6.3 Enhanced Mode Ball Tray During Gameplay
+
+In Enhanced mode, multiple balls may be in play or locked. When a ball drains via a bottom rollover:
+
+1. Open Ball Tray immediately
+2. Hold open for `BALL_TRAY_DRAIN_HOLD_SECONDS` (configurable constant, default 8 seconds)
+3. Close Ball Tray
+4. This allows drained balls to reach the trough for potential re-dispensing
+
+**Configurable Constant (defined at top of Screamo_Master.ino):**
+const byte BALL_TRAY_DRAIN_HOLD_SECONDS = 8;  // Seconds to hold tray open after drain
+
+If testing shows balls take longer to reach trough, increase this value.
+
 ---
 
 ## 4. Game Styles
@@ -236,7 +318,7 @@ Screamo runs in several styles. Unless otherwise noted, Master is style authorit
 
 ### 4.2 Enhanced Style
 
-- Triggered by: Double-tap of Start button (two presses within 1000ms, with at least one credit).
+- Triggered by: Double-tap of Start button (two presses within 500ms, with at least one credit).
 - A new rule set, uses:
   - Tsunami audio system.
   - Shaker motor.
@@ -259,7 +341,7 @@ Screamo runs in several styles. Unless otherwise noted, Master is style authorit
 
 ### 4.3 Impulse Style
 
-- Triggered by: Second press of Start button MORE than 1000ms after the first press (with at least one credit).
+- Triggered by: Second press of Start button MORE than 500ms after the first press (with at least one credit).
   - This allows players familiar with the hidden style to deliberately access it by pressing Start, waiting a beat, then pressing Start again.
 - Single-player only.
 - Rules identical to Original style except for flipper behavior:
@@ -274,16 +356,16 @@ Screamo runs in several styles. Unless otherwise noted, Master is style authorit
 ### 4.4 Start Button Tap Detection Summary
 
 **Window Timing:**
-- Double-tap window: 500ms (configurable via 'START_WINDOW_MS' in code)
+- Double-tap window: 500ms (configurable via 'START_STYLE_DETECT_WINDOW_MS' in code)
 - Player addition window: Remains open until first point is scored (Enhanced style only)
 
 **Three Start Patterns:**
 
 | Pattern     | Timing                                     | Credits Deducted          | Result                                                                               |
 |-------------|--------------------------------------------|---------------------------|--------------------------------------------------------------------------------------|
-| Single tap  | No 2nd press w/in 500ms                    | 1 credit                  | Original Style; Game starts immediately after 500ms expires                          |
+| Single tap  | No 2nd press within 500ms                  | 1 credit                  | Original Style; Game starts immediately after 500ms expires                          |
 | Delayed tap | 2nd press > 500ms but before 1st pt scored | 0 additional credits      | Impulse Style; Switches from Original to Impulse mode, no add'l credit deducted      |
-| Double tap  | 2nd press w/in 500ms                       | 1 credit + 1/add'l player | Enhanced Style; Game starts, add'l Start presses add players 2-4 until 1st pt scored |
+| Double tap  | 2nd press within 500ms                     | 1 credit + 1/add'l player | Enhanced Style; Game starts, add'l Start presses add players 2-4 until 1st pt scored |
 
 **Detailed Behavior:**
 
@@ -477,7 +559,7 @@ Diagnostic mode provides access to hardware testing and game settings. It is ent
 
 #### Settings to Implement (Future)
 
-The following settings are defined in EEPROM but do not yet have diagnostic UI:
+The following settings are defined in EEPROM:
 
 **Game Settings** (TODO)
 - **THEME**: Select Circus or Surf Rock music as the PRIMARY theme.  The other theme is used during Modes and Multiball.
@@ -527,7 +609,7 @@ Note that we will use the Credit Unit in all styles, as one credit is required t
 
 Master should start the Score Motor, and potentially fire the Selection Unit and/or the Relay Reset Bank for the audible/mechanical effect around the time it sends relevant messages to Slave, such as score updates.  Operation of the original Selection Unit and Relay Reset Bank will be detailed below.
 
-Master should wait a realistic motor run duration (varies depending on score digits adjusted and other factors) before stopping motor.  But typically, if the score motor runs, it will run for 0, 1, 2, or 3 full 1/4 revolutions (each 882 ms) depending on the score adjustment being made.  Sometimes the Score Motor does not run, such as for individual 10K or 100K score increments.
+Master should wait a realistic motor run duration (varies depending on score digits adjusted and other factors) before stopping motor.  But typically, if the score motor runs, it will be for 0, 1, 2, or 3 full 1/4 revolutions (each 882 ms) depending on the score adjustment being made.  Sometimes the Score Motor does not run, such as for individual 10K or 100K score increments.
 
 ### 5.1 Mechanical Timing
 
@@ -539,6 +621,7 @@ Master should wait a realistic motor run duration (varies depending on score dig
     - Slots 1 through 5: potential score advances of 10K or 100K.
     - Slot 6: rest.
   - Each slot is 147 ms (882 ms / 6).
+- Approximation is acceptable for Score Motor timing; exact 147ms slots are not required.
 
 ### 5.2 Scoring Behavior (10K and 100K)
 
@@ -582,7 +665,29 @@ Motor-paced batches:
 - During game play, firing the Relay Reset Bank consumes a full 1/4 revolution (6 slots, 882 ms) when score adjustments will not take place.
 - It is possible that other non-scoring operations may occur in the same 1/4 revolution as Relay Reset.
 
-### 5.4 Software Requirements
+### 5.4 Score Motor Usage Summary
+
+| Operation                            | Original | Impulse | Enhanced |
+|--------------------------------------|----------|---------|----------|
+| Game start (score reset)             | Yes      | Yes     | No       |
+| Small score increment (10K or 100K)  | No       | No      | No       |
+| Large score increment (50K, 500K)    | Yes      | Yes     | No       |
+| Score decrement (not used currently) | Yes      | Yes     | No       |
+
+### 5.5 Future Enhancement: Score Reset Duration Calculation
+
+Currently, only Slave knows the "last score" from previous game/power-up. Master cannot calculate exact reset duration.
+
+**Future implementation:**
+1. Master stores last score in EEPROM
+2. On power-up, Master tells Slave what "last score" to display
+3. Both Arduinos know starting score
+4. Master calculates reset duration based on number of reel decrements needed
+5. Master runs Score Motor for exactly that duration
+
+**For now:** Master assumes worst-case reset time of 2 full motor cycles (~1764ms).
+
+### 5.6 Software Requirements
 
 - Slave is responsible for:
   - Timing score lamp updates and bell sounds to emulate Score Motor behavior.
@@ -600,17 +705,18 @@ Planned or needed functionality:
 
 ### 6.1 Persistent Score Storage
 
-- Use non-volatile storage (EEPROM) on Master Arduino to save scores.
-- Saving previous score when:
-  - A game ends, or
-  - Periodically during games (for example every N iterations of the 10 ms loop equal to about 15 to 30 seconds).
-  - This is to approximate the original EM game's behavior of retaining score across power cycles, but exact previous score is NOT critical.
+- Use non-volatile storage (EEPROM) on Slave Arduino to save most-recent score.  Needn't be exact, just approximate, so updates can be infrequent.
+  - Saving previous score when:
+    - A game ends, or
+    - Periodically during games (for example every N iterations of the 10 ms loop equal to about 15 to 30 seconds).
+    - This is to approximate the original EM game's behavior of retaining score across power cycles, but exact previous score is NOT critical.
 - On power-up:
-  - Restore the last saved score and display it in Game Over / Attract mode.
+  - Slave: Restore the last saved score and display it in Game Over / Attract mode.
 - On Game Over:
-  - Save the final score (player 1 only) to non-volatile storage.
-  - For multi-player Enhanced games, when the game ends, display each player's score in sequence.
-    - Briefly flash the 1/2/3/4M lamp for player number, followed by their score, for each player.
+  - Slave saves the final score (player 1 only) to non-volatile storage, and continues to display that score until next power cycle or new game start.
+  - For multi-player Enhanced games, when the game ends, display each player's score in sequence:
+    - Briefly flash the 1/2/3/4M lamp for player number, followed by their score, and then a brief interval with score lamps off, for each player.
+  - Continue to display the last player's score(s) until next power cycle or new game start.
 - Realistic reset to zero when starting a new game:
   - Use 10K and 100K logic to "walk" the score back to zero in a visually and audibly realistic way.
   - 'startNewGame()' should:
@@ -621,10 +727,11 @@ Planned or needed functionality:
 
 - On power-up or hardware reset of Master or Slave:
   - Both Arduinos should initialize their internal state to GAME_OVER mode.
-  - Master should read persistent score from EEPROM and command Slave to display it.
+  - Slave should read persistent score from EEPROM and display it.
   - All outputs (coils, lamps) should be turned off initially.
   - Head lamps (GI and Tilt) should be turned on.
   - TILT lamp should be off.
+  - Playfield GI should be on.
 
 ### 6.3 Hardware Reset Behavior
 
@@ -637,11 +744,47 @@ Planned or needed functionality:
 
 ---
 
-## 7. Hardware Inventory - Head (Slave Arduino)
+## 7. Error Handling
+
+### 7.1 Critical Errors
+
+When Master detects a critical error, it calls `criticalError(line1, line2, line3)` which:
+
+1. Clears LCD and displays the three-line error message
+2. Displays "HOLD KNOCKOFF=RST" on line 4
+3. Plays tilt buzzer sound
+4. Plays verbal error announcement (if applicable)
+5. Disables all coils and gameplay
+6. Waits for 1-second Knockoff button hold to reset system
+
+**Critical Error Conditions:**
+- RS485 communication timeout (no response from Slave within 100ms)
+- Hardware initialization failure
+- Ball count impossible state (more than 5 balls detected)
+
+### 7.2 Recoverable Errors
+
+Some error conditions allow gameplay to continue:
+
+- **Missing ball during startup**: Wait for player to recover balls (see Section 12)
+- **Ball stuck in kickout**: Automatic retry after timeout, then continue
+- **Score motor timeout**: Log warning, continue gameplay
+
+### 7.3 Debug Logging
+
+When `debugOn = true`, Master logs to Serial:
+- Slow loop warnings (>9ms)
+- Ball location changes
+- State machine transitions
+- Switch edge detections
+
+---
+
+## 8. Hardware Inventory - Head (Slave Arduino)
 
 The Slave controls devices in the head via MOSFETs, Centipede outputs, and direct inputs.
 
-### 7.1 Coils and MOSFET Outputs
+### 8.1 Coils and MOSFET Outputs
 
 Each is driven by a MOSFET from a PWM pin:
 
@@ -669,7 +812,7 @@ Each is driven by a MOSFET from a PWM pin:
 - 'DEV_IDX_LAMP_HEAD_GI_TILT' - Head GI and Tilt lamp power  
   PWM controls brightness for head GI and Tilt. The lamps themselves are turned on and off via Centipede outputs/relays.
 
-### 7.2 Head Switch Inputs
+### 8.2 Head Switch Inputs
 
 Read via direct input pins on Slave:
 
@@ -679,7 +822,7 @@ Read via direct input pins on Slave:
 - 'PIN_IN_SWITCH_CREDIT_FULL' - Credit unit full switch  
   Opens when credit unit is full; prevents further step-up.
 
-### 7.3 Head Lamps (via Relay Modules via Centipede Outputs)
+### 8.3 Head Lamps (via Relay Modules via Centipede Outputs)
 
 Relays switch 12 VDC to the lamps; Centipede outputs control the relays.
 
@@ -695,7 +838,7 @@ Slave must:
 - Update score lamps at realistic Score Motor speeds.
 - Fire 10K unit and bells appropriately as lamp pattern changes.
 
-### 7.4 Slave LCD
+### 8.4 Slave LCD
 
 - 20x4 Digole LCD connected to Slave.
 - Used for:
@@ -704,9 +847,9 @@ Slave must:
 
 ---
 
-## 8. Hardware Inventory - Cabinet and Playfield (Master Arduino)
+## 9. Hardware Inventory - Cabinet and Playfield (Master Arduino)
 
-### 8.1 Coils, Motors, and MOSFET Outputs
+### 9.1 Coils, Motors, and MOSFET Outputs
 
 All controlled by Master via MOSFETs and PWM:
 
@@ -725,7 +868,7 @@ All controlled by Master via MOSFETs and PWM:
 - 'DEV_IDX_KNOCKER' - Knocker coil (one pulse per knock).
 - 'DEV_IDX_MOTOR_SCORE' - Score Motor control (sound only, can be held on).
 
-### 8.2 Cabinet Switches (via Centipede Inputs)
+### 9.2 Cabinet Switches (via Centipede Inputs)
 
 All cabinet switch closures, including the flipper buttons, now enter Master through Centipede #2 (switch indexes 64-127). Master still gives the flipper buttons a faster-processing path in software, but no longer wires them directly to Arduino GPIO pins.
 
@@ -739,7 +882,7 @@ All cabinet switch closures, including the flipper buttons, now enter Master thr
 - 'SWITCH_IDX_FLIPPER_LEFT_BUTTON' - Left flipper button (routed through Centipede #2).
 - 'SWITCH_IDX_FLIPPER_RIGHT_BUTTON' - Right flipper button (routed through Centipede #2).
 
-### 8.3 Playfield Switches (via Centipede Inputs)
+### 9.3 Playfield Switches (via Centipede Inputs)
 
 - Bumper switches: 'SWITCH_IDX_BUMPER_S, C, R, E, A, M, O'  
   Close when ball hits corresponding letter bumper.
@@ -766,7 +909,7 @@ All cabinet switch closures, including the flipper buttons, now enter Master thr
   'SWITCH_IDX_DRAIN_LEFT', 'SWITCH_IDX_DRAIN_CENTER', 'SWITCH_IDX_DRAIN_RIGHT'.
   These detect balls draining via the three bottom rollovers into the Ball Tray.
 
-### 8.4 Playfield Lamps (via Relay Modules via Centipede Outputs)
+### 9.4 Playfield Lamps (via Relay Modules via Centipede Outputs)
 
 Relays switch 6.3 VAC to the lamps; Centipede outputs control the relays.
 
@@ -801,7 +944,7 @@ Lamp groups and examples:
   - 'LAMP_IDX_SPOT_NUMBER_LEFT', 'LAMP_IDX_SPOT_NUMBER_RIGHT'.
   - When lit, drain at corresponding rollover awards spotted number.
 
-### 8.5 Master LCD and Audio
+### 9.5 Master LCD and Audio
 
 - Master 20x4 LCD (inside coin door):
   - Displays current mode, diagnostics screens, device names, and result messages.
@@ -813,21 +956,67 @@ Lamp groups and examples:
 
 ---
 
-## 9. Software Architecture Overview
+## 10. Software Architecture Overview
 
-### 9.1 Main Loop Timing
+### 10.1 Main Loop Timing
 
-- For Original, Enhanced, and Impulse Style games, we'll use a 10 ms main loop on both Master and Slave:
+- For Original, Enhanced, and Impulse Style games, we use a 10 ms main loop on both Master and Slave:
   - On each loop:
-    - Read inputs (Centipede and/or direct pins).
+    - Read all switch inputs once (Centipede ports).
+    - Compute switch edge detection flags (just-closed, just-opened).
+    - Update device timers and process queued coil activations.
+    - Process flippers (immediate response).
+    - Dispatch to current game phase handler.
     - Update outputs (coils, motors, lamps, audio commands).
-    - Update timers and state machines.
     - Keep track of min and max loop execution time for profiling.
-- Between loop iterations:
-  - Master Flipper input pins can be polled continuously (or at higher priority) outside the 10 ms loop to minimize flipper latency.
+- All game logic runs within the 10ms tick - **no blocking operations (delay()) during gameplay**.
 - All coils must include a software watchdog so they are not left turned on more than an expected maximum amount of time.  An exception would be the playfield Ball Tray Release Coil, which can be held open indefinitely.
 
-### 9.2 Mode/Style and State Management
+### 10.2 Non-Blocking Architecture
+
+**Critical Design Principle:** All operations during gameplay must be non-blocking. The main loop must complete within 10ms every tick.
+
+**Allowed blocking:**
+- During `setup()` for hardware initialization (delays for LCD, Tsunami, etc.)
+- During Diagnostic mode for certain tests
+
+**Not allowed during gameplay:**
+- `delay()` calls
+- Busy-wait loops for switch changes
+- Any operation that takes more than a few milliseconds
+
+**Implementation approach:**
+- Use state machines with tick counters instead of delays
+- Use device timer system for all coil activations (never direct analogWrite during gameplay)
+- Use phase/sub-phase enums to track multi-step operations
+
+### 10.3 Game Phase State Machine
+
+Master uses a game phase state machine to track the overall game state:
+
+PHASE_ATTRACT       - Waiting for Start button, processing coins 
+PHASE_STARTUP       - Ball recovery and game initialization (non-blocking sub-states) 
+PHASE_BALL_READY    - Ball in lift, waiting for player to launch 
+PHASE_BALL_IN_PLAY  - Ball on playfield, processing scoring switches 
+PHASE_BALL_ENDED    - Ball drained, advancing to next ball/player 
+PHASE_GAME_OVER     - Game finished, transitioning to Attract 
+PHASE_TILT          - Tilted, waiting for ball(s) to drain 
+PHASE_DIAGNOSTIC    - Diagnostic mode active
+
+### 10.4 Switch Processing
+
+Switch processing happens once per tick, at the start of the main loop:
+
+1. Read all Centipede input ports into `switchNewState[]`
+2. For each switch, compute:
+   - `switchJustClosedFlag[]` - true if switch just closed this tick (with debounce)
+   - `switchJustOpenedFlag[]` - true if switch just opened this tick
+3. Decrement any active debounce counters
+4. Game logic checks flags (not raw switch state) for scoring switches
+
+This ensures consistent switch state throughout the tick and prevents re-triggering.
+
+### 10.5 Mode/Style and State Management
 
 - On power-up:
   - Both Master and Slave default to GAME_OVER / Attract mode.
@@ -843,9 +1032,9 @@ Lamp groups and examples:
     - Enter Diagnostic mode.
   - If Start pressed with credits > 0:
     - Begin Start button tap detection (see Section 4.4):
-      - Single tap (no second press within 1000ms): MODE_ORIGINAL
-      - Double tap (second press within 1000ms): MODE_ENHANCED
-      - Delayed second tap (second press after 1000ms): MODE_IMPULSE
+      - Single tap (no second press within 500ms): MODE_ORIGINAL
+      - Double tap (second press within 500ms): MODE_ENHANCED
+      - Delayed second tap (second press after 500ms): MODE_IMPULSE
     - In Enhanced style only:
       - Start can be pressed up to three more times to add Players 2, 3, and 4 (one credit each).
       - New players may not be added after any points have been scored.
@@ -854,7 +1043,7 @@ Lamp groups and examples:
     - In Original/Impulse detection: Do nothing, remain in Attract mode.
     - In Enhanced detection: Play Aoooga horn sound effect and random "no credit" announcement, then return to Attract mode.
 
-### 9.3 Multi-Player Indication (Enhanced Style)
+### 10.6 Multi-Player Indication (Enhanced Style)
 
 - For multi-player Enhanced games:
   - While waiting for each player to score their first point:
@@ -874,9 +1063,9 @@ Lamp groups and examples:
 
 ---
 
-## 10. Style Rule Summaries
+## 11. Style Rule Summaries
 
-### 10.1 Original Style
+### 11.1 Original Style
 
 - Single player only.
 - Normal flippers (independent, holdable).
@@ -886,14 +1075,14 @@ Lamp groups and examples:
 - All EM sound devices used (10K Unit, Relay Reset Bank, Selection Unit, Score Motor, three Bells, Knocker).
 - No Tsunami audio or shaker motor.
 
-### 10.2 Impulse Style
+### 11.2 Impulse Style
 
 - Same as Original style, but:
   - Flippers behave as impulse flippers:
     - Press either button: both flippers fire once briefly and then drop.
     - No hold; must release and press again to flip again.
 
-### 10.3 Enhanced Style
+### 11.3 Enhanced Style
 
 - Enhanced Style is generally a superset of Original/Impulse style; i.e. existing Original/Impulse features are preserved where possible, but new features are added.
 - Up to 4 players.
@@ -910,62 +1099,44 @@ Lamp groups and examples:
 
 ---
 
-## 11. Diagnostics and Power Constraints
-
-### 11.1 Diagnostic Tests
-
-Entry:
-
-- From Game Over:
-  - Press the Diagnostic SELECT button to enter Diagnostic mode.  All lamps turn off.
-
-Navigation:
-
-- BACK: go up a level and eventually exit back to Game Over (G.I. lamps back on).
-- MINUS / PLUS: navigate through items at current level.
-- SELECT: drill down or activate test.
-
-#### 11.2.1 Lamp Tests
-
-- Individual lamps:
-  - Use MINUS/PLUS buttons to cycle through each lamp; Coin Door LCD displays lamp name; lamp lights as confirmation.
-
-#### 11.2.2 Switch Tests
-
-- Only switches on Master (playfield and cabinet) are tested.  Head switches (Credit Full/Empty) are not included.
-- As switches change state (open/close), LCD shows:
-  - Switch name.
-  - New state.
-- Audio beep on state change:
-  - 1000 Hz tone on close.
-  - 500 Hz tone on open.
-
-#### 11.2.3 Coil and Motor Tests
-
-- Use MINUS/PLUS to cycle through coil and motor names (both head and playfield).
-- Press SELECT to energize briefly.
-  - Score and Shaker Motors run until SELECT button is released.
-- Press BACK to exit.
-
-#### 11.2.4 Audio Tests
-
-- Use MINUS/PLUS to cycle through Tsunami tracks.
-- Press SELECT to play selected track.
-- Playback stops when:
-  - Track naturally ends, or
-  - BACK/MINUS/PLUS/SELECT is pressed.
-
----
-
 ## 12. Starting a Game
 
-- Upon turning on the game, whenever the machine is in Attract mode, the pop bumper, flippers, and slingshots are disabled, and if a ball is detected in either side kickout, it is ejected immediately.
-- At any time, whether in a game or not, inserting a coin or pressing the KNOCKOFF button for less than one second will add one credit (if not full) and fire the knocker.
-- **Start button during a game:**
-  - Before first point scored: Extra Start presses are ignored in Original/Impulse style; in Enhanced style, they attempt to add players (see Section 12.2).
-  - After first point scored: Pressing Start immediately ends the current game and begins tap detection for a new game (matching original 1954 behavior).
+### 12.1 Pre-Start Ball Recovery (All Game Modes)
 
-### 12.1 Original/Impulse Style
+**Critical Requirement:** Before any game can begin (Original, Impulse, or Enhanced), **all five balls must be detected in the ball trough** (`SWITCH_IDX_5_BALLS_IN_TROUGH` switch closed). This applies to all game modes equally.
+
+Upon turning on the game, whenever the machine is in Attract mode, the pop bumper, flippers, and slingshots are disabled, and if a ball is detected in either side kickout, it is ejected immediately.
+
+At any time, whether in a game or not, inserting a coin or pressing the KNOCKOFF button for less than one second will add one credit (if not full) and fire the knocker.
+
+**Start button during a game:**
+- Before first point scored: Extra Start presses are ignored in Original/Impulse style; in Enhanced style, they attempt to add players (see Section 12.3).
+- After first point scored: 
+  - If the game has a credit: Pressing Start immediately ends the current game and begins tap detection for a new game (matching original 1954 behavior).
+  - If the game has no credits: Pressing Start does nothing (remains in current game).
+
+**Ball Recovery Behavior (All Modes):**
+
+1. **When Start is pressed**, Master immediately:
+   - Opens the Ball Tray (to allow any balls in the tray to drop into the trough)
+   - Ejects any balls from the left and right kickout holes (if switch indicates ball present)
+   - **Disables flippers, pop bumper, and slingshots** - they will not respond to switch closures
+   - Waits for the 5-balls-in-trough switch to close
+
+2. **If 5 balls are NOT detected within 10 seconds:**
+   - **Enhanced Mode**: Play announcement "There's a ball missing somewhere. Find it and we'll get this coaster rolling!" Continue waiting up to 30 more seconds. If still missing, abort game start, refund credit(s), return to Attract mode.
+   - **Original/Impulse Mode**: Wait silently. The player will intuitively realize the game hasn't started because:
+     - Flippers do not respond
+     - Pop bumper and slingshots do not fire
+     - No points are scored
+     - Any balls on playfield will drain naturally into the trough
+   - Continue waiting indefinitely until 5 balls detected or Knockoff button resets system.
+
+3. **Once 5 balls are detected**, proceed with mode-specific startup sequence.
+
+**Rationale:** This design prevents starting a game with missing balls (which would confuse ball counting) and provides intuitive feedback to players. A player who walks up to a machine with balls stuck on the playfield will see them drain harmlessly, then the game will start normally.
+
+### 12.2 Original/Impulse Style Start Sequence
 
 Original style is started when the Start button tap detection window (500ms, configurable) expires without a second press.
 Impulse style is started by a delayed second tap (second press MORE than 500ms after the first).
@@ -982,30 +1153,58 @@ Impulse style is started by a delayed second tap (second press MORE than 500ms a
   - Nothing happens (no audio feedback to avoid revealing hidden styles).
   - Return to Attract mode.
 
-**Once Original or Impulse style is selected (credits >= 1):**
-  - **Ball requirement**: In Original/Impulse style, we do NOT require all five balls to be present in the Ball Trough before starting the game. This emulates original EM behavior where there was no such detection. If the `SWITCH_IDX_5_BALLS_IN_TROUGH` switch is open, we assume the player already has one ball (in the Shooter Lane, Ball Lift, or a kickout) and will dispense only four more.
-  - Turn on Score Motor.
-  - Deduct one credit (Motor cycle 1, Slot 1).
-  - Fire the Relay Reset Bank coil (Slot 1).
-  - Open the Ball Tray (Slot 1).
-  - Fire the Relay Reset Bank coil again (Slot 4).
-  - Release the 1M/100K rapid reset (Slot 5) (Handled by Slave).
-  - Reset 10K score to zero via Score Motor timing (Motor cycles 2 and possibly 3) (Handled by Slave).
-  - Turn off Score Motor (after score reset complete).
-  - If a ball is not already present in the Ball Lift (`SWITCH_IDX_BALL_IN_LIFT` is open), fire `DEV_IDX_BALL_TROUGH_RELEASE` to release one ball into Ball Lift.
-  - Ball counting:
-    - We release a maximum of five balls from the Ball Trough during the game.
-    - If `SWITCH_IDX_5_BALLS_IN_TROUGH` was open at game start, we assume one ball was already out and will release only four more.
-    - Each time a ball drains, release another ball until the ball count reaches five.
-    - Once the fifth ball drains, the game ends (even if there may be remaining balls in the Ball Lift or Shooter Lane).
-  - **Ball Tray handling**: If balls drain via the bottom Drain Rollovers and we need to dispense them via `DEV_IDX_BALL_TROUGH_RELEASE`, we must first fire `DEV_IDX_BALL_TRAY_RELEASE` to drop them from the Ball Tray into the Ball Trough.
-  - NOTE: The Ball Tray remains open until the first point is scored, then it closes.
-  - **Start button handling during Original/Impulse gameplay:**
-    - Before first point scored: Extra Start presses are ignored.
-    - After first point scored: Pressing Start ends the game and begins tap detection for a new game.
-  - Original or Impulse style gameplay begins; ends when all five balls have drained (or Start is pressed after first point).
+**Once Original or Impulse style is selected (and 5 balls in trough and at least 1 credit available):**
 
-### 12.2 Enhanced Style
+  - **Startup sequence** (with Score Motor timing per Section 5.3):
+    - Turn on Score Motor.
+    - Deduct one credit (Motor cycle 1, Slot 2).
+    - Fire the Relay Reset Bank coil (Slot 1).
+    - Open the Ball Tray via `DEV_IDX_BALL_TRAY_RELEASE` (Slot 3) - **Ball Tray stays open until first point scored**.
+    - Fire the Relay Reset Bank coil again (Slot 4).
+    - Release the 1M/100K rapid reset (Slot 5) (Handled by Slave).
+    - Reset 10K score to zero via Score Motor timing (Motor cycles 2 and possibly 3) (Handled by Slave).
+    - Turn off Score Motor (after score reset complete).
+  
+  - **First ball dispensing**:
+    - Check `SWITCH_IDX_BALL_IN_LIFT`:
+      - If CLOSED (ball already in lift): Throw critical error. This should never happen with Ball 1 since we know we have 5 balls in the trough.
+      - If OPEN (no ball in lift): Fire `DEV_IDX_BALL_TROUGH_RELEASE` to dispense one ball.
+    - Wait briefly (~2 seconds max) for `SWITCH_IDX_BALL_IN_LIFT` to close.
+    - If switch doesn't close:
+      - Try dispensing again.
+      - If still no ball detected, throw critical error.
+  
+  - **Enable gameplay devices**: Pop bumper, flipper, and slingshot solenoids now respond to corresponding switch closures. All playfield switches are monitored for scoring.
+  
+  - **During gameplay - ball drain handling**:
+    - When any Drain Rollover (`SWITCH_IDX_DRAIN_LEFT/CENTER/RIGHT`) or Gobble Hole (`SWITCH_IDX_GOBBLE`) switch closes:
+      - Ball has drained.
+      - If balls remain to dispense:
+        - Fire `DEV_IDX_BALL_TROUGH_RELEASE` to dispense next ball.
+        - If `SWITCH_IDX_BALL_IN_LIFT` doesn't close within ~2 seconds:
+          - Try dispensing again.
+          - If still no ball detected, throw critical error.
+      - If this was ball 5:
+        - Game ends.
+  
+  - **Ball Tray behavior**:
+    - Ball Tray stays OPEN from game start until first point is scored.
+    - On first point scored: Close Ball Tray via releasing `DEV_IDX_BALL_TRAY_RELEASE`.
+    - After closing, Ball Tray stays closed for rest of game.
+    - Balls draining via Drain Rollovers now accumulate in Ball Tray.
+  
+  - **Impulse style switch (delayed second Start press)**:
+    - If Start is pressed a second time AFTER 500ms but BEFORE first point scored:
+      - Switch from Original to Impulse style.
+      - NO additional credit deducted.
+      - Only change is flipper behavior (both fire together, no hold).
+      - Ball counting and all other logic remains the same.
+  
+  - **Start button during gameplay**:
+    - Before first point scored: Additional Start presses are ignored (except for Impulse switch above).
+    - After first point scored: Pressing Start (with credits) immediately ends game and begins tap detection for new game.
+
+### 12.3 Enhanced Style Start Sequence
 
 Enhanced style is started by a double-tap of Start (second press within 500ms of the first).
 
@@ -1015,24 +1214,8 @@ Enhanced style is started by a double-tap of Start (second press within 500ms of
     - Play a random "no credit" announcement (e.g., "No coin, no joyride!").
     - Return to Attract mode.
 
-**Ball recovery (if needed):**
-  - If credits >= 1:
-    - Open the Ball Tray to collect any balls in it.
-    - **Ball requirement**: In Enhanced style, we DO require all five balls to be present in the Ball Trough before starting the game. This ensures proper ball tracking for multi-player games and ball save features.
-    - If `SWITCH_IDX_5_BALLS_IN_TROUGH` is open (fewer than 5 balls):
-      - Leave pop bumper, flippers, and slingshots disabled.
-      - Set side kickouts to eject if a ball is detected there.
-      - If one or two balls are detected in side kickouts:
-        - Eject balls from kickouts.
-        - Wait until ball drains are detected (via Gobble Hole or bottom Drain Rollovers), plus a few seconds to allow drain into Ball Trough.
-      - If ball detected in Ball Lift (`SWITCH_IDX_BALL_IN_LIFT` closed):
-        - Play "There's a ball missing. Press the ball lift rod." announcement.
-        - Wait until ball is no longer detected in Ball Lift, then give player time to shoot the ball(s) and let them drain.
-      - If still < 5 balls present and nothing in kickouts or Ball Lift:
-        - Play "There's a ball missing. Try to find it and let it drain." announcement.
-        - Wait until `SWITCH_IDX_5_BALLS_IN_TROUGH` closes.
-        - Periodically remind player to find missing balls if necessary.
-      - Do NOT deduct credit or start game until all 5 balls are present.
+**Ball recovery (required before game starts):**
+  - See Section 12.1 - all 5 balls must be in trough before proceeding.
 
 **Game startup sequence (once 5 balls present and credit available):**
 
@@ -1041,13 +1224,17 @@ Enhanced style uses a **silent score reset** - no Score Motor, Relay Reset Bank,
   - Play Scream sound effect immediately (for a fun shock to the player).
   - Deduct one credit (silent - no motor timing).
   - Send silent score reset command to Slave (Slave resets lamps immediately, no bells or 10K unit).
-  - Open the Ball Tray.
+  - Since 5 balls are in the trough, Ball Tray can be closed at any time; no need to hold open as we're not trying to emulate an Original game.
   - Wait briefly for score reset to complete.
   - Play "Hey gang, let's ride the Screamo!" announcement.
   - Enable pop bumper, flippers, and slingshots.
-  - NOTE: The Ball Tray remains open until the first point is scored, then closes.
   - Play "Okay kid, you're in. Press Start again if ya wanna admit any of your little friends." announcement.
-  - Release the first ball into Ball Lift via `DEV_IDX_BALL_TROUGH_RELEASE`.
+  - Release the first ball into Ball Lift:
+    - First check `SWITCH_IDX_BALL_IN_LIFT`:
+      - If CLOSED: A ball is already at the base of the lift. Do NOT release another ball. This would normally never happen, but for multi-player games, if a previous player failed to launch their ball, it could be left there.
+      - If OPEN: Fire `DEV_IDX_BALL_TROUGH_RELEASE` to release one ball into the Ball Lift.
+    - Wait up to ~2 seconds for `SWITCH_IDX_BALL_IN_LIFT` to close (confirming ball arrived).
+    - If still no ball detected, throw critical error.
 
 **Player addition window (until first point is scored):**
 
@@ -1084,7 +1271,6 @@ During this window, Master monitors for the following events. These events are n
      - Mark that hill climb has started (ignore subsequent Ball Lift switch changes).
      - **Player addition window remains open** - players 2-4 can still be added.
      - Continue waiting for first point.
-     - **Note:** Once the ball has been raised out of the Ball Lift, we assume it is in the Shooter Lane. If the ball rolls back down and closes the Ball Lift switch again, we ignore it - the hill climb state does not restart or change.
 
   4. **Hill climb timeout (30 seconds elapsed since hill climb started):**
      - Stop Ball 1 Lift sounds.
@@ -1106,24 +1292,38 @@ During this window, Master monitors for the following events. These events are n
      - Start the first music track.
      - Enhanced style gameplay begins.
 
+**Ball Tray strategy during Enhanced gameplay:**
+
+Unlike Original/Impulse style where the Ball Tray closes after the first point and stays closed, Enhanced style keeps the Ball Trough "stocked" by opening the Ball Tray whenever a ball drains via Drain Rollovers:
+
+- When `SWITCH_IDX_DRAIN_LEFT`, `SWITCH_IDX_DRAIN_CENTER`, or `SWITCH_IDX_DRAIN_RIGHT` closes:
+  - Open Ball Tray via `DEV_IDX_BALL_TRAY_RELEASE`.
+  - Hold open for `BALL_TRAY_DRAIN_HOLD_SECONDS` (configurable, default 8 seconds).
+  - Close Ball Tray.
+  - This ensures balls are available for instant dispensing (Ball Save, Multiball, Mode replacement).
+
+- When `SWITCH_IDX_GOBBLE` closes:
+  - Ball goes directly to Ball Trough (no Ball Tray involvement).
+  - No action needed on Ball Tray.
+
 **Start button handling during Enhanced gameplay:**
   - Before first point scored: Start presses attempt to add players (handled above).
   - After first point scored: Pressing Start ends the game and begins tap detection for a new game.
 
 **Game end:**
-  - Enhanced style gameplay ends when all five balls have drained for all players, or when Start is pressed after first point.
+  - Enhanced style gameplay ends when all five balls have drained for all players, or when Start is pressed after first point (with credits).
 
 ---
 
 ## 13. Original/Impulse Style Rule Details
+
 ### 13.1 Switch and Lamp Overview
 
 - Each playfield switch has a distinct behavior and score impact, depending on whether it is lit (if it can be lit) and the status of the simulated Selection Unit and other simulated electromechanical devices.
 - NOTE: When we refer to the Selection Unit and the 10K Unit, these are physical units that fire for sound only; their behavior is simulated in software.
 
   - Inserting a coin into the coin mech adds one credit (if not full) and fires the Knocker.
-  - Original rules call for a five-ball game; no extra balls are awarded. Because the Ball Trough Release mechanism is new, and because we have disabled an original gate that held balls drained via the Gobble Hole, we will use the new ball release mechanism to release five balls per game.
-    - If there are fewer than five balls in the Ball Trough when player attempts to start a game, we proceed anyway (see Section 12.1).
+  - Original rules call for a five-ball game; no extra balls are awarded.
   - NOTE: On original game, the 10K Bell is physically tied to the 10K Unit, so every 10K score increment rings the bell. In this simulation, therefore, we will ring the 10K Bell on every 10K score increment.
   - On every 100K score increment, we will ring the 100K Bell (and also the 10K Bell, since 100K includes a 10K increment).
   - Each time a WHITE INSERT is lit (even if already lit), we will ring the Selection Bell.
@@ -1322,7 +1522,7 @@ The three physical bells in the head are also used during normal Enhanced gamepl
     - Additional Start presses (before first point scored) add Players 2, 3, and 4 (one credit each).
     - New players may not be added after any points have been scored.
   - Deduct credits appropriately.
-  - See Section 12.2 for detailed Enhanced style startup sequence including player addition, audio feedback, and first ball motor/audio sequence.
+  - See Section 12.3 for detailed Enhanced style startup sequence including player addition, audio feedback, and first ball motor/audio sequence.
 
 ### 14.5 Ball Save
 
@@ -1438,7 +1638,7 @@ The three physical bells in the head are also used during normal Enhanced gamepl
 - If multiball is not active, proceed to next ball or Game Over as appropriate.
 - If Game Over:
   - Play Game Over audio line.
-  - Display each player's score in sequence on score lamps as described above (see Section 9.3).
+  - Display each player's score in sequence on score lamps as described above (see Section 10.6).
   - Resume Attract mode.
 
 ---

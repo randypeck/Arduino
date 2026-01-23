@@ -247,7 +247,7 @@ const byte NUM_DIAG_COILS = 22;
 // *** LINE 1: Track number + type + category ***
 const char diagAudioL1_0[]   PROGMEM = "0101 COM DIAG";
 const char diagAudioL1_1[]   PROGMEM = "0102 COM DIAG";
-const char diagAudioL1_2[]   PROGMEM = "0103 SFX DIAG";
+const char diagAudioL1_2[]   PROGMEM = "0103 COM DIAG";
 const char diagAudioL1_3[]   PROGMEM = "0104 SFX DIAG";
 const char diagAudioL1_4[]   PROGMEM = "0105 SFX DIAG";
 const char diagAudioL1_5[]   PROGMEM = "0111 COM DIAG";
@@ -548,7 +548,7 @@ const char diagAudioL1_298[] PROGMEM = "2068 MUS SURF";
 // *** LINE 2: Short descriptions ***
 const char diagAudioL2_0[]   PROGMEM = "Entering diagnostics";
 const char diagAudioL2_1[]   PROGMEM = "Exiting diagnostics";
-const char diagAudioL2_2[]   PROGMEM = "Continuous tone";
+const char diagAudioL2_2[]   PROGMEM = "Critical error";
 const char diagAudioL2_3[]   PROGMEM = "Switch close 1000hz";
 const char diagAudioL2_4[]   PROGMEM = "Switch open 500hz";
 const char diagAudioL2_5[]   PROGMEM = "Lamps";
