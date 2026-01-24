@@ -1,4 +1,4 @@
-// Screamo_Master.INO Rev: 01/23/26
+// Screamo_Master.INO Rev: 01/23/26b
 // 11/12/25: Moved Right Kickout from pin 13 to pin 44 to avoid MOSFET firing twice on power-up.  Don't use MOSFET on pin 13.
 // 12/28/25: Changed flipper inputs from direct Arduino inputs to Centipede inputs.
 // 01/07/26: Added "5 Balls in Trough" switch to Centipede inputs. All switches tested and working.
@@ -14,30 +14,23 @@
 #include <Pinball_Audio_Tracks.h>  // Audio track definitions (COM, SFX, MUS)
 
 const byte THIS_MODULE = ARDUINO_MAS;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "MASTER 01/22/26";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "MASTER 01/23/26b";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which makes it a global.
 // And no need to pass lcdString[] to any functions that use it!
 
-bool initialBootDisplayShown = false;
-unsigned long bootDisplayStartMs = 0;
-const unsigned long BOOT_DISPLAY_DURATION_MS = 3000;  // Show rev date
+// ********************************************************************************************************************************
+// ************************************************** HARDWARE DEFINITIONS ********************************************************
+// ********************************************************************************************************************************
 
-// **************************************
-// ***** LAMP STRUCTS AND CONSTANTS *****
-// **************************************
-
-// Define a struct to store lamp parameters.
-// Centipede #1 (0..63) is LAMP OUTPUTS
-// Centipede #2 (64..127) is SWITCH INPUTS
-// In this case, pinNum refers to Centipede #1 output shift register pin number (0..63).
+// ***** LAMP DEFINITIONS *****
 struct LampParmStruct {
   byte pinNum;       // Centipede pin number for this lamp (0..63)
   byte groupNum;     // Group number for this lamp
   bool stateOn;      // true = lamp ON; false = lamp OFF
 };
 
-const bool LAMP_ON                    = true;  // Or maybe these should be LOW / HIGH?
-const bool LAMP_OFF                   = false;
+const bool LAMP_ON  = true;
+const bool LAMP_OFF = false;
 
 // Populate lampParm with pin numbers, groups, and initial state OFF
 // Pin numbers range from 0 to 63 because these lamps are on Centipede #1 (outputs)
@@ -92,23 +85,15 @@ LampParmStruct lampParm[NUM_LAMPS_MASTER] = {
   { 59, LAMP_GROUP_NONE,    LAMP_OFF }  // SPOT_NUMBER_RIGHT = 46
 };
 
-// ****************************************
-// ***** SWITCH STRUCTS AND CONSTANTS *****
-// ****************************************
-
-// Define a struct to store switch parameters.
+// ***** SWITCH DEFINITIONS *****
 // Centipede #1 (0..63) is LAMP OUTPUTS
 // Centipede #2 (64..127) is SWITCH INPUTS
-// In this case, pinNum refers to Centipede #2 input shift register pin number (64..127).
-// The loopConst and loopCount are going to change so that we always trigger on a switch closure, but use debounce delay before checking if it's open or closed again.
-// That is, unless we find we're getting phantom closures, in which case we'll need to debounce both closing and opening.
 struct SwitchParmStruct {
   byte pinNum;        // Centipede #2 pin number for this switch (64..127)
   byte loopConst;     // Number of 10ms loops to confirm stable state change
   byte loopCount;     // Current count of 10ms loops with stable state (initialized to zero)
 };
 
-// Store Centipede #2 pin numbers (64..127) for switches (original pins + 64)
 SwitchParmStruct switchParm[NUM_SWITCHES_MASTER] = {
   { 118,  0,  0 },  // SWITCH_IDX_START_BUTTON         =  0  (54 + 64)
   { 115,  0,  0 },  // SWITCH_IDX_DIAG_1               =  1  (51 + 64)
@@ -152,20 +137,7 @@ SwitchParmStruct switchParm[NUM_SWITCHES_MASTER] = {
   { 124,  0,  0 }   // SWITCH_IDX_FLIPPER_RIGHT_BUTTON = 39  (61 + 64)
 };
 
-// ************************************************
-// ***** COIL AND MOTOR STRUCTS AND CONSTANTS *****
-// ************************************************
-
-// Define a struct to store coil/motor pin number, power, and time parms.  Coils that may be held on include a hold strength.
-// In this case, pinNum refers to an actual Arduino Mega R3 I/O pin number.
-// For Flippers, original Ball Gate, new Ball Release Post, and other coils that may be held after initial activation, include a
-// "hold strength" parm as well as initial strength and time on.
-// If Hold Strength == 0, then simply release after hold time; else change to Hold Strength until released by software.
-// Example usage:
-//   analogWrite(deviceParm[DEV_IDX_FLIPPER_LEFT].pinNum, deviceParm[DEV_IDX_FLIPPER_LEFT].powerInitial);
-//   delay(deviceParm[DEV_IDX_FLIPPER_LEFT].timeOn);
-//   analogWrite(deviceParm[DEV_IDX_FLIPPER_LEFT].pinNum, deviceParm[DEV_IDX_FLIPPER_LEFT].powerHold);
-// countdown will be set to "timeOn" and decremented every 10ms in main loop until it reaches zero, at which time power will be set to powerHold.
+// ***** COIL AND MOTOR DEFINITIONS *****
 struct DeviceParmStruct {
   byte   pinNum;        // Arduino pin number for this coil/motor
   byte   powerInitial;  // 0..255 PWM power level when first energized
@@ -196,54 +168,13 @@ DeviceParmStruct deviceParm[NUM_DEVS_MASTER] = {
   { 25, 255,  0,   0, 0, 0 }   // MOTOR_SCORE         = 13, A/C SSR; on/off only; NOT PWM.
 };
 
-// *** AUDIO PLAYBACK STATE ***
-unsigned int audioCurrentComTrack      = 0;  // Currently playing COM track (0 = none)
-unsigned int audioCurrentSfxTrack      = 0;  // Currently playing SFX track (0 = none)
-unsigned int audioCurrentMusicTrack    = 0;  // Currently playing MUS track (0 = none)
-unsigned long audioComEndMillis        = 0;  // When current COM track ends
-unsigned long audioMusicEndMillis      = 0;  // When current music track ends
-unsigned long audioLiftLoopStartMillis = 0;  // When lift loop started (for re-loop)
+const int8_t COIL_REST_TICKS = -8;  // Coil rest period: 8 ticks * 10ms = 80ms
 
-// *** TSUNAMI GAIN SETTINGS ***
-// Master gain can range from -40dB to 0dB (full level); defaults to -10dB to allow some headroom.
-// NOTE: Constants now defined in Pinball_Audio.h to avoid duplication
+// ********************************************************************************************************************************
+// ***************************************************** GAME STATE ***************************************************************
+// ********************************************************************************************************************************
 
-int8_t tsunamiGainDb      = TSUNAMI_GAIN_DB_DEFAULT;  // Persisted Tsunami master gain
-int8_t tsunamiVoiceGainDb = 0;  // Per-category relative gain (COM/Voice)
-int8_t tsunamiSfxGainDb   = 0;  // Per-category relative gain (SFX)
-int8_t tsunamiMusicGainDb = 0;  // Per-category relative gain (Music)
-int8_t tsunamiDuckingDb = -20;  // Ducking gain offset (default -20dB)
-
-// ********************************
-// ****** DIAGNOSTICS SETUP *******
-// ********************************
-
-void markDiagnosticsDisplayDirty(bool forceSuiteReset = false);  // Must forward declare since it has a default parm.
-
-byte diagnosticSuiteIdx  = 0;  // 0..NUM_DIAG_SUITES-1: which top-level suite selected
-byte diagnosticState     = 0;  // 0 = at suite menu, >0 = inside a suite (future use)
-
-const byte NUM_DIAG_SUITES = 6;
-const char* diagSuiteNames[NUM_DIAG_SUITES] = {
-  "VOLUME",
-  "LAMP TESTS",
-  "SWITCH TESTS",
-  "COIL/MOTOR TESTS",
-  "AUDIO TESTS",
-  "SETTINGS"
-};
-
-const byte NUM_DIAG_BUTTONS = 4;
-byte diagButtonLastState[NUM_DIAG_BUTTONS] = { 0, 0, 0, 0 };
-bool attractDisplayDirty = true;
-bool diagDisplayDirty = true;
-byte diagLastRenderedSuite = 0xFF;
-
-// ******************************************
-// ***** GAME STATE STRUCTURE AND VARS ******
-// ******************************************
-
-// Game phase state machine (Overview Section 10.3)
+// ***** GAME PHASE CONSTANTS *****
 const byte PHASE_ATTRACT     = 0;
 const byte PHASE_STARTUP     = 1;  // Ball recovery and game initialization
 const byte PHASE_BALL_READY  = 2;  // Ball in lift, waiting for player to launch
@@ -252,10 +183,11 @@ const byte PHASE_BALL_ENDED  = 4;  // Ball drained, advancing to next ball/playe
 const byte PHASE_GAME_OVER   = 5;  // Game finished, transitioning to Attract
 const byte PHASE_TILT        = 6;  // Tilted, waiting for ball(s) to drain
 const byte PHASE_DIAGNOSTIC  = 7;  // Diagnostic mode
+const byte PHASE_BALL_SEARCH = 8;  // Searching for missing balls
 
 byte gamePhase = PHASE_ATTRACT;
 
-// Startup sub-states (for non-blocking startup sequence)
+// ***** STARTUP SUB-STATE CONSTANTS *****
 const byte STARTUP_INIT               = 0;
 const byte STARTUP_EJECT_KICKOUTS     = 1;
 const byte STARTUP_OPEN_TRAY          = 2;
@@ -276,8 +208,7 @@ byte startupSubState = STARTUP_INIT;
 unsigned int startupTickCounter = 0;
 unsigned int startupTimeoutTicks = 0;
 
-// Game state tracks multi-player state, ball tracking, and timing.
-// Memory efficient: ~24 bytes total.
+// ***** GAME STATE STRUCTURE *****
 struct GameStateStruct {
   byte numPlayers;           // 1-4 (Enhanced) or 1 (Original/Impulse)
   byte currentPlayer;        // 1-4 (1-indexed for display)
@@ -299,58 +230,130 @@ struct GameStateStruct {
 
 GameStateStruct gameState;
 
-// ******************************************
-// ***** START BUTTON TAP DETECTION *********
-// ******************************************
-
-// Start button tap detection window
+// ***** START BUTTON DETECTION *****
 const unsigned long START_STYLE_DETECT_WINDOW_MS = 500;  // 500ms to detect double-tap for Enhanced
+unsigned long startFirstPressMs = 0;
+byte startTapCount = 0;
+bool startWaitingForSecondTap = false;
 
-// Coil rest period: after timeOn expires and powerHold==0, coil enters rest for this many ticks.
-// Negative countdown values indicate rest period; 0 = idle; positive = active.
-// 8 ticks * 10ms = 80ms rest, ensuring coils can't rapid-fire dangerously.
-const int8_t COIL_REST_TICKS = -8;
+// ***** BALL SEARCH STATES *****
+// Ball search sub-state constants
+const byte BALL_SEARCH_INIT           = 0;  // Initialize search
+const byte BALL_SEARCH_EJECT_KICKOUTS = 1;  // Fire both kickouts
+const byte BALL_SEARCH_OPEN_TRAY      = 2;  // Open ball tray
+const byte BALL_SEARCH_WAIT_TRAY      = 3;  // Wait 5 seconds with tray open
+const byte BALL_SEARCH_CLOSE_TRAY     = 4;  // Close ball tray (if needed)
+const byte BALL_SEARCH_MONITOR        = 5;  // Passive monitoring loop
 
-// *** FLIPPER STATE ***
-// Flippers need immediate response, tracked separately from other coils.
+byte ballSearchSubState = BALL_SEARCH_INIT;
+unsigned long ballSearchLastKickoutMs = 0;
+unsigned long ballSearchLastTrayMs = 0;
+const unsigned long BALL_SEARCH_KICKOUT_INTERVAL_MS = 15000;  // 15 seconds
+const unsigned long BALL_SEARCH_TRAY_INTERVAL_MS = 60000;     // 60 seconds
+const unsigned long BALL_SEARCH_TRAY_OPEN_DURATION_MS = 5000; // 5 seconds
+
+// ***** BALL TRAY TIMEOUT *****
+// If we start a game and need to do a ball search, give up after this much time has passed.
+unsigned long ballTrayOpenStartMs = 0;
+const unsigned long BALL_TRAY_OPEN_TIMEOUT_MS = 30000;  // 30 seconds for testing (change to 300000 for 5 minutes)
+
+// ***** BALL DETECTION STABILITY CHECK *****
+// When waiting for balls to arrive in trough, require "5 balls" switch to remain closed for this long
+// to confirm balls are settled (not just rolling over the switch momentarily).
+const unsigned long BALL_DETECTION_STABILITY_MS = 1000;  // 1 second (adjustable)
+unsigned long ballDetectionStableStartMs = 0;  // When switch first closed (for stability tracking)
+
+// ***** GAME STYLE TRACKING *****
+const byte GAME_STYLE_ORIGINAL = 0;
+const byte GAME_STYLE_ENHANCED = 1;
+const byte GAME_STYLE_IMPULSE  = 2;
+
+byte gameStyle = 255;  // Selected style (255 = none selected, set by start button taps)
+
+// ***** FLIPPER STATE *****
 bool leftFlipperHeld = false;
 bool rightFlipperHeld = false;
 
-// Knockoff button state
+// ***** KNOCKOFF BUTTON STATE *****
 unsigned long knockoffPressStartMs = 0;
 bool knockoffBeingHeld = false;
-const unsigned long KNOCKOFF_RESET_HOLD_MS = 1000;     // Hold knockoff for 1s to trigger reset
+const unsigned long KNOCKOFF_RESET_HOLD_MS = 1000;  // Hold knockoff for 1s to trigger reset
 
-// ********************************************************************************************************************
-// ********************************************************************************************************************
-// ********************************************************************************************************************
+// ********************************************************************************************************************************
+// ******************************************************** AUDIO STATE ***********************************************************
+// ********************************************************************************************************************************
 
-// *** SERIAL LCD DISPLAY CLASS ***
-Pinball_LCD* pLCD2004 = nullptr;  // pLCD2004 is #included in Pinball_Functions.h, so it's effectively a global variable.
+// ***** PLAYBACK TRACKING *****
+unsigned int audioCurrentComTrack      = 0;  // Currently playing COM track (0 = none)
+unsigned int audioCurrentSfxTrack      = 0;  // Currently playing SFX track (0 = none)
+unsigned int audioCurrentMusicTrack    = 0;  // Currently playing MUS track (0 = none)
+unsigned long audioComEndMillis        = 0;  // When current COM track ends
+unsigned long audioMusicEndMillis      = 0;  // When current music track ends
+unsigned long audioLiftLoopStartMillis = 0;  // When lift loop started (for re-loop)
 
-// *** RS485/DIGITAL MESSAGE CLASS ***
+// ***** TSUNAMI GAIN SETTINGS *****
+int8_t tsunamiGainDb      = TSUNAMI_GAIN_DB_DEFAULT;  // Persisted Tsunami master gain
+int8_t tsunamiVoiceGainDb = 0;  // Per-category relative gain (COM/Voice)
+int8_t tsunamiSfxGainDb   = 0;  // Per-category relative gain (SFX)
+int8_t tsunamiMusicGainDb = 0;  // Per-category relative gain (Music)
+int8_t tsunamiDuckingDb   = -20;  // Ducking gain offset (default -20dB)
+
+// ********************************************************************************************************************************
+// ***************************************************** DIAGNOSTICS **************************************************************
+// ********************************************************************************************************************************
+
+// ***** DIAGNOSTIC SUITE CONSTANTS *****
+const byte NUM_DIAG_SUITES = 6;
+const char* diagSuiteNames[NUM_DIAG_SUITES] = {
+  "VOLUME",
+  "LAMP TESTS",
+  "SWITCH TESTS",
+  "COIL/MOTOR TESTS",
+  "AUDIO TESTS",
+  "SETTINGS"
+};
+
+const byte DIAG_SUITE_VOLUME   = 0;
+const byte DIAG_SUITE_LAMPS    = 1;
+const byte DIAG_SUITE_SWITCHES = 2;
+const byte DIAG_SUITE_COILS    = 3;
+const byte DIAG_SUITE_AUDIO    = 4;
+const byte DIAG_SUITE_SETTINGS = 5;
+
+// ***** DIAGNOSTIC STATE *****
+byte diagnosticSuiteIdx = 0;
+byte diagnosticState = 0;
+const byte NUM_DIAG_BUTTONS = 4;
+byte diagButtonLastState[NUM_DIAG_BUTTONS] = { 0, 0, 0, 0 };
+bool attractDisplayDirty = true;
+bool diagDisplayDirty = true;
+byte diagLastRenderedSuite = 0xFF;
+
+// Forward declaration for function with default parameter
+void markDiagnosticsDisplayDirty(bool forceSuiteReset = false);
+
+// ********************************************************************************************************************************
+// ***************************************************** DISPLAY STATE ************************************************************
+// ********************************************************************************************************************************
+
+bool initialBootDisplayShown = false;
+unsigned long bootDisplayStartMs = 0;
+const unsigned long BOOT_DISPLAY_DURATION_MS = 3000;  // Show rev date for 3 seconds
+
+// ********************************************************************************************************************************
+// *************************************************** HARDWARE OBJECTS ***********************************************************
+// ********************************************************************************************************************************
+
+Pinball_LCD* pLCD2004 = nullptr;
 #include <Pinball_Message.h>
 Pinball_Message* pMessage = nullptr;
+Pinball_Centipede* pShiftRegister = nullptr;
+Tsunami* pTsunami = nullptr;
 
-// *** PINBALL_CENTIPEDE SHIFT REGISTER CLASS ***
-// #include <Wire.h> (required by Pinball_Centipede) is already in <Pinball_Centipede.h> so not needed here.
-// #include <Pinball_Centipede.h> is already in <Pinball_Functions.h> so not needed here.
-Pinball_Centipede* pShiftRegister = nullptr;  // Only need ONE object for one or two Centipede boards
+// ********************************************************************************************************************************
+// ***************************************************** SWITCH STATE *************************************************************
+// ********************************************************************************************************************************
 
-// *** TSUNAMI WAV PLAYER CLASS ***
-Tsunami* pTsunami = nullptr;  // Tsunami WAV player object pointer
-
-// *** MISC CONSTANTS AND GLOBALS ***
-char         msgType          = ' ';
-
-// 10ms scheduler
-const unsigned int LOOP_TICK_MS = 10;
-unsigned long loopNextMillis = 0;
-
-bool debugOn    = false;
-
-// *** SWITCH STATE TABLE: Arrays contain 4 elements (unsigned ints) of 16 bits each = 64 bits = 1 Centipede
-// Although we're using two Centipede boards (one for OUTPUTs, one for INPUTs), we only need one set of switch state arrays.
 unsigned int switchOldState[4] = { 65535, 65535, 65535, 65535 };
 unsigned int switchNewState[4] = { 65535, 65535, 65535, 65535 };
 bool switchJustClosedFlag[NUM_SWITCHES_MASTER] = { false };
@@ -359,86 +362,78 @@ byte switchDebounceCounter[NUM_SWITCHES_MASTER] = { 0 };
 byte switchLastState[NUM_SWITCHES_MASTER] = { 0 };
 const byte SWITCH_DEBOUNCE_TICKS = 5;  // 50ms debounce
 
+// ********************************************************************************************************************************
+// ****************************************************** SCHEDULER ***************************************************************
+// ********************************************************************************************************************************
 
-// *****************************************************************************************
-// **************************************  S E T U P  **************************************
-// *****************************************************************************************
+const unsigned int LOOP_TICK_MS = 10;
+unsigned long loopNextMillis = 0;
+
+// ***** MISC GLOBALS *****
+char msgType = ' ';
+bool debugOn = false;
+
+// ********************************************************************************************************************************
+// ********************************************************* SETUP ****************************************************************
+// ********************************************************************************************************************************
 
 void setup() {
 
-  initScreamoMasterArduinoPins();                    // Arduino direct I/O pins only.
+  initScreamoMasterArduinoPins();  // Arduino direct I/O pins only.
+  setAllDevicesOff();              // Set initial state for all MOSFET PWM and Centipede outputs
 
-  setAllDevicesOff();  // Set initial state for all MOSFET PWM and Centipede outputs
-
-  // *** INITIALIZE PINBALL_CENTIPEDE SHIFT REGISTER ***
-  // WARNING: Instantiating Pinball_Centipede class hangs the system if hardware is not connected.
   // Initialize I2C and Centipede as early as possible to minimize relay-on (turns on all lamps) at power-up
-  Wire.begin();                            // Join the I2C bus as a master for Centipede shift register.
-  pShiftRegister = new Pinball_Centipede;  // C++ quirk: no parens in ctor call if no parms; else thinks it's fn decl'n.
-  pShiftRegister->begin();                 // Set all registers to default.
+  Wire.begin();
+  pShiftRegister = new Pinball_Centipede;
+  pShiftRegister->begin();
   pShiftRegister->initScreamoMasterCentipedePins();
 
-  setPWMFrequencies(); // Set non-default PWM frequencies so coils don't buzz.
+  setPWMFrequencies();  // Set non-default PWM frequencies so coils don't buzz
+  clearAllPWM();        // Clear any PWM outputs that may have been set
 
-  clearAllPWM();  // Clear any PWM outputs that may have been set during setPWMFrequencies()
+  // Initialize serial ports
+  Serial.begin(SERIAL0_SPEED);  // PC serial monitor window 115200
 
-  // *** INITIALIZE SERIAL PORTS ***
-  Serial.begin(SERIAL0_SPEED);   // PC serial monitor window 115200.  Change if using thermal mini printer.
-  // Serial1 LCD2004 instantiated via pLCD2004->begin.
-  // Serial2 RS485   instantiated via pMessage->begin.
-  // Serial3 Tsunami WAV Trigger instantiated via tsunami->begin.
-
-  // *** INITIALIZE RS485 MESSAGE CLASS AND OBJECT *** (Heap uses 30 bytes)
-  // WARNING: Instantiating Message class hangs the system if hardware is not connected.
-  pMessage = new Pinball_Message;  // C++ quirk: no parens in ctor call if no parms; else thinks it's fn decl'n.
+  // Initialize RS485 Message
+  pMessage = new Pinball_Message;
   pMessage->begin(&Serial2, SERIAL2_SPEED);
 
-  // *** INITIALIZE LCD CLASS AND OBJECT *** (Heap uses 98 bytes)
-  // Insert a delay() in order to give the Digole 2004 LCD time to power up and be ready to receive commands (esp. the 115K speed command).
-  delay(750);  // 500ms was occasionally not enough.
-  // We must pass parms to the constructor (vs begin) because needed by parent DigoleSerialDisp.
-  pLCD2004 = new Pinball_LCD(&Serial1, SERIAL1_SPEED);  // Instantiate the object and assign the global pointer.
-  pLCD2004->begin();  // 20-char x 4-line LCD display via Serial 1.
-  pLCD2004->println(lcdString);  // Display app version, defined above.
+  // Initialize LCD
+  delay(750);  // Give Digole 2004 LCD time to power up
+  pLCD2004 = new Pinball_LCD(&Serial1, SERIAL1_SPEED);
+  pLCD2004->begin();
+  pLCD2004->println(lcdString);  // Display app version
 
   // Set boot display timing
   bootDisplayStartMs = millis();
-  initialBootDisplayShown = false;  // Will transition after delay
+  initialBootDisplayShown = false;
 
-  // *** INITIALIZE TSUNAMI WAV PLAYER OBJECT ***
-  // Files must be WAV format, 16-bit PCM, 44.1kHz, Stereo.  Details in Tsunami.h comments.
-  pTsunami = new Tsunami();  // Create Tsunami object on Serial3
-  pTsunami->start();         // Start Tsunami WAV player
-  delay(10);                 // Give Tsunami time to initialize  // *************************** Change to 1000 if 10ms is insufficient **********************
-  pTsunami->stopAllTracks(); // Clear any leftover playback
+  // Initialize Tsunami WAV player
+  pTsunami = new Tsunami();
+  pTsunami->start();
+  delay(10);
+  pTsunami->stopAllTracks();
   delay(50);
-  // Ensure Tsunami is in a clean state on any reset:
-  //  - stop any tracks that might have been left playing
-  //  - reload and apply master / category gains
-  //  - clear our "currently playing" state
   audioResetTsunamiState();
 
-  setGILamps(true);          // Turn on playfield G.I. lamps
-  pMessage->sendMAStoSLVGILamp(true);  // Tell Slave to turn on its G.I. lamps as well
+  // Initialize lamps and game state
+  setGILamps(true);
+  pMessage->sendMAStoSLVGILamp(true);
   setAttractLamps();
+  initGameState();
+}
 
-  initGameState();  // Initialize game state to attract mode defaults
-
-}  // End of setup()
-
-// *****************************************************************************************
-// ***************************************  L O O P  ***************************************
-// *****************************************************************************************
+// ********************************************************************************************************************************
+// ********************************************************* LOOP *****************************************************************
+// ********************************************************************************************************************************
 
 void loop() {
   // Simple 10ms tick-based main loop. All game logic runs at this cadence.
   unsigned long now = millis();
   if ((long)(now - loopNextMillis) < 0) {
-    // Not time yet for next tick.
-    return;
+    return;  // Not time yet for next tick
   }
 
-  // Okay we're going to start our main loop. Record start time for performance monitoring.
   unsigned long loopStartMicros = micros();
   loopNextMillis = now + LOOP_TICK_MS;
 
@@ -454,37 +449,50 @@ void loop() {
   // ALWAYS process (every tick, all phases)
   updateDeviceTimers();
   processFlippers();
-  processKnockoffButton();  // Safety feature - works in ALL phases
+  processKnockoffButton();
 
   // Process coin entry in non-diagnostic phases
   if (gamePhase != PHASE_DIAGNOSTIC) {
     processCoinEntry();
   }
 
-  // Dispatch by game phase (stub - will implement phase handlers)
+  // Dispatch by game phase
   switch (gamePhase) {
   case PHASE_DIAGNOSTIC:
     updateModeDiagnostic();
+    break;
+
+  case PHASE_BALL_SEARCH:
+    updatePhaseBallSearch();
     break;
 
   default:
     // Temporary attract mode: show screen and check for diagnostic entry
     renderAttractDisplayIfNeeded();
 
-    // Volume adjustment with LEFT/RIGHT buttons (Overview mentions this in Attract mode)
+    // Auto-eject any balls in side kickouts (cleanup after games)
+    if (switchClosed(SWITCH_IDX_KICKOUT_LEFT) && deviceParm[DEV_IDX_KICKOUT_LEFT].countdown == 0) {
+      activateDevice(DEV_IDX_KICKOUT_LEFT);
+    }
+    if (switchClosed(SWITCH_IDX_KICKOUT_RIGHT) && deviceParm[DEV_IDX_KICKOUT_RIGHT].countdown == 0) {
+      activateDevice(DEV_IDX_KICKOUT_RIGHT);
+    }
+
+    // Check for start button (single tap = Original/Impulse, double tap = Enhanced)
+    processStartButton();
+
+    // Volume adjustment with LEFT/RIGHT buttons
     if (diagButtonPressed(1)) {  // LEFT (minus)
-      // Start music if not playing (for feedback)
       if (audioCurrentMusicTrack == 0) {
         audioStartMusicTrack(musTracksCircus[0].trackNum, musTracksCircus[0].lengthSeconds, false);
       }
-      audioAdjustMasterGainQuiet(-1);  // Decrease volume
+      audioAdjustMasterGainQuiet(-1);
     }
     if (diagButtonPressed(2)) {  // RIGHT (plus)
-      // Start music if not playing (for feedback)
       if (audioCurrentMusicTrack == 0) {
         audioStartMusicTrack(musTracksCircus[0].trackNum, musTracksCircus[0].lengthSeconds, false);
       }
-      audioAdjustMasterGainQuiet(+1);  // Increase volume
+      audioAdjustMasterGainQuiet(+1);
     }
     if (diagButtonPressed(0)) {  // BACK - stop test music
       audioStopMusic();
@@ -492,8 +500,8 @@ void loop() {
     }
 
     // Check for SELECT button to enter diagnostics
-    if (diagButtonPressed(3)) {  // SELECT button
-      audioStopMusic();  // Stop any test music before entering diagnostics
+    if (diagButtonPressed(3)) {
+      audioStopMusic();
       gamePhase = PHASE_DIAGNOSTIC;
       diagnosticSuiteIdx = 0;
       diagnosticState = 0;
@@ -501,49 +509,43 @@ void loop() {
       markDiagnosticsDisplayDirty(true);
       resetDiagButtonStates();
     }
+
     break;
   }
 
   // ONLY show SLOW LOOP warning during active gameplay
   if (gamePhase == PHASE_BALL_IN_PLAY) {
     unsigned long loopDuration = micros() - loopStartMicros;
-    if (loopDuration > 9000) {  // Warn if >9ms
+    if (loopDuration > 9000) {
       Serial.print("SLOW LOOP: ");
       Serial.println(loopDuration);
-      // Show warning on row 4 without clearing other rows
       snprintf(lcdString, LCD_WIDTH + 1, "SLOW: %lu us", loopDuration);
       lcdPrintRow(4, lcdString);
     }
   }
-}  // End of loop()
+}
 
 // ********************************************************************************************************************************
-// ********************************************* UNIFIED SWITCH PROCESSING *********************************************************
+// ********************************************** SWITCH & INPUT PROCESSING ********************************************************
 // ********************************************************************************************************************************
 
-// Called once per tick at the START of loop() to update all switch states and edge flags.
-// This is the foundation of our non-blocking architecture - all switch logic uses these flags.
+// Called once per tick to update all switch states and edge flags
 void updateAllSwitchStates() {
-  // Hardware reads already done in loop() - we just compute edge flags here
-
   for (byte i = 0; i < NUM_SWITCHES_MASTER; i++) {
-    // Decrement debounce counter if active
     if (switchDebounceCounter[i] > 0) {
       switchDebounceCounter[i]--;
     }
 
-    // Get current switch state (already read in loop())
     bool closedNow = switchClosed(i);
     bool wasOpen = (switchLastState[i] == 0);
 
-    // Clear flags (will be set below if edges detected)
     switchJustClosedFlag[i] = false;
     switchJustOpenedFlag[i] = false;
 
     // EDGE DETECTION: Switch just closed (with debounce)
     if (closedNow && wasOpen && switchDebounceCounter[i] == 0) {
-      switchJustClosedFlag[i] = true;  // This is what game logic checks!
-      switchDebounceCounter[i] = SWITCH_DEBOUNCE_TICKS;  // Prevent re-trigger for 50ms
+      switchJustClosedFlag[i] = true;
+      switchDebounceCounter[i] = SWITCH_DEBOUNCE_TICKS;
     }
 
     // EDGE DETECTION: Switch just opened (no debounce needed for opens)
@@ -551,31 +553,19 @@ void updateAllSwitchStates() {
       switchJustOpenedFlag[i] = true;
     }
 
-    // Remember current state for next tick
     switchLastState[i] = closedNow ? 1 : 0;
   }
 }
 
-// ********************************************************************************************************************************
-// ********************************************* COIN AND KNOCKOFF HANDLERS *******************************************************
-// ********************************************************************************************************************************
-
-// Process coin switch - runs every tick, all phases except Diagnostic
-// Tells Slave to add a credit when coin switch closes
+// ***** COIN ENTRY HANDLER *****
 void processCoinEntry() {
-  // Check for coin switch closure using the unified edge flag
   if (switchJustClosedFlag[SWITCH_IDX_COIN_MECH]) {
-    // Tell Slave to add a credit
     pMessage->sendMAStoSLVCreditInc(1);
-
-    // Fire knocker for audio feedback
     activateDevice(DEV_IDX_KNOCKER);
   }
 }
 
-// Process knockoff button - runs every tick, ALL phases (safety feature)
-// Short press: add credit (if not in diagnostic mode)
-// Long press (1 second): software reset
+// ***** KNOCKOFF BUTTON HANDLER *****
 void processKnockoffButton() {
   bool knockoffPressed = switchClosed(SWITCH_IDX_KNOCK_OFF);
 
@@ -589,21 +579,18 @@ void processKnockoffButton() {
   if (knockoffPressed && knockoffBeingHeld) {
     unsigned long holdTime = millis() - knockoffPressStartMs;
     if (holdTime >= KNOCKOFF_RESET_HOLD_MS) {
-      // Long hold detected - trigger software reset of both Master and Slave
       lcdClear();
       lcdPrintRow(1, "RESET TRIGGERED");
       lcdPrintRow(2, "Resetting...");
       pMessage->sendMAStoSLVCommandReset();
-      delay(100);  // Give Slave time to receive message
-      softwareReset();  // Never returns
+      delay(100);
+      softwareReset();
     }
   }
 
   // FALLING EDGE: Button just released
   if (switchJustOpenedFlag[SWITCH_IDX_KNOCK_OFF] && knockoffBeingHeld) {
     knockoffBeingHeld = false;
-
-    // Short press: add credit (but NOT in diagnostic mode)
     if (gamePhase != PHASE_DIAGNOSTIC) {
       pMessage->sendMAStoSLVCreditInc(1);
       activateDevice(DEV_IDX_KNOCKER);
@@ -611,20 +598,242 @@ void processKnockoffButton() {
   }
 }
 
+// ***** START BUTTON HANDLER *****
+void processStartButton() {
+  // Only process start button in attract mode
+  if (gamePhase != PHASE_ATTRACT) {
+    return;
+  }
+
+  // First tap detection
+  if (switchJustClosedFlag[SWITCH_IDX_START_BUTTON] && !startWaitingForSecondTap && gameStyle == 255) {
+    startFirstPressMs = millis();
+    startTapCount = 1;
+    startWaitingForSecondTap = true;
+    return;
+  }
+
+  // Second tap detection (within 500ms window)
+  if (switchJustClosedFlag[SWITCH_IDX_START_BUTTON] && startWaitingForSecondTap) {
+    unsigned long elapsed = millis() - startFirstPressMs;
+    if (elapsed < START_STYLE_DETECT_WINDOW_MS) {
+      // Double-tap detected -> Enhanced mode
+      startTapCount = 2;
+      gameStyle = GAME_STYLE_ENHANCED;
+      startWaitingForSecondTap = false;
+
+      // Check for credits
+      bool creditsAvailable = false;
+      if (!queryCreditStatus(&creditsAvailable)) {
+        return;
+      }
+
+      if (!creditsAvailable) {
+        // Play audio rejection (no LCD)
+        pTsunami->trackPlayPoly(TRACK_START_REJECT_HORN, 0, false);
+        audioApplyTrackGain(TRACK_START_REJECT_HORN, tsunamiSfxGainDb, tsunamiGainDb, pTsunami);
+        delay(800);
+
+        byte randomIdx = (byte)(millis() % NUM_COM_START_REJECT);
+        unsigned int trackNum = comTracksStartReject[randomIdx].trackNum;
+        byte trackLength = comTracksStartReject[randomIdx].lengthTenths;
+        pTsunami->trackPlayPoly((int)trackNum, 0, false);
+        audioApplyTrackGain(trackNum, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+        audioCurrentComTrack = trackNum;
+        audioComEndMillis = millis() + ((unsigned long)trackLength * 100UL);
+
+        delay(2000);
+        gameStyle = 255;
+        return;
+      }
+
+      // Credits available - fall through to ball check
+    }
+  }
+
+  // Timeout check: single tap confirmed
+  if (startWaitingForSecondTap) {
+    unsigned long elapsed = millis() - startFirstPressMs;
+    if (elapsed >= START_STYLE_DETECT_WINDOW_MS) {
+      // Single tap confirmed -> Original mode
+      gameStyle = GAME_STYLE_ORIGINAL;
+      startWaitingForSecondTap = false;
+
+      // Check for credits
+      bool creditsAvailable = false;
+      if (!queryCreditStatus(&creditsAvailable)) {
+        return;
+      }
+
+      if (!creditsAvailable) {
+        // Original mode: silent, no feedback
+        delay(2000);
+        gameStyle = 255;
+        return;
+      }
+
+      // Credits available - fall through to ball check
+    }
+  }
+
+  // Ball check and game start logic
+  if (gameStyle != 255) {
+    // ***** ORIGINAL MODE: Open tray IMMEDIATELY *****
+    if (gameStyle == GAME_STYLE_ORIGINAL) {
+      activateDevice(DEV_IDX_BALL_TRAY_RELEASE);
+      gameState.ballTrayOpen = true;
+      ballTrayOpenStartMs = millis();
+    }
+
+    // Eject any balls in kickouts
+    if (switchClosed(SWITCH_IDX_KICKOUT_LEFT)) {
+      activateDevice(DEV_IDX_KICKOUT_LEFT);
+    }
+    if (switchClosed(SWITCH_IDX_KICKOUT_RIGHT)) {
+      activateDevice(DEV_IDX_KICKOUT_RIGHT);
+    }
+
+    // ***** BOTH MODES: Check for 5 balls *****
+    if (!allBallsInTrough()) {
+      // Balls missing
+      if (gameStyle == GAME_STYLE_ENHANCED) {
+        activateDevice(DEV_IDX_BALL_TRAY_RELEASE);
+        gameState.ballTrayOpen = true;
+        ballTrayOpenStartMs = millis();
+      }
+
+      // Wait up to 5 seconds for switch to close AND stay closed for 1 second
+      unsigned long trayWaitStart = millis();
+      bool ballsSettled = false;
+
+      while (millis() - trayWaitStart < 5000) {
+        if (switchClosedImmediate(SWITCH_IDX_5_BALLS_IN_TROUGH)) {
+          // Switch just closed - verify it stays closed for 1 full second
+          unsigned long verifyStart = millis();
+          bool stayedClosed = true;
+
+          while (millis() - verifyStart < BALL_DETECTION_STABILITY_MS) {
+            if (!switchClosedImmediate(SWITCH_IDX_5_BALLS_IN_TROUGH)) {
+              // Opened during verification - ball rolled over
+              stayedClosed = false;
+              break;
+            }
+            delay(10);
+          }
+
+          if (stayedClosed) {
+            // Switch stayed closed for full second - balls settled!
+            ballsSettled = true;
+            break;
+          }
+          // Otherwise, discard this closure and keep waiting
+        }
+        delay(10);
+      }
+
+      // If still not settled after 5 seconds, give kickouts 2 more seconds
+      if (!ballsSettled) {
+        unsigned long kickoutWaitStart = millis();
+
+        while (millis() - kickoutWaitStart < 2000) {
+          // Continue ejecting kickouts
+          if (switchClosed(SWITCH_IDX_KICKOUT_LEFT) && deviceParm[DEV_IDX_KICKOUT_LEFT].countdown == 0) {
+            activateDevice(DEV_IDX_KICKOUT_LEFT);
+          }
+          if (switchClosed(SWITCH_IDX_KICKOUT_RIGHT) && deviceParm[DEV_IDX_KICKOUT_RIGHT].countdown == 0) {
+            activateDevice(DEV_IDX_KICKOUT_RIGHT);
+          }
+
+          if (switchClosedImmediate(SWITCH_IDX_5_BALLS_IN_TROUGH)) {
+            // Switch closed - verify stability
+            unsigned long verifyStart = millis();
+            bool stayedClosed = true;
+
+            while (millis() - verifyStart < BALL_DETECTION_STABILITY_MS) {
+              if (!switchClosedImmediate(SWITCH_IDX_5_BALLS_IN_TROUGH)) {
+                stayedClosed = false;
+                break;
+              }
+              delay(10);
+            }
+
+            if (stayedClosed) {
+              ballsSettled = true;
+              break;
+            }
+          }
+          delay(10);
+        }
+      }
+
+      // Final check before entering ball search
+      if (!ballsSettled) {
+        // Still missing - enter ball search
+        gamePhase = PHASE_BALL_SEARCH;
+        ballSearchSubState = BALL_SEARCH_INIT;
+
+        if (gameStyle == GAME_STYLE_ENHANCED) {
+          unsigned int trackNum = comTracksBallMissing[0].trackNum;
+          byte trackLength = comTracksBallMissing[0].lengthTenths;
+          pTsunami->trackPlayPoly((int)trackNum, 0, false);
+          audioApplyTrackGain(trackNum, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+          audioCurrentComTrack = trackNum;
+          audioComEndMillis = millis() + ((unsigned long)trackLength * 100UL);
+        }
+        return;
+      }
+    }
+
+    // ***** All 5 balls present! *****
+    if (gameStyle == GAME_STYLE_ENHANCED) {
+      releaseDevice(DEV_IDX_BALL_TRAY_RELEASE);
+      gameState.ballTrayOpen = false;
+    }
+
+    // Deduct credit and start game
+    pMessage->sendMAStoSLVCreditDec();
+    gameState.numPlayers = 1;
+    gameState.currentPlayer = 1;
+    gameState.currentBall = 1;
+
+    pTsunami->stopAllTracks();
+    audioCurrentComTrack = 0;
+    audioComEndMillis = 0;
+
+    if (gameStyle == GAME_STYLE_ENHANCED) {
+      pTsunami->trackPlayPoly(TRACK_START_HEY_GANG, 0, false);
+      audioApplyTrackGain(TRACK_START_HEY_GANG, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+      audioCurrentComTrack = TRACK_START_HEY_GANG;
+      audioComEndMillis = millis() + 3500UL;
+    }
+
+    lcdClear();
+    lcdPrintRow(1, "Starting game...");
+    lcdPrintRow(2, gameStyle == GAME_STYLE_ENHANCED ? "Enhanced" : "Original");
+
+    delay(3000);
+
+    gamePhase = PHASE_STARTUP;
+    startupSubState = STARTUP_INIT;
+    startupTickCounter = 0;
+    return;
+  }
+}
+
 // ********************************************************************************************************************************
-// ******************************************************** DIAGNOSTICS ***********************************************************
+// ***************************************************** DIAGNOSTICS **************************************************************
 // ********************************************************************************************************************************
 
-// Handles top-level diagnostic button navigation. Returns true when we should exit diagnostics.
+// ***** DIAGNOSTIC MENU HANDLER *****
 static bool handleDiagnosticsMenuButtons() {
   if (diagButtonPressed(0)) {
-    gamePhase = PHASE_ATTRACT;  // Exit diagnostics -> return to attract
+    gamePhase = PHASE_ATTRACT;
     resetDiagButtonStates();
     markAttractDisplayDirty();
     markDiagnosticsDisplayDirty(true);
-    lcdClear();  // Clear display before showing exit message
+    lcdClear();
     lcdShowDiagScreen("Exit Diagnostics", "", "", "");
-    delay(1000);  // Brief pause to show message
+    delay(1000);
     return true;
   }
   if (diagButtonPressed(1)) {
@@ -644,18 +853,12 @@ static bool handleDiagnosticsMenuButtons() {
   }
   if (diagButtonPressed(3)) {
     diagEnterSelectedSuite();
-    return false;  // Stay in diagnostics mode after suite exits
-  }  return false;
+    return false;
+  }
+  return false;
 }
 
 void runDiagnosticsLoop() {
-  // Top-level diagnostics menu:
-  // Line 1: "Diagnostics"
-  // Line 2: suite name from diagSuiteNames[diagnosticSuiteIdx]
-  // DIAG_1: Back (exit diagnostics -> Attract)
-  // DIAG_2: Previous suite
-  // DIAG_3: Next suite
-  // DIAG_4: Select current suite (future expansion)
   if (diagnosticState != 0) {
     diagnosticState = 0;
   }
@@ -665,26 +868,10 @@ void runDiagnosticsLoop() {
   renderDiagnosticsMenuIfNeeded();
 }
 
-// ********************************************************************************************************************************
-// *********************************************** DIAGNOSTIC SUITE HANDLERS ******************************************************
-// ********************************************************************************************************************************
-
-// Diagnostic suite indices (must match diagSuiteNames[] order)
-const byte DIAG_SUITE_VOLUME      = 0;
-const byte DIAG_SUITE_LAMPS       = 1;
-const byte DIAG_SUITE_SWITCHES    = 2;
-const byte DIAG_SUITE_COILS       = 3;
-const byte DIAG_SUITE_AUDIO       = 4;
-const byte DIAG_SUITE_SETTINGS    = 5;
-
-// Add the main settings suite handler function:
-
-// Find diagEnterSelectedSuite() and REPLACE the entire function:
-
+// ***** DIAGNOSTIC SUITE DISPATCHER *****
 void diagEnterSelectedSuite() {
   lcdClear();
 
-  // Execute the selected suite
   switch (diagnosticSuiteIdx) {
   case DIAG_SUITE_VOLUME:
     diagRunVolume(pLCD2004, pShiftRegister, pTsunami,
@@ -705,218 +892,161 @@ void diagEnterSelectedSuite() {
     diagRunAudio(pLCD2004, pShiftRegister, pTsunami,
       tsunamiGainDb, tsunamiVoiceGainDb, tsunamiSfxGainDb, tsunamiMusicGainDb,
       switchOldState, switchNewState);
-  break;  case DIAG_SUITE_SETTINGS:
+    break;
+  case DIAG_SUITE_SETTINGS:
     diagRunSettings(pLCD2004, pShiftRegister, switchOldState, switchNewState);
     break;
   default:
     break;
   }
 
-  // SIMPLE FIX: Just wait a bit and reset button states
-  // The suite functions already handle their own button logic
-  delay(100);  // Brief delay to let user release buttons naturally
-
-  // Reset button states so we don't immediately trigger another action
+  delay(100);
   resetDiagButtonStates();
-
-  // After suite exits, refresh the menu display
   lcdClear();
   markDiagnosticsDisplayDirty(true);
 }
 
-// New helper function to set attract lamp state
-void setAttractLamps() {
-  // Turn on GI lamps (both Master playfield and Slave head)
-  setGILamps(true);
-  pMessage->sendMAStoSLVGILamp(true);
-
-  // Turn on all 7 bumper lamps (S-C-R-E-A-M-O)
-  for (byte i = LAMP_IDX_S; i <= LAMP_IDX_O; i++) {
-    pShiftRegister->digitalWrite(lampParm[i].pinNum, LOW);  // ON
-  }
-
-  // Turn off everything else on Master
-  for (byte i = 0; i < NUM_LAMPS_MASTER; i++) {
-    if (lampParm[i].groupNum != LAMP_GROUP_GI &&
-      lampParm[i].groupNum != LAMP_GROUP_BUMPER) {
-      pShiftRegister->digitalWrite(lampParm[i].pinNum, HIGH);  // OFF
-    }
-  }
-
-  // Turn off Slave score and tilt lamps
-  pMessage->sendMAStoSLVScoreAbs(0);
-  pMessage->sendMAStoSLVTiltLamp(false);
+void updateModeDiagnostic() {
+  runDiagnosticsLoop();
 }
 
 // ********************************************************************************************************************************
-// ********************************************************* FUNCTIONS ************************************************************
+// ************************************************** GAME PHASE HANDLERS *********************************************************
 // ********************************************************************************************************************************
 
-void setGILamps(bool t_on) {
-  // Turn on or off all G.I. lamps
-  for (int i = 0; i < NUM_LAMPS_MASTER; i++) {
-    if (lampParm[i].groupNum == LAMP_GROUP_GI) {
-      if (t_on) {
-        pShiftRegister->digitalWrite(lampParm[i].pinNum, LOW);  // Active LOW
-      } else {
-        pShiftRegister->digitalWrite(lampParm[i].pinNum, HIGH);
-      }
+// (Future: updatePhaseAttract, updatePhaseStartup, updatePhaseBallInPlay, etc. will go here)
+
+// ***** BALL SEARCH PHASE HANDLER *****
+void updatePhaseBallSearch() {
+  // Check for timeout (30 seconds with tray open, no balls found)
+  if (millis() - ballTrayOpenStartMs >= BALL_TRAY_OPEN_TIMEOUT_MS) {
+    // Timeout - give up and return to attract
+    releaseDevice(DEV_IDX_BALL_TRAY_RELEASE);
+    gameState.ballTrayOpen = false;
+
+    pTsunami->stopAllTracks();
+    audioCurrentComTrack = 0;
+    audioComEndMillis = 0;
+
+    lcdClear();
+    lcdPrintRow(1, "Ball search");
+    lcdPrintRow(2, "timeout");
+    lcdPrintRow(3, "Returning to");
+    lcdPrintRow(4, "attract mode");
+    delay(2000);
+
+    lcdClear();
+    markAttractDisplayDirty();
+    gamePhase = PHASE_ATTRACT;
+    gameStyle = 255;
+    return;
+  }
+
+  // Handle START button press (user feedback)
+  if (switchJustClosedFlag[SWITCH_IDX_START_BUTTON]) {
+    if (gameStyle == GAME_STYLE_ENHANCED) {
+      // Enhanced: replay announcement
+      pTsunami->stopAllTracks();
+      audioCurrentComTrack = 0;
+      audioComEndMillis = 0;
+
+      unsigned int trackNum = comTracksBallMissing[0].trackNum;
+      byte trackLength = comTracksBallMissing[0].lengthTenths;
+      pTsunami->trackPlayPoly((int)trackNum, 0, false);
+      audioApplyTrackGain(trackNum, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+      audioCurrentComTrack = trackNum;
+      audioComEndMillis = millis() + ((unsigned long)trackLength * 100UL);
+    }
+
+    lcdPrintRow(3, "Still searching...");
+  }
+
+  // Check if all balls found
+  if (allBallsInTrough()) {
+    // Success! Stop audio
+    pTsunami->stopAllTracks();
+    audioCurrentComTrack = 0;
+    audioComEndMillis = 0;
+
+    // Close tray (Enhanced only)
+    if (gameStyle == GAME_STYLE_ENHANCED) {
+      releaseDevice(DEV_IDX_BALL_TRAY_RELEASE);
+      gameState.ballTrayOpen = false;
+    }
+
+    lcdClear();
+    lcdPrintRow(1, "All balls found!");
+    lcdPrintRow(2, "Deducting credit...");
+    delay(1000);
+
+    pMessage->sendMAStoSLVCreditDec();
+    gameState.numPlayers = 1;
+    gameState.currentPlayer = 1;
+    gameState.currentBall = 1;
+
+    lcdClear();
+    lcdPrintRow(1, "Starting game...");
+    lcdPrintRow(2, gameStyle == GAME_STYLE_ENHANCED ? "Enhanced" : "Original");
+    lcdPrintRow(3, "1 Player, Ball 1");
+    lcdPrintRow(4, "Please wait...");
+
+    if (gameStyle == GAME_STYLE_ENHANCED) {
+      pTsunami->trackPlayPoly(TRACK_START_HEY_GANG, 0, false);
+      audioApplyTrackGain(TRACK_START_HEY_GANG, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+      audioCurrentComTrack = TRACK_START_HEY_GANG;
+      audioComEndMillis = millis() + 3500UL;
+    }
+
+    delay(3000);
+
+    // Transition to PHASE_STARTUP
+    gamePhase = PHASE_STARTUP;
+    startupSubState = STARTUP_INIT;
+    startupTickCounter = 0;
+    return;
+  }
+
+  // Ball search state machine
+  switch (ballSearchSubState) {
+  case BALL_SEARCH_INIT:
+    // Fire kickouts once at start
+    activateDevice(DEV_IDX_KICKOUT_LEFT);
+    activateDevice(DEV_IDX_KICKOUT_RIGHT);
+    ballSearchLastKickoutMs = millis();
+    ballSearchSubState = BALL_SEARCH_MONITOR;
+    break;
+
+  case BALL_SEARCH_MONITOR:
+  {
+    unsigned long now = millis();
+
+    // ***** CONTINUOUS KICKOUT MONITORING: Eject ball IMMEDIATELY if detected *****
+    // Use switchClosedImmediate() for fastest possible detection
+    if (switchClosedImmediate(SWITCH_IDX_KICKOUT_LEFT) && deviceParm[DEV_IDX_KICKOUT_LEFT].countdown == 0) {
+      activateDevice(DEV_IDX_KICKOUT_LEFT);
+    }
+    if (switchClosedImmediate(SWITCH_IDX_KICKOUT_RIGHT) && deviceParm[DEV_IDX_KICKOUT_RIGHT].countdown == 0) {
+      activateDevice(DEV_IDX_KICKOUT_RIGHT);
+    }
+
+    // ***** PERIODIC KICKOUT FIRE: Every 15 seconds (in case ball jammed and not tripping switch) *****
+    if (now - ballSearchLastKickoutMs >= BALL_SEARCH_KICKOUT_INTERVAL_MS) {
+      activateDevice(DEV_IDX_KICKOUT_LEFT);
+      activateDevice(DEV_IDX_KICKOUT_RIGHT);
+      ballSearchLastKickoutMs = now;
     }
   }
-}
-
-bool switchClosed(byte t_switchIdx) {
-  // CALLER MUST ENSURE switchNewState[] HAS BEEN UPDATED BY CALLING portRead() FOR Centipede #2 INPUTS!!!
-  // Accept only a switch index (0..NUM_SWITCHES-1).  The Centipede #2 pin for that switch
-  // is looked up in switchParm[].pinNum (64..127).
-  if (t_switchIdx >= NUM_SWITCHES_MASTER) {
-    return false;
-  }
-  byte pin = switchParm[t_switchIdx].pinNum; // Centipede pin number 64..127
-  pin = pin - 64;               // Convert to 0..63 for indexing into switchNewState[]
-  byte portIndex = pin / 16;    // 0..3
-  byte bitNum = pin % 16;       // 0..15
-  // switch is active LOW on Centipede, so bit==0 means closed.
-  return ((switchNewState[portIndex] & (1 << bitNum)) == 0);
-}
-
-bool switchClosedImmediate(byte t_switchIdx) {
-  if (t_switchIdx >= NUM_SWITCHES_MASTER || pShiftRegister == nullptr) {
-    return false;
-  }
-  return pShiftRegister->digitalRead(switchParm[t_switchIdx].pinNum) == LOW;
-}
-
-bool switchPressedEdge(byte t_switchIdx, byte* t_lastState) {
-  bool closedNow = switchClosed(t_switchIdx);
-  bool pressed = (closedNow && (*t_lastState == 0));
-  *t_lastState = closedNow ? 1 : 0;
-  return pressed;
-}
-
-void resetDiagButtonStates() {
-  for (byte i = 0; i < NUM_DIAG_BUTTONS; i++) {
-    bool closedNow = switchClosed((byte)(SWITCH_IDX_DIAG_1 + i));
-    diagButtonLastState[i] = closedNow ? 1 : 0;
+  break;
   }
 }
 
-bool diagButtonPressed(byte t_diagIdx) {
-  if (t_diagIdx >= NUM_DIAG_BUTTONS) {
-    return false;
-  }
-  byte switchIdx = (byte)(SWITCH_IDX_DIAG_1 + t_diagIdx);
-  return switchPressedEdge(switchIdx, &diagButtonLastState[t_diagIdx]);
-}
+// ********************************************************************************************************************************
+// ************************************************* DEVICE & COIL CONTROL ********************************************************
+// ********************************************************************************************************************************
 
-void markAttractDisplayDirty() {
-  attractDisplayDirty = true;
-}
-
-void renderAttractDisplayIfNeeded() {
-  if (pLCD2004 == nullptr) {
-    return;
-  }
-
-  // On first boot, keep the rev date displayed for a few seconds
-  if (!initialBootDisplayShown) {
-    if (millis() - bootDisplayStartMs < BOOT_DISPLAY_DURATION_MS) {
-      return;  // Keep showing boot screen
-    }
-    // Time expired, transition to attract screen
-    initialBootDisplayShown = true;
-    attractDisplayDirty = true;  // Force refresh to attract screen
-  }
-
-  if (!attractDisplayDirty) {
-    return;
-  }
-
-  lcdShowDiagScreen("Screamo Ready", "", "-/+ Vol  SEL=Diag", "");
-  attractDisplayDirty = false;
-}
-
-void markDiagnosticsDisplayDirty(bool forceSuiteReset) {
-  diagDisplayDirty = true;
-  if (forceSuiteReset) {
-    diagLastRenderedSuite = 0xFF;
-  }
-}
-
-void renderDiagnosticsMenuIfNeeded() {
-  if (pLCD2004 == nullptr) {
-    return;
-  }
-  if (!diagDisplayDirty && diagLastRenderedSuite == diagnosticSuiteIdx) {
-    return;
-  }
-  diagDisplayDirty = false;
-  diagLastRenderedSuite = diagnosticSuiteIdx;
-  // Show 4-line diagnostic menu
-  lcdShowDiagScreen(
-    "DIAGNOSTICS",
-    diagSuiteNames[diagnosticSuiteIdx],
-    "-/+ to scroll",
-    "SEL=run  BACK=exit"
-  );
-}
-
-// Initialize game state to attract mode defaults
-void initGameState() {
-  gameState.numPlayers = 0;
-  gameState.currentPlayer = 0;
-  gameState.currentBall = 0;
-  for (byte i = 0; i < 4; i++) {
-    gameState.score[i] = 0;
-  }
-  gameState.tiltWarnings = 0;
-  gameState.tilted = false;
-  gameState.ballInPlay = false;
-  gameState.ballSaveActive = false;
-  gameState.ballSaveEndMs = 0;
-  gameState.ballLaunchMs = 0;
-  gameState.hasScored = false;
-
-  // Initialize new ball tracking variables
-  gameState.ballsToDispense = 0;
-  gameState.ballsInTray = 0;
-  gameState.ballsInTrough = 0;
-  gameState.ballsLocked = 0;
-  gameState.ballTrayOpen = false;
-}
-
-// ******************************************
-// ***** START BUTTON PROCESSING ************
-// ******************************************
-
-// Helper: Query credits with timeout, returns true if got response
-bool queryCreditStatus(bool* creditsAvailable) {
-  pMessage->sendMAStoSLVCreditStatusQuery();
-  unsigned long queryStart = millis();
-  while (millis() - queryStart < 100) {  // 100ms timeout
-    byte msgType = pMessage->available();
-    if (msgType == RS485_TYPE_SLV_TO_MAS_CREDIT_STATUS) {
-      pMessage->getSLVtoMASCreditStatus(creditsAvailable);
-      return true;  // Got response
-    }
-    delay(1);  // Minimal delay for serial processing
-  }
-  // CRITICAL ERROR: No response after 100ms
-  criticalError("RS485 ERROR", "No C.Q. Response", "Check Connection");
-  return false;  // Never reached due to reset
-}
-
-// ******************************************
-// ***** COIL / DEVICE TICK HANDLER *********
-// ******************************************
-
-// Check if a device can be activated now (mechanical/safety guards).
-// Returns true if activation is allowed.
+// ***** DEVICE ACTIVATION SAFETY CHECK *****
 bool canActivateDeviceNow(byte t_devIdx) {
-  // Add any device-specific safety checks here.
-  // For example, prevent flipper activation if tilted.
   if (gameState.tilted) {
-    // Block flippers and scoring devices during tilt
     if (t_devIdx == DEV_IDX_FLIPPER_LEFT ||
       t_devIdx == DEV_IDX_FLIPPER_RIGHT ||
       t_devIdx == DEV_IDX_SLINGSHOT_LEFT ||
@@ -928,9 +1058,7 @@ bool canActivateDeviceNow(byte t_devIdx) {
   return true;
 }
 
-// Request activation of a device (coil/motor).
-// If device is busy (active or resting), request is queued.
-// If idle and allowed, starts immediately.
+// ***** DEVICE ACTIVATION REQUEST *****
 void activateDevice(byte t_devIdx) {
   if (t_devIdx >= NUM_DEVS_MASTER) {
     sprintf(lcdString, "DEV ERR %u", t_devIdx);
@@ -947,6 +1075,7 @@ void activateDevice(byte t_devIdx) {
   }
 }
 
+// ***** DEVICE TIMER UPDATE *****
 void updateDeviceTimers() {
   for (byte i = 0; i < NUM_DEVS_MASTER; i++) {
     if (deviceParm[i].countdown > 0) {
@@ -986,6 +1115,7 @@ void updateDeviceTimers() {
   }
 }
 
+// ***** DEVICE RELEASE *****
 void releaseDevice(byte t_devIdx) {
   if (t_devIdx >= NUM_DEVS_MASTER) {
     return;
@@ -995,16 +1125,10 @@ void releaseDevice(byte t_devIdx) {
   deviceParm[t_devIdx].queueCount = 0;
 }
 
-// ******************************************
-// ***** FLIPPER HANDLING *******************
-// ******************************************
-
-// Process flipper buttons - called every tick for immediate response.
-// Flippers use hold power after initial activation.
+// ***** FLIPPER HANDLING *****
 void processFlippers() {
-  // Skip flipper processing if game is tilted or not in play
-  if (gameState.tilted || gamePhase == PHASE_ATTRACT || gamePhase == PHASE_DIAGNOSTIC) {
-    // Ensure flippers are released
+  // Flippers ONLY work in these phases (NOT ball search, NOT attract)
+  if (gamePhase != PHASE_BALL_IN_PLAY && gamePhase != PHASE_BALL_READY) {
     if (leftFlipperHeld) {
       releaseDevice(DEV_IDX_FLIPPER_LEFT);
       leftFlipperHeld = false;
@@ -1016,19 +1140,29 @@ void processFlippers() {
     return;
   }
 
-  // Left flipper
+  // Additional check: disable if tilted
+  if (gameState.tilted) {
+    if (leftFlipperHeld) {
+      releaseDevice(DEV_IDX_FLIPPER_LEFT);
+      leftFlipperHeld = false;
+    }
+    if (rightFlipperHeld) {
+      releaseDevice(DEV_IDX_FLIPPER_RIGHT);
+      rightFlipperHeld = false;
+    }
+    return;
+  }
+
+  // Normal flipper operation
   bool leftPressed = switchClosed(SWITCH_IDX_FLIPPER_LEFT_BUTTON);
   if (leftPressed && !leftFlipperHeld) {
-    // Button just pressed - activate flipper
     activateDevice(DEV_IDX_FLIPPER_LEFT);
     leftFlipperHeld = true;
   } else if (!leftPressed && leftFlipperHeld) {
-    // Button released - release flipper
     releaseDevice(DEV_IDX_FLIPPER_LEFT);
     leftFlipperHeld = false;
   }
 
-  // Right flipper
   bool rightPressed = switchClosed(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
   if (rightPressed && !rightFlipperHeld) {
     activateDevice(DEV_IDX_FLIPPER_RIGHT);
@@ -1040,31 +1174,107 @@ void processFlippers() {
 }
 
 // ********************************************************************************************************************************
-// ************************************************* LCD DISPLAY HELPERS **********************************************************
+// ***************************************************** LAMP CONTROL *************************************************************
 // ********************************************************************************************************************************
 
-// Clear LCD and mark display states dirty so they refresh
+void setGILamps(bool t_on) {
+  for (int i = 0; i < NUM_LAMPS_MASTER; i++) {
+    if (lampParm[i].groupNum == LAMP_GROUP_GI) {
+      if (t_on) {
+        pShiftRegister->digitalWrite(lampParm[i].pinNum, LOW);
+      } else {
+        pShiftRegister->digitalWrite(lampParm[i].pinNum, HIGH);
+      }
+    }
+  }
+}
+
+void setAttractLamps() {
+  setGILamps(true);
+  pMessage->sendMAStoSLVGILamp(true);
+
+  // Turn on all 7 bumper lamps (S-C-R-E-A-M-O)
+  for (byte i = LAMP_IDX_S; i <= LAMP_IDX_O; i++) {
+    pShiftRegister->digitalWrite(lampParm[i].pinNum, LOW);
+  }
+
+  // Turn off everything else on Master
+  for (byte i = 0; i < NUM_LAMPS_MASTER; i++) {
+    if (lampParm[i].groupNum != LAMP_GROUP_GI &&
+      lampParm[i].groupNum != LAMP_GROUP_BUMPER) {
+      pShiftRegister->digitalWrite(lampParm[i].pinNum, HIGH);
+    }
+  }
+
+  // Turn off Slave score and tilt lamps
+  pMessage->sendMAStoSLVScoreAbs(0);
+  pMessage->sendMAStoSLVTiltLamp(false);
+}
+
+// ********************************************************************************************************************************
+// **************************************************** SWITCH HELPERS ************************************************************
+// ********************************************************************************************************************************
+
+bool switchClosed(byte t_switchIdx) {
+  if (t_switchIdx >= NUM_SWITCHES_MASTER) {
+    return false;
+  }
+  byte pin = switchParm[t_switchIdx].pinNum;
+  pin = pin - 64;
+  byte portIndex = pin / 16;
+  byte bitNum = pin % 16;
+  return ((switchNewState[portIndex] & (1 << bitNum)) == 0);
+}
+
+bool switchClosedImmediate(byte t_switchIdx) {
+  if (t_switchIdx >= NUM_SWITCHES_MASTER || pShiftRegister == nullptr) {
+    return false;
+  }
+  return pShiftRegister->digitalRead(switchParm[t_switchIdx].pinNum) == LOW;
+}
+
+bool switchPressedEdge(byte t_switchIdx, byte* t_lastState) {
+  bool closedNow = switchClosed(t_switchIdx);
+  bool pressed = (closedNow && (*t_lastState == 0));
+  *t_lastState = closedNow ? 1 : 0;
+  return pressed;
+}
+
+void resetDiagButtonStates() {
+  for (byte i = 0; i < NUM_DIAG_BUTTONS; i++) {
+    bool closedNow = switchClosed((byte)(SWITCH_IDX_DIAG_1 + i));
+    diagButtonLastState[i] = closedNow ? 1 : 0;
+  }
+}
+
+bool diagButtonPressed(byte t_diagIdx) {
+  if (t_diagIdx >= NUM_DIAG_BUTTONS) {
+    return false;
+  }
+  byte switchIdx = (byte)(SWITCH_IDX_DIAG_1 + t_diagIdx);
+  return switchPressedEdge(switchIdx, &diagButtonLastState[t_diagIdx]);
+}
+
+// ********************************************************************************************************************************
+// **************************************************** DISPLAY HELPERS ***********************************************************
+// ********************************************************************************************************************************
+
 void lcdClear() {
   if (pLCD2004 != nullptr) {
     pLCD2004->clearScreen();
   }
 }
 
-// Clear a specific row (1-4)
 void lcdClearRow(byte row) {
-  // Wrapper for Pinball_LCD clearRow() function.
-  // Row parameter: 1..4
   if (pLCD2004 != nullptr) {
     pLCD2004->clearRow(row);
   }
 }
 
-// Display text on a specific row (1-4), left-justified, padded/truncated to 20 chars
 void lcdPrintRow(byte t_row, const char* t_text) {
   if (pLCD2004 == nullptr || t_row < 1 || t_row > 4) {
     return;
   }
-  // Build a 20-char padded string
   char buf[LCD_WIDTH + 1];
   memset(buf, ' ', LCD_WIDTH);
   buf[LCD_WIDTH] = '\0';
@@ -1074,7 +1284,6 @@ void lcdPrintRow(byte t_row, const char* t_text) {
   pLCD2004->printRowCol(t_row, 1, buf);
 }
 
-// Display text at specific row/col (1-based), no padding
 void lcdPrintAt(byte t_row, byte t_col, const char* t_text) {
   if (pLCD2004 == nullptr) {
     return;
@@ -1082,7 +1291,6 @@ void lcdPrintAt(byte t_row, byte t_col, const char* t_text) {
   pLCD2004->printRowCol(t_row, t_col, t_text);
 }
 
-// Format and display a 4-line diagnostic screen
 void lcdShowDiagScreen(const char* line1, const char* line2, const char* line3, const char* line4) {
   lcdPrintRow(1, line1);
   lcdPrintRow(2, line2);
@@ -1090,101 +1298,70 @@ void lcdShowDiagScreen(const char* line1, const char* line2, const char* line3, 
   lcdPrintRow(4, line4);
 }
 
-void setAllDevicesOff() {
-  // Set the output latch low first, then configure as OUTPUT.
-  // This avoids a brief HIGH when changing direction.
-  for (int i = 0; i < NUM_DEVS_MASTER; i++) {
-    digitalWrite(deviceParm[i].pinNum, LOW);  // set PORTx latch to 0 while pin still INPUT
-    pinMode(deviceParm[i].pinNum, OUTPUT);    // now become driven LOW
+void markAttractDisplayDirty() {
+  attractDisplayDirty = true;
+}
+
+void renderAttractDisplayIfNeeded() {
+  if (pLCD2004 == nullptr) {
+    return;
   }
-  // Use shared helper to force Centipede outputs OFF (safe if pShiftRegister == nullptr)
-  centipedeForceAllOff();
+
+  if (!initialBootDisplayShown) {
+    if (millis() - bootDisplayStartMs < BOOT_DISPLAY_DURATION_MS) {
+      return;
+    }
+    initialBootDisplayShown = true;
+    attractDisplayDirty = true;
+  }
+
+  if (!attractDisplayDirty) {
+    return;
+  }
+
+  lcdShowDiagScreen("Screamo Ready", "", "-/+ Vol  SEL=Diag", "");
+  attractDisplayDirty = false;
 }
 
-void setPWMFrequencies() {
-  // Configure PWM timers / prescalers for higher PWM frequency (~31kHz)
-  // Keep this separate from clearAllPWM() which only clears PWM outputs.
-  // Timer 1 -> pins 11, 12 (Ball Trough Release, Shaker)
-  TCCR1B = (TCCR1B & 0b11111000) | 0x01; // prescaler = 1
-  // Timer 2 -> pins 9, 10 (Right Flipper, Ball Tray Release)
-  TCCR2B = (TCCR2B & 0b11111000) | 0x01; // prescaler = 1
-  // Timer 4 -> pins 6, 7, 8 (Left/Right Slingshots, Left Flipper)
-  TCCR4B = (TCCR4B & 0b11111000) | 0x01; // prescaler = 1
-  // Timer 5 -> pins 44..46 (Right Kickout, etc.)
-  TCCR5B = (TCCR5B & 0b11111000) | 0x01; // prescaler = 1
-}
-
-void clearAllPWM() {
-  // Call this after PWM timers / prescalers have been configured.
-  // On PWM-capable pins this clears compare outputs; harmless on non-PWM pins.
-  for (int i = 0; i < NUM_DEVS_MASTER; i++) {
-    analogWrite(deviceParm[i].pinNum, 0);
+void markDiagnosticsDisplayDirty(bool forceSuiteReset) {
+  diagDisplayDirty = true;
+  if (forceSuiteReset) {
+    diagLastRenderedSuite = 0xFF;
   }
 }
 
-void softwareReset() {
-  // Ensure everything is driven off (both latch and PWM) before reset.
-  setAllDevicesOff();
-  clearAllPWM();
-  cli(); // disable interrupts
-  wdt_enable(WDTO_15MS); // enable watchdog timer to trigger a system reset with shortest timeout
-  while (1) { }  // wait for watchdog to reset system
+void renderDiagnosticsMenuIfNeeded() {
+  if (pLCD2004 == nullptr) {
+    return;
+  }
+  if (!diagDisplayDirty && diagLastRenderedSuite == diagnosticSuiteIdx) {
+    return;
+  }
+  diagDisplayDirty = false;
+  diagLastRenderedSuite = diagnosticSuiteIdx;
+  lcdShowDiagScreen(
+    "DIAGNOSTICS",
+    diagSuiteNames[diagnosticSuiteIdx],
+    "-/+ to scroll",
+    "SEL=run  BACK=exit"
+  );
 }
-
 
 // ********************************************************************************************************************************
-// ************************************************* GAME MODE (Original/Enhanced/Impulse) ****************************************
+// **************************************************** AUDIO HELPERS *************************************************************
 // ********************************************************************************************************************************
-
-// Tilt mode: frozen game, minimal response until cleared.
-/*
-void updateModeTilt() {
-  // TODO: turn off flippers, coils, most lamps, show TILT indications on LCD and playfield.
-  // Example placeholder: stop all music.
-  audioStopAllMusic();
-}
-*/
-
-// Diagnostic mode: run manual tests of lamps, coils, switches, Tsunami, RS485.
-void updateModeDiagnostic() {
-  // For now, route to a simple input-driven diagnostic handler.
-  runDiagnosticsLoop();
-}
-
-// ************************************
-// ***** TSUNAMI HELPER FUNCTIONS *****
-// ************************************
-// NOTE: All audio helper functions have been moved to Pinball_Audio.h/.cpp
-// The following functions are now in the Pinball_Audio library:
-// - audioApplyMasterGain() - Apply master gain to all Tsunami outputs
-// - audioApplyTrackGain() - Apply category-specific gain to a track
-// - audioSaveMasterGain() - Save master gain to EEPROM
-// - audioLoadMasterGain() - Load master gain from EEPROM
-// - audioSaveCategoryGains() - Save category gains to EEPROM
-// - audioLoadCategoryGains() - Load category gains from EEPROM
-// - audioSaveDucking() - Save ducking level to EEPROM
-// - audioLoadDucking() - Load ducking level from EEPROM
-// - audioPlayTrackWithCategory() - Play track with category-specific gain
-// - audioPlayTrack() - Play track (defaults to SFX)
-// - audioStopTrack() - Stop a specific track
-// - audioRandomInt() - Pseudo-random number generator
-//
-// These functions remain here as wrappers that call Pinball_Audio functions:
 
 void audioResetTsunamiState() {
   if (pTsunami == nullptr) {
     return;
   }
-  // Stop all tracks
   for (int trk = 1; trk <= 256; trk++) {
     pTsunami->trackStop(trk);
   }
-  // Reload and apply gains from EEPROM using Pinball_Audio functions
   audioLoadMasterGain(&tsunamiGainDb);
   audioLoadCategoryGains(&tsunamiVoiceGainDb, &tsunamiSfxGainDb, &tsunamiMusicGainDb);
   audioLoadDucking(&tsunamiDuckingDb);
   audioApplyMasterGain(tsunamiGainDb, pTsunami);
-  // Clear "currently playing" bookkeeping
   audioCurrentComTrack   = 0;
   audioCurrentSfxTrack   = 0;
   audioCurrentMusicTrack = 0;
@@ -1196,8 +1373,8 @@ void audioAdjustMasterGain(int8_t t_deltaDb) {
   if (newVal > TSUNAMI_GAIN_DB_MAX) newVal = TSUNAMI_GAIN_DB_MAX;
   if ((int8_t)newVal == tsunamiGainDb) return;
   tsunamiGainDb = (int8_t)newVal;
-  audioApplyMasterGain(tsunamiGainDb, pTsunami);  // CHANGED: Pass parameters
-  audioSaveMasterGain(tsunamiGainDb);  // CHANGED: Pass parameter
+  audioApplyMasterGain(tsunamiGainDb, pTsunami);
+  audioSaveMasterGain(tsunamiGainDb);
   sprintf(lcdString, "Vol %3d dB", (int)tsunamiGainDb);
   lcdPrintRow(4, lcdString);
 }
@@ -1208,59 +1385,48 @@ void audioAdjustMasterGainQuiet(int8_t t_deltaDb) {
   if (newVal > TSUNAMI_GAIN_DB_MAX) newVal = TSUNAMI_GAIN_DB_MAX;
   if ((int8_t)newVal == tsunamiGainDb) return;
   tsunamiGainDb = (int8_t)newVal;
-  audioApplyMasterGain(tsunamiGainDb, pTsunami);  // CHANGED: Pass parameters
-  audioSaveMasterGain(tsunamiGainDb);  // CHANGED: Pass parameter
+  audioApplyMasterGain(tsunamiGainDb, pTsunami);
+  audioSaveMasterGain(tsunamiGainDb);
   sprintf(lcdString, "Vol %3d dB", (int)tsunamiGainDb);
   lcdPrintRow(4, lcdString);
 }
 
 void audioStopAllMusic() {
   if (audioCurrentMusicTrack != 0) {
-    audioStopTrack(audioCurrentMusicTrack, pTsunami);  // CHANGED: Pass pTsunami
+    audioStopTrack(audioCurrentMusicTrack, pTsunami);
     audioCurrentMusicTrack = 0;
   }
 }
 
-// Check if current music track has finished playing (based on start time and length).
-// Returns true if no music is playing or if the track has ended.
 bool audioMusicHasEnded() {
   if (audioCurrentMusicTrack == 0) {
-    return true;  // Nothing playing
+    return true;
   }
   unsigned long now = millis();
   return (now >= audioMusicEndMillis);
 }
 
-// Start a music track if not already playing. Sets end time based on track length.
-// Returns true if track was started, false if same track already playing.
 bool audioStartMusicTrack(unsigned int t_trackNum, byte t_lengthSeconds, bool t_loop) {
   if (pTsunami == nullptr || t_trackNum == 0) {
     return false;
   }
-  // Don't restart the same track if it's already playing
   if (audioCurrentMusicTrack == t_trackNum && !audioMusicHasEnded()) {
     return false;
   }
-  // Stop any currently playing music first
   if (audioCurrentMusicTrack != 0) {
     pTsunami->trackStop((int)audioCurrentMusicTrack);
   }
-  // Start the new track
   audioCurrentMusicTrack = t_trackNum;
   audioMusicEndMillis = millis() + ((unsigned long)t_lengthSeconds * 1000UL);
   if (t_loop) {
     pTsunami->trackLoop((int)t_trackNum, true);
-    audioMusicEndMillis = millis() + 3600000UL;  // 1 hour
+    audioMusicEndMillis = millis() + 3600000UL;
   }
   pTsunami->trackPlayPoly((int)t_trackNum, 0, false);
-
-  // Apply music category gain offset using Pinball_Audio function
-  audioApplyTrackGain(t_trackNum, tsunamiMusicGainDb, tsunamiGainDb, pTsunami);  // CHANGED: Pass all parameters
-
+  audioApplyTrackGain(t_trackNum, tsunamiMusicGainDb, tsunamiGainDb, pTsunami);
   return true;
 }
 
-// Stop current music track.
 void audioStopMusic() {
   if (pTsunami != nullptr && audioCurrentMusicTrack != 0) {
     pTsunami->trackStop((int)audioCurrentMusicTrack);
@@ -1269,12 +1435,81 @@ void audioStopMusic() {
   audioMusicEndMillis = 0;
 }
 
-// ******************************************
-// ***** CRITICAL ERROR HANDLER *************
-// ******************************************
+// ********************************************************************************************************************************
+// ************************************************** SYSTEM UTILITIES ************************************************************
+// ********************************************************************************************************************************
 
-// Display critical error, beep 3 times, wait, then reset system
-// Call with lcdString already populated with error description
+void initGameState() {
+  gameState.numPlayers = 0;
+  gameState.currentPlayer = 0;
+  gameState.currentBall = 0;
+  for (byte i = 0; i < 4; i++) {
+    gameState.score[i] = 0;
+  }
+  gameState.tiltWarnings = 0;
+  gameState.tilted = false;
+  gameState.ballInPlay = false;
+  gameState.ballSaveActive = false;
+  gameState.ballSaveEndMs = 0;
+  gameState.ballLaunchMs = 0;
+  gameState.hasScored = false;
+  gameState.ballsToDispense = 0;
+  gameState.ballsInTray = 0;
+  gameState.ballsInTrough = 0;
+  gameState.ballsLocked = 0;
+  gameState.ballTrayOpen = false;
+}
+
+// ***** BALL TRACKING HELPER *****
+bool allBallsInTrough() {
+  // Check if "5 Balls in Trough" switch is closed
+  return switchClosed(SWITCH_IDX_5_BALLS_IN_TROUGH);
+}
+
+bool queryCreditStatus(bool* creditsAvailable) {
+  pMessage->sendMAStoSLVCreditStatusQuery();
+  unsigned long queryStart = millis();
+  while (millis() - queryStart < 100) {
+    byte msgType = pMessage->available();
+    if (msgType == RS485_TYPE_SLV_TO_MAS_CREDIT_STATUS) {
+      pMessage->getSLVtoMASCreditStatus(creditsAvailable);
+      return true;
+    }
+    delay(1);
+  }
+  criticalError("RS485 ERROR", "No C.Q. Response", "Check Connection");
+  return false;
+}
+
+void setAllDevicesOff() {
+  for (int i = 0; i < NUM_DEVS_MASTER; i++) {
+    digitalWrite(deviceParm[i].pinNum, LOW);
+    pinMode(deviceParm[i].pinNum, OUTPUT);
+  }
+  centipedeForceAllOff();
+}
+
+void setPWMFrequencies() {
+  TCCR1B = (TCCR1B & 0b11111000) | 0x01;
+  TCCR2B = (TCCR2B & 0b11111000) | 0x01;
+  TCCR4B = (TCCR4B & 0b11111000) | 0x01;
+  TCCR5B = (TCCR5B & 0b11111000) | 0x01;
+}
+
+void clearAllPWM() {
+  for (int i = 0; i < NUM_DEVS_MASTER; i++) {
+    analogWrite(deviceParm[i].pinNum, 0);
+  }
+}
+
+void softwareReset() {
+  setAllDevicesOff();
+  clearAllPWM();
+  cli();
+  wdt_enable(WDTO_15MS);
+  while (1) { }
+}
+
 void criticalError(const char* line1, const char* line2, const char* line3) {
   lcdClear();
   lcdPrintRow(1, line1);
@@ -1288,13 +1523,11 @@ void criticalError(const char* line1, const char* line2, const char* line3) {
     pTsunami->trackPlayPoly(TRACK_DIAG_CRITICAL_ERROR, 0, false);
   }
 
-  // Minimal knockoff button handler for error state
-  // MUST use switchClosedImmediate() because switchNewState[] is not being updated in this loop
   unsigned long knockoffStart = 0;
   bool knockoffWasPressed = false;
 
   while (true) {
-    bool knockoffPressed = switchClosedImmediate(SWITCH_IDX_KNOCK_OFF);  // CHANGED: Use immediate read
+    bool knockoffPressed = switchClosedImmediate(SWITCH_IDX_KNOCK_OFF);
 
     if (knockoffPressed) {
       if (!knockoffWasPressed) {
