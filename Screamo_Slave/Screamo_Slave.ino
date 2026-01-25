@@ -1,4 +1,5 @@
-// Screamo_Slave.INO Rev: 01/19/26
+// Screamo_Slave.INO Rev: 01/25/26
+// 11/12/25: Increased Credit Down power to 150 for more reliable credit removal.
 // 12/28/25: Updated SCORE_INC_10K and SCORE_RESET to remain silent (no bells or 10K unit) in Enhanced style.
 // 01/19/26: Updated SCORE_INC_10K message to include silent parm
 
@@ -92,7 +93,7 @@ const byte DEV_IDX_LAMP_HEAD_GI_TILT =  7;
 //   queueCount: number of pending activation requests while coil busy/resting
 DeviceParmStruct deviceParm[NUM_DEVS_SLAVE] = {
   {  5, 100, 10, 0, 0, 0 },  // CREDIT UP.   timeOn 10 (=100ms); not score-motor paced.
-  {  6, 140, 10, 0, 0, 0 },  // CREDIT DOWN. timeOn 10 (=100ms); not score-motor paced.
+  {  6, 150, 10, 0, 0, 0 },  // CREDIT DOWN. timeOn 10 (=100ms); not score-motor paced. 140/10 was not always reliable.
   {  7, 150,  5, 0, 0, 0 },  // 10K UP. 5 ticks ON (50ms) + 8 ticks rest (80ms) = 130ms cycle (<147ms).
   {  8, 130,  5, 0, 0, 0 },  // 10K BELL. 5 ticks ON (50ms) + 8 ticks rest (80ms) = 130ms cycle (<147ms).
   {  9, 130,  5, 0, 0, 0 },  // 100K BELL. 5 ticks ON (50ms) + 8 ticks rest (80ms) = 130ms cycle (<147ms).

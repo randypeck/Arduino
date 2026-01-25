@@ -129,6 +129,49 @@ const byte START_TAP_ORIGINAL  = 2;  // Original style selected (500ms expired, 
 const byte START_TAP_ENHANCED  = 3;  // Enhanced style selected (2nd tap within 500ms)
 const byte START_TAP_IMPULSE   = 4;  // Impulse style (2nd tap after 500ms, before first point)
 
+// ************************************************************************
+// ************************** EEPROM ADDRESSES ****************************
+// ************************************************************************
+// All persistent storage addresses for game settings and state
+
+const int EEPROM_ADDR_LAST_SCORE              =  0;  // Last game score (2 bytes)
+
+// Audio settings
+const int EEPROM_ADDR_TSUNAMI_GAIN            = 10;  // Master volume (-40 to 0 dB)
+const int EEPROM_ADDR_TSUNAMI_GAIN_VOICE      = 11;  // Voice offset (-20 to +20 dB)
+const int EEPROM_ADDR_TSUNAMI_GAIN_SFX        = 12;  // SFX offset (-20 to +20 dB)
+const int EEPROM_ADDR_TSUNAMI_GAIN_MUSIC      = 13;  // Music offset (-20 to +20 dB)
+const int EEPROM_ADDR_TSUNAMI_DUCK_DB         = 14;  // Ducking level (-40 to 0 dB)
+
+// Music theme settings
+const int EEPROM_ADDR_THEME                   = 20;  // Primary theme (0=Circus, 1=Surf)
+const int EEPROM_ADDR_LAST_CIRCUS_SONG_PLAYED = 21;  // Last Circus track index
+const int EEPROM_ADDR_LAST_SURF_SONG_PLAYED   = 22;  // Last Surf track index
+const int EEPROM_ADDR_LAST_MODE_PLAYED        = 25;  // Last game mode played
+
+// Game settings
+const int EEPROM_ADDR_BALL_SAVE_TIME          = 30;  // Ball save duration (seconds)
+const int EEPROM_ADDR_MODE_1_TIME             = 31;  // Mode 1 time limit (seconds)
+const int EEPROM_ADDR_MODE_2_TIME             = 32;  // Mode 2 time limit (seconds)
+const int EEPROM_ADDR_MODE_3_TIME             = 33;  // Mode 3 time limit (seconds)
+const int EEPROM_ADDR_MODE_4_TIME             = 34;  // Mode 4 time limit (seconds)
+const int EEPROM_ADDR_MODE_5_TIME             = 35;  // Mode 5 time limit (seconds)
+const int EEPROM_ADDR_MODE_6_TIME             = 36;  // Mode 6 time limit (seconds)
+
+// Replay scores (Original/Impulse style) - 2 bytes each
+const int EEPROM_ADDR_ORIGINAL_REPLAY_1       = 40;  // Replay threshold 1
+const int EEPROM_ADDR_ORIGINAL_REPLAY_2       = 42;  // Replay threshold 2
+const int EEPROM_ADDR_ORIGINAL_REPLAY_3       = 44;  // Replay threshold 3
+const int EEPROM_ADDR_ORIGINAL_REPLAY_4       = 46;  // Replay threshold 4
+const int EEPROM_ADDR_ORIGINAL_REPLAY_5       = 48;  // Replay threshold 5
+
+// Replay scores (Enhanced style) - 2 bytes each
+const int EEPROM_ADDR_ENHANCED_REPLAY_1       = 50;  // Replay threshold 1
+const int EEPROM_ADDR_ENHANCED_REPLAY_2       = 52;  // Replay threshold 2
+const int EEPROM_ADDR_ENHANCED_REPLAY_3       = 54;  // Replay threshold 3
+const int EEPROM_ADDR_ENHANCED_REPLAY_4       = 56;  // Replay threshold 4
+const int EEPROM_ADDR_ENHANCED_REPLAY_5       = 58;  // Replay threshold 5
+
 // ********************************
 // ***** AUDIO TRACK CONSTANTS ****
 // ********************************
@@ -210,6 +253,7 @@ const unsigned int TRACK_TILT_WARNING_LAST      =  205;
 const unsigned int TRACK_TILT_COM_FIRST         =  212;
 const unsigned int TRACK_TILT_COM_LAST          =  216;
 const unsigned int TRACK_BALL_MISSING_FIRST     =  301;
+const unsigned int TRACK_BALL_IN_LIFT           =  302;
 const unsigned int TRACK_BALL_MISSING_LAST      =  304;
 const unsigned int TRACK_START_REJECT_FIRST     =  312;
 const unsigned int TRACK_START_REJECT_LAST      =  330;

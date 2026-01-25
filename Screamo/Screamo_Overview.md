@@ -1,5 +1,6 @@
 # 1954 Williams Screamo - Modernized Control System Overview
-Rev: 01-23-26.  Revised by Claude Opus 4.5.
+Rev: 01-26-26.  Revised by Claude Opus 4.5.
+IMPORTANT: This document refers to multi-player Enhanced games, HOWEVER, for the time being we will only support single players per game.  We may add multi-player support later.
 
 ## 1. Introduction
 
@@ -335,7 +336,7 @@ Screamo runs in several styles. Unless otherwise noted, Master is style authorit
 - Features (planned / current):
   - Up to four players.
   - Special game modes and scoring goals (details to be specified separately).
-  - Ball save for first N seconds after the first score on each ball (time defined in Settings).
+  - Ball save for first N seconds after the first score on each ball (time defined in Settings) OR if we drain the ball before hitting any targets.
   - Shaker motor events triggered on certain happenings.
   - Extra voice prompts, music, jackpots, etc. (details to be specified separately).
 
@@ -1093,7 +1094,7 @@ This ensures consistent switch state throughout the tick and prevents re-trigger
   - Tsunami-only sound effects during Modes and Multiball (no EM bells/devices).
 - Rules (high-level, to be elaborated separately):
   - Roller-coaster / Screamo theme integration.
-  - Ball save for first N seconds per ball after first score.
+  - Ball save for first N seconds per ball after first score, or if ball drains before hitting any targets (even if >N seconds).
   - New scoring goals (for example collecting letters, jackpots, mode progression).
   - Potential use of gobble / special / kickouts / bumpers for modes and bonuses.
 
@@ -1433,6 +1434,7 @@ Enhanced Style rules are based on Original style rules, with the following addit
   - During NORMAL Enhanced gameplay: All EM sound devices are used (bells, Score Motor, 10K Unit, Selection Unit, Relay Reset Bank), same as Original style.
   - During MODES and MULTIBALL: EM sound devices are NOT used. Tsunami audio provides all sound effects. This makes these special periods feel distinctly different and more exciting.
 - Ball Save feature gives player a grace period (time stored in EEPROM) after first scoring a point on each ball.
+  - If a ball drains without hitting any targets, even after the grace period has expired, the ball is saved and re-released.
 - Side Kickouts can "lock" balls temporarily, ejecting them for MULTIBALL play (or when game ends or is tilted).
 - Features can either carry over between balls and/or players, or reset at the start of each ball (to be defined).
     - If one or two balls are locked in the side kickouts, those carry over between balls and players.
@@ -1531,6 +1533,7 @@ The three physical bells in the head are also used during normal Enhanced gamepl
     - Play non-urgent "ball saved" audio line such as "Ball saved! Ride again!"
     - Release another ball into Ball Lift via 'DEV_IDX_BALL_TROUGH_RELEASE' (if balls remain in Ball Trough).
     - Only one "ball save" allowed per ball in non-multiball and non-Mode game play.
+   - Since the ball save timer doesn't start until the first point is scored, it's possible for the player to drain the ball before scoring any other points; in this case, the ball is still saved.
 
 ### 14.6 Multi-Ball
 

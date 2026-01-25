@@ -13,35 +13,6 @@ class Pinball_Centipede;
 class Tsunami;
 class Pinball_Message;
 
-// EEPROM address constants (from Screamo_Master.ino)
-const int EEPROM_ADDR_LAST_SCORE              =  0;
-const int EEPROM_ADDR_TSUNAMI_GAIN            = 10;
-const int EEPROM_ADDR_TSUNAMI_GAIN_VOICE      = 11;
-const int EEPROM_ADDR_TSUNAMI_GAIN_SFX        = 12;
-const int EEPROM_ADDR_TSUNAMI_GAIN_MUSIC      = 13;
-const int EEPROM_ADDR_TSUNAMI_DUCK_DB         = 14;
-const int EEPROM_ADDR_THEME                   = 20;
-const int EEPROM_ADDR_LAST_CIRCUS_SONG_PLAYED = 21;
-const int EEPROM_ADDR_LAST_SURF_SONG_PLAYED   = 22;
-const int EEPROM_ADDR_LAST_MODE_PLAYED        = 25;
-const int EEPROM_ADDR_BALL_SAVE_TIME          = 30;
-const int EEPROM_ADDR_MODE_1_TIME             = 31;
-const int EEPROM_ADDR_MODE_2_TIME             = 32;
-const int EEPROM_ADDR_MODE_3_TIME             = 33;
-const int EEPROM_ADDR_MODE_4_TIME             = 34;
-const int EEPROM_ADDR_MODE_5_TIME             = 35;
-const int EEPROM_ADDR_MODE_6_TIME             = 36;
-const int EEPROM_ADDR_ORIGINAL_REPLAY_1       = 40;
-const int EEPROM_ADDR_ORIGINAL_REPLAY_2       = 42;
-const int EEPROM_ADDR_ORIGINAL_REPLAY_3       = 44;
-const int EEPROM_ADDR_ORIGINAL_REPLAY_4       = 46;
-const int EEPROM_ADDR_ORIGINAL_REPLAY_5       = 48;
-const int EEPROM_ADDR_ENHANCED_REPLAY_1       = 50;
-const int EEPROM_ADDR_ENHANCED_REPLAY_2       = 52;
-const int EEPROM_ADDR_ENHANCED_REPLAY_3       = 54;
-const int EEPROM_ADDR_ENHANCED_REPLAY_4       = 56;
-const int EEPROM_ADDR_ENHANCED_REPLAY_5       = 58;
-
 // *** EEPROM READ/WRITE FUNCTIONS ***
 // Simple helper functions for reading/writing game settings to EEPROM
 

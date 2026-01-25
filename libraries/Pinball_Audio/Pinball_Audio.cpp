@@ -4,6 +4,8 @@
 #include "Pinball_Audio.h"
 #include <EEPROM.h>
 #include <Tsunami.h>
+#include <Pinball_Consts.h>        // For EEPROM addresses
+#include <Pinball_Audio_Tracks.h>  // For music track arrays and counts
 
 // ****************************************
 // ***** CORE TSUNAMI GAIN FUNCTIONS ******
@@ -100,6 +102,62 @@ void audioLoadDucking(int8_t* pDuckingDb) {
   } else {
     *pDuckingDb = val;
   }
+}
+
+// Load music theme preference from EEPROM
+void audioLoadThemePreference(byte* primaryTheme, byte* lastCircusIdx, byte* lastSurfIdx) {
+  *primaryTheme = EEPROM.read(EEPROM_ADDR_THEME);
+  *lastCircusIdx = EEPROM.read(EEPROM_ADDR_LAST_CIRCUS_SONG_PLAYED);
+  *lastSurfIdx = EEPROM.read(EEPROM_ADDR_LAST_SURF_SONG_PLAYED);
+
+  // Sanity check (in case EEPROM uninitialized)
+  if (*primaryTheme > 1) {
+    *primaryTheme = 0;  // Default to Circus
+  }
+  if (*lastCircusIdx >= NUM_MUS_CIRCUS) {
+    *lastCircusIdx = 0;
+  }
+  if (*lastSurfIdx >= NUM_MUS_SURF) {
+    *lastSurfIdx = 0;
+  }
+}
+
+// Save music theme preference to EEPROM
+void audioSaveThemePreference(byte primaryTheme, byte lastCircusIdx, byte lastSurfIdx) {
+  EEPROM.update(EEPROM_ADDR_THEME, primaryTheme);
+  EEPROM.update(EEPROM_ADDR_LAST_CIRCUS_SONG_PLAYED, lastCircusIdx);
+  EEPROM.update(EEPROM_ADDR_LAST_SURF_SONG_PLAYED, lastSurfIdx);
+}
+
+// Start a random music track from the primary theme
+bool audioStartPrimaryMusic(byte primaryTheme, byte* lastIdx, Tsunami* tsunami, int8_t musicGainDb, int8_t masterGainDb) {
+  if (tsunami == nullptr) {
+    return false;
+  }
+
+  // Select track array and count based on theme
+  const AudioMusTrackDef* trackArray;  // ? CORRECT TYPE
+  byte trackCount;
+
+  if (primaryTheme == 0) {  // Circus
+    trackArray = musTracksCircus;
+    trackCount = NUM_MUS_CIRCUS;
+  } else {  // Surf
+    trackArray = musTracksSurf;
+    trackCount = NUM_MUS_SURF;
+  }
+
+  // Pick next track (simple sequential for now; can randomize later)
+  *lastIdx = (*lastIdx + 1) % trackCount;
+
+  unsigned int trackNum = trackArray[*lastIdx].trackNum;
+  // byte trackLength = trackArray[*lastIdx].lengthSeconds; (apparently not needed as of 1/25/26)
+
+  // Play track
+  tsunami->trackPlayPoly((int)trackNum, 0, false);
+  audioApplyTrackGain(trackNum, musicGainDb, masterGainDb, tsunami);
+
+  return true;
 }
 
 // ****************************************

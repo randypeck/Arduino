@@ -53,6 +53,10 @@ void audioLoadCategoryGains(int8_t* pVoiceGain, int8_t* pSfxGain, int8_t* pMusic
 void audioSaveDucking(int8_t duckingDb);
 void audioLoadDucking(int8_t* pDuckingDb);
 
+void audioLoadThemePreference(byte* primaryTheme, byte* lastCircusIdx, byte* lastSurfIdx);
+void audioSaveThemePreference(byte primaryTheme, byte lastCircusIdx, byte lastSurfIdx);
+bool audioStartPrimaryMusic(byte primaryTheme, byte* lastIdx, Tsunami* tsunami, int8_t musicGainDb, int8_t masterGainDb);
+
 // *** PLAYBACK FUNCTIONS ***
 // Play a track with category-specific gain applied
 void audioPlayTrackWithCategory(unsigned int trackNum, byte category,

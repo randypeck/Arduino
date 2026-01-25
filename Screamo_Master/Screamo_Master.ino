@@ -1,4 +1,4 @@
-// Screamo_Master.INO Rev: 01/23/26b
+// Screamo_Master.INO Rev: 01/26/26
 // 11/12/25: Moved Right Kickout from pin 13 to pin 44 to avoid MOSFET firing twice on power-up.  Don't use MOSFET on pin 13.
 // 12/28/25: Changed flipper inputs from direct Arduino inputs to Centipede inputs.
 // 01/07/26: Added "5 Balls in Trough" switch to Centipede inputs. All switches tested and working.
@@ -14,7 +14,7 @@
 #include <Pinball_Audio_Tracks.h>  // Audio track definitions (COM, SFX, MUS)
 
 const byte THIS_MODULE = ARDUINO_MAS;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "MASTER 01/23/26b";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "MASTER 01/26/26";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which makes it a global.
 // And no need to pass lcdString[] to any functions that use it!
 
@@ -174,6 +174,9 @@ const int8_t COIL_REST_TICKS = -8;  // Coil rest period: 8 ticks * 10ms = 80ms
 // ***************************************************** GAME STATE ***************************************************************
 // ********************************************************************************************************************************
 
+const byte MAX_PLAYERS = 4;  // Currently only supporting single player, even for Enhanced, but may support more in future
+const byte MAX_BALLS   = 5;
+
 // ***** GAME PHASE CONSTANTS *****
 const byte PHASE_ATTRACT     = 0;
 const byte PHASE_STARTUP     = 1;  // Ball recovery and game initialization
@@ -207,6 +210,13 @@ const byte STARTUP_COMPLETE           = 14;
 byte startupSubState = STARTUP_INIT;
 unsigned int startupTickCounter = 0;
 unsigned int startupTimeoutTicks = 0;
+
+// ***** STARTUP PHASE TIMEOUTS *****
+const unsigned long STARTUP_BALL_TROUGH_TO_LIFT_TIMEOUT_MS = 3000;  // 3 seconds max for ball to reach lift from trough release
+unsigned long startupBallDispenseMs = 0;  // When ball was dispensed (for timeout tracking)
+
+// ***** BALL LIFT TRACKING *****
+bool prevBallInLift = false;  // Previous state of ball-in-lift switch (for edge detection)
 
 // ***** GAME STATE STRUCTURE *****
 struct GameStateStruct {
@@ -247,10 +257,7 @@ const byte BALL_SEARCH_MONITOR        = 5;  // Passive monitoring loop
 
 byte ballSearchSubState = BALL_SEARCH_INIT;
 unsigned long ballSearchLastKickoutMs = 0;
-unsigned long ballSearchLastTrayMs = 0;
-const unsigned long BALL_SEARCH_KICKOUT_INTERVAL_MS = 15000;  // 15 seconds
-const unsigned long BALL_SEARCH_TRAY_INTERVAL_MS = 60000;     // 60 seconds
-const unsigned long BALL_SEARCH_TRAY_OPEN_DURATION_MS = 5000; // 5 seconds
+const unsigned long BALL_SEARCH_KICKOUT_INTERVAL_MS = 15000;  // Fire kickouts during ball search every 15 seconds
 
 // ***** BALL TRAY TIMEOUT *****
 // If we start a game and need to do a ball search, give up after this much time has passed.
@@ -264,11 +271,43 @@ const unsigned long BALL_DETECTION_STABILITY_MS = 1000;  // 1 second (adjustable
 unsigned long ballDetectionStableStartMs = 0;  // When switch first closed (for stability tracking)
 
 // ***** GAME STYLE TRACKING *****
-const byte GAME_STYLE_ORIGINAL = 0;
-const byte GAME_STYLE_ENHANCED = 1;
-const byte GAME_STYLE_IMPULSE  = 2;
+const byte GAME_STYLE_ORIGINAL =   0;
+const byte GAME_STYLE_ENHANCED =   1;
+const byte GAME_STYLE_IMPULSE  =   2;
+const byte GAME_STYLE_NONE     = 255;
 
-byte gameStyle = 255;  // Selected style (255 = none selected, set by start button taps)
+byte gameStyle = GAME_STYLE_NONE;  // Selected style (set by start button taps)
+bool playerAdditionWindowOpen = false;  // True from game start until first point scored (Original: for Impulse switch detection ONLY)
+bool hillClimbStarted = false;  // True once hill climb audio/shaker has started (to prevent re-triggering)
+bool ballSettledInLift = false;  // True once ball is confirmed resting at lift base (prevents premature hill climb trigger)
+
+// ***** SHAKER MOTOR POWER LEVELS *****
+const byte SHAKER_POWER_HILL_CLIMB = 80;   // Low rumble during hill climb
+const byte SHAKER_POWER_HILL_DROP = 110;   // Medium intensity during first drop
+const byte SHAKER_POWER_MIN = 70;          // Minimum power to start motor (below this won't run)
+const byte SHAKER_POWER_MAX = 140;         // Maximum safe power (above this triggers hat switches)
+
+// ***** HILL CLIMB/DROP TIMING *****
+const unsigned long HILL_CLIMB_TIMEOUT_MS = 30000;  // 30 seconds before "shoot the ball" reminder
+const unsigned long HILL_DROP_DURATION_MS = 11000;  // 11 seconds (matches track 0404 length)
+
+// ***** SHAKER MOTOR TIMING CONSTANTS *****
+const unsigned long SHAKER_HILL_DROP_MS = 11000;    // Hill drop duration (matches track 404)
+const unsigned long SHAKER_GOBBLE_MS = 1000;        // Gobble Hole Shooting Gallery hit
+const unsigned long SHAKER_BUMPER_MS = 500;         // Bumper Cars hit
+const unsigned long SHAKER_HAT_MS = 800;            // Roll-A-Ball hat rollover
+const unsigned long SHAKER_DRAIN_MS = 2000;         // Ball drain (non-mode)
+unsigned long shakerDropStartMs = 0;  // When hill drop shaker started (0 = not running)
+
+// ***** BALL SAVE STATE *****
+struct BallSaveState {
+  bool active;              // Ball save timer active
+  unsigned long endMs;      // When ball save expires
+  bool hasUsedSave;         // Already used this ball
+  byte instantDrainCount;   // Number of "instant drains" this ball (before timer starts)
+};
+
+BallSaveState ballSave;
 
 // ***** FLIPPER STATE *****
 bool leftFlipperHeld = false;
@@ -290,6 +329,11 @@ unsigned int audioCurrentMusicTrack    = 0;  // Currently playing MUS track (0 =
 unsigned long audioComEndMillis        = 0;  // When current COM track ends
 unsigned long audioMusicEndMillis      = 0;  // When current music track ends
 unsigned long audioLiftLoopStartMillis = 0;  // When lift loop started (for re-loop)
+
+// ***** MUSIC THEME SELECTION *****
+byte primaryMusicTheme = 0;  // 0=Circus, 1=Surf (loaded from EEPROM)
+byte lastCircusTrackIdx = 0;  // Last played Circus track index (to avoid repeats)
+byte lastSurfTrackIdx = 0;    // Last played Surf track index (to avoid repeats)
 
 // ***** TSUNAMI GAIN SETTINGS *****
 int8_t tsunamiGainDb      = TSUNAMI_GAIN_DB_DEFAULT;  // Persisted Tsunami master gain
@@ -416,6 +460,9 @@ void setup() {
   delay(50);
   audioResetTsunamiState();
 
+  // Load music theme preference
+  audioLoadThemePreference(&primaryMusicTheme, &lastCircusTrackIdx, &lastSurfTrackIdx);
+
   // Initialize lamps and game state
   setGILamps(true);
   pMessage->sendMAStoSLVGILamp(true);
@@ -464,6 +511,18 @@ void loop() {
 
   case PHASE_BALL_SEARCH:
     updatePhaseBallSearch();
+    break;
+
+  case PHASE_STARTUP:
+    updatePhaseStartup();
+    break;
+
+  case PHASE_BALL_IN_PLAY:
+    updatePhaseBallInPlay();
+    break;
+
+  case PHASE_BALL_READY:
+    updatePhaseBallReady();
     break;
 
   default:
@@ -606,7 +665,7 @@ void processStartButton() {
   }
 
   // First tap detection
-  if (switchJustClosedFlag[SWITCH_IDX_START_BUTTON] && !startWaitingForSecondTap && gameStyle == 255) {
+  if (switchJustClosedFlag[SWITCH_IDX_START_BUTTON] && !startWaitingForSecondTap && gameStyle == GAME_STYLE_NONE) {
     startFirstPressMs = millis();
     startTapCount = 1;
     startWaitingForSecondTap = true;
@@ -643,7 +702,7 @@ void processStartButton() {
         audioComEndMillis = millis() + ((unsigned long)trackLength * 100UL);
 
         delay(2000);
-        gameStyle = 255;
+        gameStyle = GAME_STYLE_NONE;
         return;
       }
 
@@ -668,7 +727,7 @@ void processStartButton() {
       if (!creditsAvailable) {
         // Original mode: silent, no feedback
         delay(2000);
-        gameStyle = 255;
+        gameStyle = GAME_STYLE_NONE;
         return;
       }
 
@@ -677,7 +736,7 @@ void processStartButton() {
   }
 
   // Ball check and game start logic
-  if (gameStyle != 255) {
+  if (gameStyle != GAME_STYLE_NONE) {
     // ***** ORIGINAL MODE: Open tray IMMEDIATELY *****
     if (gameStyle == GAME_STYLE_ORIGINAL) {
       activateDevice(DEV_IDX_BALL_TRAY_RELEASE);
@@ -695,6 +754,9 @@ void processStartButton() {
 
     // ***** BOTH MODES: Check for 5 balls *****
     if (!allBallsInTrough()) {
+      // ***** CHECK LIFT SWITCH IMMEDIATELY (before any waiting) *****
+      bool ballInLiftAtStart = switchClosed(SWITCH_IDX_BALL_IN_LIFT);
+
       // Balls missing
       if (gameStyle == GAME_STYLE_ENHANCED) {
         activateDevice(DEV_IDX_BALL_TRAY_RELEASE);
@@ -703,16 +765,34 @@ void processStartButton() {
       }
 
       // Wait up to 5 seconds for switch to close AND stay closed for 1 second
+      // CONTINUOUSLY monitor kickouts during entire wait period
       unsigned long trayWaitStart = millis();
       bool ballsSettled = false;
 
       while (millis() - trayWaitStart < 5000) {
+        // ***** CONTINUOUS KICKOUT EJECTION *****
+        if (switchClosedImmediate(SWITCH_IDX_KICKOUT_LEFT) && deviceParm[DEV_IDX_KICKOUT_LEFT].countdown == 0) {
+          activateDevice(DEV_IDX_KICKOUT_LEFT);
+        }
+        if (switchClosedImmediate(SWITCH_IDX_KICKOUT_RIGHT) && deviceParm[DEV_IDX_KICKOUT_RIGHT].countdown == 0) {
+          activateDevice(DEV_IDX_KICKOUT_RIGHT);
+        }
+
+        // Check for balls in trough
         if (switchClosedImmediate(SWITCH_IDX_5_BALLS_IN_TROUGH)) {
           // Switch just closed - verify it stays closed for 1 full second
           unsigned long verifyStart = millis();
           bool stayedClosed = true;
 
           while (millis() - verifyStart < BALL_DETECTION_STABILITY_MS) {
+            // Keep ejecting kickouts during verification too!
+            if (switchClosedImmediate(SWITCH_IDX_KICKOUT_LEFT) && deviceParm[DEV_IDX_KICKOUT_LEFT].countdown == 0) {
+              activateDevice(DEV_IDX_KICKOUT_LEFT);
+            }
+            if (switchClosedImmediate(SWITCH_IDX_KICKOUT_RIGHT) && deviceParm[DEV_IDX_KICKOUT_RIGHT].countdown == 0) {
+              activateDevice(DEV_IDX_KICKOUT_RIGHT);
+            }
+
             if (!switchClosedImmediate(SWITCH_IDX_5_BALLS_IN_TROUGH)) {
               // Opened during verification - ball rolled over
               stayedClosed = false;
@@ -737,10 +817,10 @@ void processStartButton() {
 
         while (millis() - kickoutWaitStart < 2000) {
           // Continue ejecting kickouts
-          if (switchClosed(SWITCH_IDX_KICKOUT_LEFT) && deviceParm[DEV_IDX_KICKOUT_LEFT].countdown == 0) {
+          if (switchClosedImmediate(SWITCH_IDX_KICKOUT_LEFT) && deviceParm[DEV_IDX_KICKOUT_LEFT].countdown == 0) {
             activateDevice(DEV_IDX_KICKOUT_LEFT);
           }
-          if (switchClosed(SWITCH_IDX_KICKOUT_RIGHT) && deviceParm[DEV_IDX_KICKOUT_RIGHT].countdown == 0) {
+          if (switchClosedImmediate(SWITCH_IDX_KICKOUT_RIGHT) && deviceParm[DEV_IDX_KICKOUT_RIGHT].countdown == 0) {
             activateDevice(DEV_IDX_KICKOUT_RIGHT);
           }
 
@@ -750,6 +830,14 @@ void processStartButton() {
             bool stayedClosed = true;
 
             while (millis() - verifyStart < BALL_DETECTION_STABILITY_MS) {
+              // Keep ejecting during verification
+              if (switchClosedImmediate(SWITCH_IDX_KICKOUT_LEFT) && deviceParm[DEV_IDX_KICKOUT_LEFT].countdown == 0) {
+                activateDevice(DEV_IDX_KICKOUT_LEFT);
+              }
+              if (switchClosedImmediate(SWITCH_IDX_KICKOUT_RIGHT) && deviceParm[DEV_IDX_KICKOUT_RIGHT].countdown == 0) {
+                activateDevice(DEV_IDX_KICKOUT_RIGHT);
+              }
+
               if (!switchClosedImmediate(SWITCH_IDX_5_BALLS_IN_TROUGH)) {
                 stayedClosed = false;
                 break;
@@ -773,21 +861,51 @@ void processStartButton() {
         ballSearchSubState = BALL_SEARCH_INIT;
 
         if (gameStyle == GAME_STYLE_ENHANCED) {
-          unsigned int trackNum = comTracksBallMissing[0].trackNum;
-          byte trackLength = comTracksBallMissing[0].lengthTenths;
-          pTsunami->trackPlayPoly((int)trackNum, 0, false);
-          audioApplyTrackGain(trackNum, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
-          audioCurrentComTrack = trackNum;
-          audioComEndMillis = millis() + ((unsigned long)trackLength * 100UL);
+          // ***** IMMEDIATE FEEDBACK: Use lift switch state from BEFORE we started waiting *****
+          if (ballInLiftAtStart) {
+            // Ball was stuck at lift base from the start - play instruction FIRST
+            byte liftTrackLength = comTracksBallMissing[1].lengthTenths;  // Track 302
+            pTsunami->trackPlayPoly(TRACK_BALL_IN_LIFT, 0, false);
+            audioApplyTrackGain(TRACK_BALL_IN_LIFT, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+            audioCurrentComTrack = TRACK_BALL_IN_LIFT;
+            audioComEndMillis = millis() + ((unsigned long)liftTrackLength * 100UL);
+
+            // Wait for lift instruction to finish
+            delay((unsigned long)liftTrackLength * 100UL + 100);
+
+            // Now play general "ball missing" announcement
+            unsigned int trackNum = comTracksBallMissing[0].trackNum;
+            byte trackLength = comTracksBallMissing[0].lengthTenths;
+            pTsunami->trackPlayPoly((int)trackNum, 0, false);
+            audioApplyTrackGain(trackNum, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+            audioCurrentComTrack = trackNum;
+            audioComEndMillis = millis() + ((unsigned long)trackLength * 100UL);
+          } else {
+            // No ball at lift - just play general "ball missing" announcement
+            unsigned int trackNum = comTracksBallMissing[0].trackNum;
+            byte trackLength = comTracksBallMissing[0].lengthTenths;
+            pTsunami->trackPlayPoly((int)trackNum, 0, false);
+            audioApplyTrackGain(trackNum, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+            audioCurrentComTrack = trackNum;
+            audioComEndMillis = millis() + ((unsigned long)trackLength * 100UL);
+          }
         }
         return;
       }
+      // ***** BALLS FOUND DURING WAIT - Continue to game start *****
+      // (Fall through to "All 5 balls present!" section below)
     }
 
     // ***** All 5 balls present! *****
     if (gameStyle == GAME_STYLE_ENHANCED) {
       releaseDevice(DEV_IDX_BALL_TRAY_RELEASE);
       gameState.ballTrayOpen = false;
+
+      // Play SCREAM immediately (before credit deduction)
+      pTsunami->stopAllTracks();
+      pTsunami->trackPlayPoly(TRACK_START_SCREAM, 0, false);
+      audioApplyTrackGain(TRACK_START_SCREAM, tsunamiSfxGainDb, tsunamiGainDb, pTsunami);
+      delay(1500);  // Let scream play (brief blocking delay acceptable during startup)
     }
 
     // Deduct credit and start game
@@ -806,16 +924,21 @@ void processStartButton() {
       audioCurrentComTrack = TRACK_START_HEY_GANG;
       audioComEndMillis = millis() + 3500UL;
     }
+    // Open player addition window (Original: for Impulse switch)
+    playerAdditionWindowOpen = true;
 
-    lcdClear();
-    lcdPrintRow(1, "Starting game...");
-    lcdPrintRow(2, gameStyle == GAME_STYLE_ENHANCED ? "Enhanced" : "Original");
-
-    delay(3000);
-
+    // Transition to PHASE_STARTUP immediately (no blocking delay)
     gamePhase = PHASE_STARTUP;
     startupSubState = STARTUP_INIT;
     startupTickCounter = 0;
+
+    // Optional: Brief LCD feedback (will be replaced by status line in PHASE_BALL_READY)
+    if (gameStyle == GAME_STYLE_ENHANCED) {
+      lcdClear();
+      lcdPrintRow(1, "Starting Enhanced");
+    }
+    // For Original/Impulse: no LCD feedback (stays silent per design)
+
     return;
   }
 }
@@ -938,10 +1061,9 @@ void updatePhaseBallSearch() {
     lcdClear();
     markAttractDisplayDirty();
     gamePhase = PHASE_ATTRACT;
-    gameStyle = 255;
+    gameStyle = GAME_STYLE_NONE;
     return;
   }
-
   // Handle START button press (user feedback)
   if (switchJustClosedFlag[SWITCH_IDX_START_BUTTON]) {
     if (gameStyle == GAME_STYLE_ENHANCED) {
@@ -950,17 +1072,40 @@ void updatePhaseBallSearch() {
       audioCurrentComTrack = 0;
       audioComEndMillis = 0;
 
-      unsigned int trackNum = comTracksBallMissing[0].trackNum;
-      byte trackLength = comTracksBallMissing[0].lengthTenths;
-      pTsunami->trackPlayPoly((int)trackNum, 0, false);
-      audioApplyTrackGain(trackNum, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
-      audioCurrentComTrack = trackNum;
-      audioComEndMillis = millis() + ((unsigned long)trackLength * 100UL);
+      // Check if ball is at lift base (immediate feedback!)
+      bool ballInLift = switchClosed(SWITCH_IDX_BALL_IN_LIFT);
+
+      if (ballInLift) {
+        // Play lift instruction FIRST
+        byte liftTrackLength = comTracksBallMissing[1].lengthTenths;  // Track 302
+        pTsunami->trackPlayPoly(TRACK_BALL_IN_LIFT, 0, false);
+        audioApplyTrackGain(TRACK_BALL_IN_LIFT, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+        audioCurrentComTrack = TRACK_BALL_IN_LIFT;
+        audioComEndMillis = millis() + ((unsigned long)liftTrackLength * 100UL);
+
+        // Wait for lift instruction to finish
+        delay((unsigned long)liftTrackLength * 100UL + 100);
+
+        // Then play general "ball missing" announcement
+        unsigned int trackNum = comTracksBallMissing[0].trackNum;
+        byte trackLength = comTracksBallMissing[0].lengthTenths;
+        pTsunami->trackPlayPoly((int)trackNum, 0, false);
+        audioApplyTrackGain(trackNum, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+        audioCurrentComTrack = trackNum;
+        audioComEndMillis = millis() + ((unsigned long)trackLength * 100UL);
+      } else {
+        // No ball at lift - just play general announcement
+        unsigned int trackNum = comTracksBallMissing[0].trackNum;
+        byte trackLength = comTracksBallMissing[0].lengthTenths;
+        pTsunami->trackPlayPoly((int)trackNum, 0, false);
+        audioApplyTrackGain(trackNum, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+        audioCurrentComTrack = trackNum;
+        audioComEndMillis = millis() + ((unsigned long)trackLength * 100UL);
+      }
     }
 
     lcdPrintRow(3, "Still searching...");
   }
-
   // Check if all balls found
   if (allBallsInTrough()) {
     // Success! Stop audio
@@ -979,7 +1124,15 @@ void updatePhaseBallSearch() {
     lcdPrintRow(2, "Deducting credit...");
     delay(1000);
 
+    // ***** PLAY SCREAM (Enhanced only) *****
+    if (gameStyle == GAME_STYLE_ENHANCED) {
+      pTsunami->trackPlayPoly(TRACK_START_SCREAM, 0, false);
+      audioApplyTrackGain(TRACK_START_SCREAM, tsunamiSfxGainDb, tsunamiGainDb, pTsunami);
+      delay(1500);  // Let scream play
+    }
+
     pMessage->sendMAStoSLVCreditDec();
+
     gameState.numPlayers = 1;
     gameState.currentPlayer = 1;
     gameState.currentBall = 1;
@@ -1037,6 +1190,411 @@ void updatePhaseBallSearch() {
     }
   }
   break;
+  }
+}
+
+// ***** BALL READY PHASE HANDLER *****
+void updatePhaseBallReady() {
+  // ***** IMPULSE MODE SWITCH: Delayed second START press (Original -> Impulse) *****
+  if (playerAdditionWindowOpen && gameStyle == GAME_STYLE_ORIGINAL && !gameState.hasScored) {
+    if (switchJustClosedFlag[SWITCH_IDX_START_BUTTON]) {
+      gameStyle = GAME_STYLE_IMPULSE;
+      playerAdditionWindowOpen = false;
+
+      lcdClear();
+      lcdPrintRow(1, "Impulse Mode");
+      lcdPrintRow(2, "Activated!");
+      delay(1500);
+      lcdClear();
+
+      snprintf(lcdString, LCD_WIDTH + 1, "Imp P%d Ball %d",
+        gameState.currentPlayer,
+        gameState.currentBall);
+      lcdPrintRow(4, lcdString);
+
+      Serial.println("IMPULSE MODE ACTIVATED");
+    }
+  }
+
+  // ***** ENHANCED MODE: Wait for ball to settle before monitoring for hill climb *****
+  if (gameStyle == GAME_STYLE_ENHANCED && !hillClimbStarted) {
+    bool ballInLiftNow = switchClosed(SWITCH_IDX_BALL_IN_LIFT);
+
+    // ***** STEP 1: Wait for ball to ARRIVE (rising edge) *****
+    if (!ballSettledInLift) {
+      // Detect RISING EDGE (switch just closed)
+      if (ballInLiftNow && !prevBallInLift) {
+        ballSettledInLift = true;
+        Serial.println("DEBUG: Ball settled in lift (rising edge), ready for player to push");
+      }
+
+      prevBallInLift = ballInLiftNow;
+      return;  // Wait for ball to settle
+    }
+
+    // ***** STEP 2: Wait for ball to LEAVE (falling edge) *****
+    if (ballInLiftNow && !prevBallInLift) {
+      // Ball just re-arrived after being removed - NOT the launch we're looking for
+      Serial.println("DEBUG: Ball returned to lift after removal");
+    }
+
+    if (!ballInLiftNow && prevBallInLift) {
+      // FALLING EDGE: Ball just left the lift - START HILL CLIMB
+      hillClimbStarted = true;
+
+      Serial.println("DEBUG: Ball lift rod pushed, starting hill climb");
+
+      pTsunami->trackLoop(TRACK_START_LIFT_LOOP, true);
+      audioApplyTrackGain(TRACK_START_LIFT_LOOP, tsunamiSfxGainDb, tsunamiGainDb, pTsunami);
+      pTsunami->trackPlayPoly(TRACK_START_LIFT_LOOP, 0, false);
+      audioCurrentSfxTrack = TRACK_START_LIFT_LOOP;
+
+      audioLiftLoopStartMillis = millis();
+
+      analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, SHAKER_POWER_HILL_CLIMB);
+    }
+
+    prevBallInLift = ballInLiftNow;
+  }
+
+  // ***** ALL MODES: Detect ANY scoring switch to mark first point *****
+  bool scoringSwitchHit = false;
+  bool wasDrain = false;
+
+  // Drains (check these FIRST so we can mark them separately)
+  if (switchJustClosedFlag[SWITCH_IDX_DRAIN_LEFT] ||
+    switchJustClosedFlag[SWITCH_IDX_DRAIN_CENTER] ||
+    switchJustClosedFlag[SWITCH_IDX_DRAIN_RIGHT] ||
+    switchJustClosedFlag[SWITCH_IDX_GOBBLE]) {
+    scoringSwitchHit = true;
+    wasDrain = true;
+  }
+
+  // Other scoring switches
+  if (!scoringSwitchHit) {
+    // Bumpers
+    for (byte i = SWITCH_IDX_BUMPER_S; i <= SWITCH_IDX_BUMPER_O; i++) {
+      if (switchJustClosedFlag[i]) {
+        scoringSwitchHit = true;
+        break;
+      }
+    }
+  }
+
+  if (!scoringSwitchHit) {
+    // Slingshots
+    if (switchJustClosedFlag[SWITCH_IDX_SLINGSHOT_LEFT] ||
+      switchJustClosedFlag[SWITCH_IDX_SLINGSHOT_RIGHT]) {
+      scoringSwitchHit = true;
+    }
+  }
+
+  if (!scoringSwitchHit) {
+    // Side targets
+    for (byte i = SWITCH_IDX_LEFT_SIDE_TARGET_2; i <= SWITCH_IDX_LEFT_SIDE_TARGET_5; i++) {
+      if (switchJustClosedFlag[i]) {
+        scoringSwitchHit = true;
+        break;
+      }
+    }
+  }
+
+  if (!scoringSwitchHit) {
+    for (byte i = SWITCH_IDX_RIGHT_SIDE_TARGET_1; i <= SWITCH_IDX_RIGHT_SIDE_TARGET_5; i++) {
+      if (switchJustClosedFlag[i]) {
+        scoringSwitchHit = true;
+        break;
+      }
+    }
+  }
+
+  if (!scoringSwitchHit) {
+    // Hat rollovers
+    if (switchJustClosedFlag[SWITCH_IDX_HAT_LEFT_TOP] ||
+      switchJustClosedFlag[SWITCH_IDX_HAT_LEFT_BOTTOM] ||
+      switchJustClosedFlag[SWITCH_IDX_HAT_RIGHT_TOP] ||
+      switchJustClosedFlag[SWITCH_IDX_HAT_RIGHT_BOTTOM]) {
+      scoringSwitchHit = true;
+    }
+  }
+
+  if (!scoringSwitchHit) {
+    // Kickouts
+    if (switchJustClosedFlag[SWITCH_IDX_KICKOUT_LEFT] ||
+      switchJustClosedFlag[SWITCH_IDX_KICKOUT_RIGHT]) {
+      scoringSwitchHit = true;
+    }
+  }
+
+  // ***** FIRST POINT DETECTED *****
+  if (scoringSwitchHit) {
+    Serial.print("DEBUG: First scoring switch hit, wasDrain=");
+    Serial.println(wasDrain);
+
+    // Mark that player has scored (for Impulse mode switch window)
+    gameState.hasScored = true;
+
+    // If NOT a drain, handle first point transition
+    if (!wasDrain) {
+      handleFirstPointScored();
+    }
+
+    // Transition to BALL_IN_PLAY
+    gamePhase = PHASE_BALL_IN_PLAY;
+  }
+}
+
+// ***** BALL IN PLAY PHASE HANDLER *****
+void updatePhaseBallInPlay() {
+  // ***** SHAKER MOTOR MANAGEMENT (Enhanced mode only) *****
+  if (gameStyle == GAME_STYLE_ENHANCED && shakerDropStartMs != 0) {
+    unsigned long elapsedMs = millis() - shakerDropStartMs;
+
+    if (elapsedMs >= SHAKER_HILL_DROP_MS) {
+      // Stop shaker motor after 11 seconds
+      analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, 0);
+      shakerDropStartMs = 0;
+      Serial.println("DEBUG: Shaker motor stopped after 11 seconds");
+    }
+  }
+
+  // ***** AUDIO DUCKING MANAGEMENT *****
+  // If COM track has ended, un-duck music
+  if (audioCurrentComTrack != 0 && millis() >= audioComEndMillis) {
+    audioCurrentComTrack = 0;
+    audioDuckMusicForVoice(false);  // Restore music volume
+    Serial.println("DEBUG: Voice line ended, un-ducking music");
+  }
+
+  // ***** BALL DRAIN DETECTION *****
+  bool drainDetected = false;
+  byte drainType = 0;  // 0=none, 1=left, 2=center, 3=right, 4=gobble
+
+  if (switchJustClosedFlag[SWITCH_IDX_DRAIN_LEFT]) {
+    drainDetected = true;
+    drainType = 1;
+  } else if (switchJustClosedFlag[SWITCH_IDX_DRAIN_CENTER]) {
+    drainDetected = true;
+    drainType = 2;
+  } else if (switchJustClosedFlag[SWITCH_IDX_DRAIN_RIGHT]) {
+    drainDetected = true;
+    drainType = 3;
+  } else if (switchJustClosedFlag[SWITCH_IDX_GOBBLE]) {
+    drainDetected = true;
+    drainType = 4;
+  }
+
+  if (drainDetected) {
+    handleBallDrain(drainType);
+  }
+
+  // TODO: Implement full scoring logic here
+}
+
+// ***** BALL DRAIN HANDLER *****
+void handleBallDrain(byte drainType) {
+  Serial.print("DEBUG: Ball drained (type ");
+  Serial.print(drainType);
+  Serial.print("), hasScored=");
+  Serial.println(gameState.hasScored);
+
+  // ***** ENHANCED MODE: Ball Save Logic *****
+  if (gameStyle == GAME_STYLE_ENHANCED) {
+    // Case 1: First drain of ball (instant drain - may or may not have scored)
+    if (ballSave.instantDrainCount == 0) {
+      Serial.println("DEBUG: First drain of ball, saving (instant drain)");
+      saveBall("instant_drain");
+      ballSave.instantDrainCount++;
+      return;
+    }
+
+    // Case 2: Ball save timer active and not used yet
+    if (ballSave.active && millis() < ballSave.endMs && !ballSave.hasUsedSave) {
+      Serial.println("DEBUG: Ball save timer active, saving ball");
+      saveBall("timed_save");
+      ballSave.hasUsedSave = true;
+      ballSave.active = false;
+      return;
+    }
+  }
+
+  // ***** NO BALL SAVE: Normal drain processing *****
+  Serial.println("DEBUG: Ball lost (no save)");
+  processBallLost();
+}
+
+// ***** BALL SAVE HANDLER *****
+void saveBall(const char* reason) {
+  Serial.print("DEBUG: Ball saved - reason: ");
+  Serial.println(reason);
+
+  // Stop ALL shaker sources (hill climb AND hill drop)
+  stopAllShakers();
+
+  // Stop hill climb audio if still playing
+  if (audioCurrentSfxTrack == TRACK_START_LIFT_LOOP) {
+    pTsunami->trackStop(TRACK_START_LIFT_LOOP);
+    audioCurrentSfxTrack = 0;
+  }
+
+  // Duck music before playing voice line
+  audioDuckMusicForVoice(true);
+
+  // Play ball save audio
+  if (strcmp(reason, "instant_drain") == 0) {
+    // Special case: first point was drain
+    pTsunami->trackPlayPoly(TRACK_BALL_SAVED_FIRST, 0, false);
+    audioApplyTrackGain(TRACK_BALL_SAVED_FIRST, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+    audioCurrentComTrack = TRACK_BALL_SAVED_FIRST;
+    audioComEndMillis = millis() + 3000UL;  // Approximate duration
+  } else {
+    // Normal ball save
+    pTsunami->trackPlayPoly(TRACK_BALL_SAVED_FIRST, 0, false);
+    audioApplyTrackGain(TRACK_BALL_SAVED_FIRST, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+    audioCurrentComTrack = TRACK_BALL_SAVED_FIRST;
+    audioComEndMillis = millis() + 3000UL;  // Approximate duration
+  }
+
+  // Start music ONLY if not already playing (prevents double music)
+  if (audioCurrentMusicTrack == 0) {
+    audioStartPrimaryMusic(primaryMusicTheme,
+      (primaryMusicTheme == 0) ? &lastCircusTrackIdx : &lastSurfTrackIdx,
+      pTsunami, tsunamiMusicGainDb, tsunamiGainDb);
+  }
+
+  // Schedule music un-duck after voice line ends
+  // (This would normally be handled by a timer in updatePhaseBallInPlay, but for now just unduck immediately after a short delay)
+  // TODO: Add proper audio state machine to handle ducking timeouts
+
+  // Release new ball (if lift is clear)
+  if (!switchClosed(SWITCH_IDX_BALL_IN_LIFT)) {
+    activateDevice(DEV_IDX_BALL_TROUGH_RELEASE);
+  } else {
+    Serial.println("DEBUG: Ball already in lift, not releasing another");
+  }
+}
+
+// ***** BALL LOST HANDLER (STUB - TO BE IMPLEMENTED) *****
+void processBallLost() {
+  // TODO: Implement full ball lost logic
+  // - Check if more balls remain
+  // - Dispense next ball OR end game
+  // - Play drain audio
+  // - Activate shaker motor
+  Serial.println("DEBUG: processBallLost() - NOT YET IMPLEMENTED");
+}
+
+// ***** STARTUP PHASE HANDLER *****
+void updatePhaseStartup() {
+  // Tick counter increments every loop (10ms)
+  startupTickCounter++;
+
+  switch (startupSubState) {
+  case STARTUP_INIT:
+    // Initialize game state for new ball
+    gameState.tilted = false;
+    gameState.tiltWarnings = 0;
+    gameState.ballInPlay = false;
+    gameState.ballSaveActive = false;
+
+    // Move to dispense state
+    startupSubState = STARTUP_DISPENSE_BALL;
+    startupTickCounter = 0;
+    break;
+
+  case STARTUP_DISPENSE_BALL:
+    // Fire ball trough release coil (230ms pulse)
+    activateDevice(DEV_IDX_BALL_TROUGH_RELEASE);
+
+    // Record when we dispensed the ball (for timeout tracking)
+    startupBallDispenseMs = millis();
+
+    // Move to wait state
+    startupSubState = STARTUP_WAIT_FOR_LIFT;
+    startupTickCounter = 0;
+    break;
+
+  case STARTUP_WAIT_FOR_LIFT:
+    // Check if ball has reached lift
+    if (switchClosed(SWITCH_IDX_BALL_IN_LIFT)) {
+      // Success! Ball is in lift
+      startupSubState = STARTUP_COMPLETE;
+      startupTickCounter = 0;
+      break;
+    }
+
+    // Check for timeout (3 seconds)
+    if (millis() - startupBallDispenseMs >= STARTUP_BALL_TROUGH_TO_LIFT_TIMEOUT_MS) {
+      // Timeout - ball didn't reach lift
+      criticalError("BALL STUCK", "Ball did not reach", "lift in 3 seconds");
+      return;
+    }
+    break;
+
+  case STARTUP_COMPLETE:
+    // Prepare for ball ready phase
+    startupSubState = STARTUP_INIT;  // Reset for next ball
+    startupTickCounter = 0;
+
+    // Initialize ball ready state BEFORE transitioning
+    onEnterBallReady();
+
+    // NOW transition to PHASE_BALL_READY
+    gamePhase = PHASE_BALL_READY;
+
+    // Update LCD status line
+    snprintf(lcdString, LCD_WIDTH + 1, "%s P%d Ball %d",
+      gameStyle == GAME_STYLE_ENHANCED ? "Enh" : "Org",
+      gameState.currentPlayer,
+      gameState.currentBall);
+    lcdPrintRow(4, lcdString);
+    break;
+  }
+}
+
+// ***** FIRST POINT SCORED HANDLER *****
+void handleFirstPointScored() {
+  if (!playerAdditionWindowOpen) {
+    return;  // Already handled first point
+  }
+
+  // Close player addition window
+  playerAdditionWindowOpen = false;
+  gameState.hasScored = true;
+
+  // ***** ORIGINAL/IMPULSE: Close ball tray after first point *****
+  if (gameStyle == GAME_STYLE_ORIGINAL || gameStyle == GAME_STYLE_IMPULSE) {
+    if (gameState.ballTrayOpen) {
+      releaseDevice(DEV_IDX_BALL_TRAY_RELEASE);
+      gameState.ballTrayOpen = false;
+      Serial.println("DEBUG: Ball tray closed after first point (Original/Impulse)");
+    }
+  }
+
+  if (gameStyle == GAME_STYLE_ENHANCED) {
+    // Stop hill climb audio
+    pTsunami->trackStop(TRACK_START_LIFT_LOOP);
+
+    // Play first drop screaming audio (11 seconds)
+    pTsunami->trackPlayPoly(TRACK_START_DROP, 0, false);
+    audioApplyTrackGain(TRACK_START_DROP, tsunamiSfxGainDb, tsunamiGainDb, pTsunami);
+    audioCurrentSfxTrack = TRACK_START_DROP;
+
+    // Ramp up shaker motor to hill drop power and record start time
+    analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, SHAKER_POWER_HILL_DROP);
+    shakerDropStartMs = millis();
+
+    // Start primary music track
+    audioStartPrimaryMusic(primaryMusicTheme,
+      (primaryMusicTheme == 0) ? &lastCircusTrackIdx : &lastSurfTrackIdx,
+      pTsunami, tsunamiMusicGainDb, tsunamiGainDb);
+
+    // Start ball save timer (TODO: load from EEPROM)
+    ballSave.active = true;
+    ballSave.endMs = millis() + 10000UL;  // 10 seconds for testing
+    ballSave.hasUsedSave = false;
+
+    Serial.println("DEBUG: First point scored, scream + music + shaker started, ball save active");
   }
 }
 
@@ -1171,6 +1729,24 @@ void processFlippers() {
     releaseDevice(DEV_IDX_FLIPPER_RIGHT);
     rightFlipperHeld = false;
   }
+}
+
+// ***** STOP ALL SHAKER SOURCES *****
+void stopAllShakers() {
+  // Stop hill climb shaker (controlled by hillClimbStarted flag)
+  if (hillClimbStarted) {
+    analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, 0);
+    hillClimbStarted = false;
+  }
+
+  // Stop hill drop shaker (controlled by shakerDropStartMs timer)
+  if (shakerDropStartMs != 0) {
+    analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, 0);
+    shakerDropStartMs = 0;
+  }
+
+  // Stop any other shaker source (if motor is running but flags are inconsistent)
+  analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, 0);
 }
 
 // ********************************************************************************************************************************
@@ -1435,6 +2011,23 @@ void audioStopMusic() {
   audioMusicEndMillis = 0;
 }
 
+// ***** AUDIO DUCKING HELPER *****
+void audioDuckMusicForVoice(bool duck) {
+  if (pTsunami == nullptr || audioCurrentMusicTrack == 0) {
+    return;
+  }
+
+  if (duck) {
+    // Apply ducking offset (typically -20dB)
+    int duckGain = tsunamiMusicGainDb + tsunamiDuckingDb;
+    if (duckGain < TSUNAMI_GAIN_DB_MIN) duckGain = TSUNAMI_GAIN_DB_MIN;
+    pTsunami->trackGain(audioCurrentMusicTrack, duckGain);
+  } else {
+    // Restore normal music gain
+    pTsunami->trackGain(audioCurrentMusicTrack, tsunamiMusicGainDb + tsunamiGainDb);
+  }
+}
+
 // ********************************************************************************************************************************
 // ************************************************** SYSTEM UTILITIES ************************************************************
 // ********************************************************************************************************************************
@@ -1443,7 +2036,7 @@ void initGameState() {
   gameState.numPlayers = 0;
   gameState.currentPlayer = 0;
   gameState.currentBall = 0;
-  for (byte i = 0; i < 4; i++) {
+  for (byte i = 0; i < MAX_PLAYERS; i++) {
     gameState.score[i] = 0;
   }
   gameState.tiltWarnings = 0;
@@ -1458,6 +2051,46 @@ void initGameState() {
   gameState.ballsInTrough = 0;
   gameState.ballsLocked = 0;
   gameState.ballTrayOpen = false;
+
+  // Initialize ball save state
+  ballSave.active = false;
+  ballSave.endMs = 0;
+  ballSave.hasUsedSave = false;
+  ballSave.instantDrainCount = 0;
+}
+
+// ***** BALL READY PHASE ENTRY *****
+void onEnterBallReady() {
+  Serial.println("DEBUG: Entering BALL_READY phase");
+
+  // Stop any running shakers
+  stopAllShakers();
+
+  // Reset ball save state
+  ballSave.active = false;
+  ballSave.endMs = 0;
+  ballSave.hasUsedSave = false;
+  ballSave.instantDrainCount = 0;
+
+  // Reset hill climb tracking
+  hillClimbStarted = false;
+
+  // Reset ball settled tracking WITH EDGE DETECTION
+  // If ball is already in lift, we need to wait for it to be removed and returned
+  prevBallInLift = switchClosed(SWITCH_IDX_BALL_IN_LIFT);
+
+  if (prevBallInLift) {
+    // Ball already in lift - wait for player to remove it first
+    ballSettledInLift = false;
+    Serial.println("DEBUG: Ball already in lift, waiting for player to remove");
+  } else {
+    // No ball in lift - wait for it to arrive
+    ballSettledInLift = false;
+    Serial.println("DEBUG: Waiting for ball to arrive in lift");
+  }
+
+  // Reset first point tracking
+  // (DO NOT set gameState.hasScored here - that happens on first switch hit)
 }
 
 // ***** BALL TRACKING HELPER *****
