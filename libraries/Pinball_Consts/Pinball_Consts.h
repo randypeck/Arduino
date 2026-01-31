@@ -1,4 +1,4 @@
-// PINBALL_CONSTS.H Rev: 01-28-26b.
+// PINBALL_CONSTS.H Rev: 01-31-26.
 
 #ifndef PINBALL_CONSTS_H
 #define PINBALL_CONSTS_H
@@ -36,6 +36,11 @@ const byte MODE_NONE        = 0;
 const byte MODE_BUMPER_CARS = 1;
 const byte MODE_ROLL_A_BALL = 2;
 const byte MODE_GOBBLE_HOLE = 3;
+
+// Mode default times (seconds):
+const byte MODE_1_DEFAULT_TIME = 45;  // Bumper cars
+const byte MODE_2_DEFAULT_TIME = 45;  // Roll-A-Ball
+const byte MODE_3_DEFAULT_TIME = 45;  // Gobble Hole Shooting Gallery
 
 const byte LCD_WIDTH      = 20;  // 2004 (20 char by 4 lines) LCD display
 
@@ -143,8 +148,6 @@ const int8_t TSUNAMI_CAT_GAIN_DEFAULT   =   0;  // Category offset default (voic
 const int8_t TSUNAMI_CAT_GAIN_MIN       = -20;
 const int8_t TSUNAMI_CAT_GAIN_MAX       =  20;
 const int8_t TSUNAMI_DUCKING_DB_DEFAULT = -20;  // Ducking level default
-
-const unsigned long GAME_TIMEOUT_MS     = 120000;  // 2 minutes default inactivity timeout ends game
 
 // ************************************************************************
 // ************************** EEPROM ADDRESSES ****************************

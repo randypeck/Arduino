@@ -1,4 +1,4 @@
-// Screamo_Slave.INO Rev: 01/25/26
+// Screamo_Slave.INO Rev: 01/31/26
 // 11/12/25: Increased Credit Down power to 150 for more reliable credit removal.
 // 12/28/25: Updated SCORE_INC_10K and SCORE_RESET to remain silent (no bells or 10K unit) in Enhanced style.
 // 01/19/26: Updated SCORE_INC_10K message to include silent parm

@@ -182,8 +182,6 @@ byte coilWatchdogScanCounter = 0;                    // Counter for periodic ful
 const byte MAX_PLAYERS                       =    1;  // Currently only support single player, even for Enhanced
 const byte MAX_BALLS                         =    5;
 const byte MAX_MODES_PER_GAME                =    3;  // Maximum modes that can be played per game
-const unsigned long MODE_END_GRACE_PERIOD_MS = 5000;  // 5 seconds grace period after mode timer ends to get ball back
-const unsigned int GAME_TIMEOUT_SECONDS      =  300;   // 5 minutes no activity means exit to Attract mode
 
 // ***** GAME PHASE CONSTANTS *****
 const byte PHASE_ATTRACT     = 0;
@@ -222,6 +220,7 @@ unsigned int startupTimeoutTicks = 0;
 // ***** STARTUP PHASE TIMEOUTS *****
 const unsigned long BALL_TROUGH_TO_LIFT_TIMEOUT_MS = 3000;  // 3 seconds max for ball to reach lift from trough release
 unsigned long startupBallDispenseMs = 0;  // When ball was dispensed (for timeout tracking)
+const unsigned long GAME_TIMEOUT_MS     = 120000;  // 2 minutes default inactivity timeout ends game
 
 // ***** BALL LIFT TRACKING *****
 bool prevBallInLift = false;  // Previous state of ball-in-lift switch (for edge detection)
@@ -278,6 +277,13 @@ struct BallSaveState {
 };
 
 BallSaveState ballSave;
+const byte BALL_SAVE_DEFAULT_SECONDS = 15;
+
+// ***** MODE STATE TRACKING *****
+unsigned long modeEndedAtMs = 0;  // Timestamp when mode ends, for mode ball drain grace period; else set to 0.
+unsigned long modeTimerEndMs = 0;     // When mode timer expires
+bool modeTimerPaused = false;
+unsigned long modeTimerPausedAt = 0;  // When we paused it
 
 // ***** START BUTTON DETECTION *****
 const unsigned long START_STYLE_DETECT_WINDOW_MS = 500;  // 500ms to detect double-tap for Enhanced
@@ -338,8 +344,6 @@ const unsigned long SHAKER_HAT_MS = 800;            // Roll-A-Ball hat rollover
 const unsigned long SHAKER_DRAIN_MS = 2000;         // Ball drain (non-mode)
 unsigned long shakerDropStartMs = 0;  // When hill drop shaker started (0 = not running)
 
-const byte BALL_DRAIN_INSULT_FREQUENCY = 50;  // 0..100 indicates percent of the time we make a random snarky comment when the ball drains
-
 // ***** FLIPPER STATE *****
 bool leftFlipperHeld = false;
 bool rightFlipperHeld = false;
@@ -356,11 +360,9 @@ const byte SELECTION_UNIT_RED_INSERT[10] = { 8, 3, 4, 9, 2, 5, 7, 2, 1, 6 };
 
 // ***** MISC CONSTS *****
 const unsigned long MODE_END_GRACE_PERIOD_MS = 5000;  // 5 seconds drain after mode ends, you still get the ball back
-const byte BALL_DRAIN_INSULT_FREQUENCY = 50;  // 50%
+const byte BALL_DRAIN_INSULT_FREQUENCY = 50;  // 0..100 indicates percent of the time we make a random snarky comment when the ball drains
 const unsigned long GAME_TIMEOUT_SECONDS = 300;  // 5 minutes of no activity and game reverts to Attract mode
 const unsigned int STARTUP_BALL_TROUGH_TO_LIFT_TIMEOUT_MS = 3000;  // > 3 seconds and we throw a critical error
-const unsigned int BALL_DETECTION_STABILITY_MS = 1000;  // How long 5-balls-in-trough switch must be closed to be valid
-const unsigned int START_STYLE_DETECT_WINDOW_MS = 500;  // Wait up to 500ms for next press of 1/2/3-press of Start to choose mode
 const unsigned SCORE_MOTOR_CYCLE_MS = 882;                 // one 1/4 revolution of score motor (ms)
 
 // ********************************************************************************************************************************
@@ -2192,6 +2194,12 @@ void onEnterBallReady() {
 bool allBallsInTrough() {
   // Check if "5 Balls in Trough" switch is closed
   return switchClosed(SWITCH_IDX_5_BALLS_IN_TROUGH);
+}
+
+bool inGracePeriod() {
+  // Check if we are within Grace Period after a ball has drained
+  return (modeEndedAtMs > 0) &&
+    ((millis() - modeEndedAtMs) < MODE_END_GRACE_PERIOD_MS);
 }
 
 bool queryCreditStatus(bool* creditsAvailable) {

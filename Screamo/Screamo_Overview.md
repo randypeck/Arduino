@@ -1,5 +1,5 @@
 # 1954 Williams Screamo - Modernized Control System Overview
-Rev: 01-30-26c. Revised by RDP and Claude Opus 4.5.
+Rev: 01-31-26. Revised by RDP and Claude Opus 4.5.
 
 ## 1. Introduction
 
@@ -218,7 +218,7 @@ Playfield --->---+---> Drain Rollovers (L/C/R) ---> Ball Tray ---> [Ball Tray Re
 
 ### 3.5 Ball Tracking
 
-Master tracks all five balls at all times during gameplay.
+Master tracks all five balls at all times during gameplay. More details can be found in Section 10.3.1-10.3.8.
 
 #### 3.5.1 Ball Locations
 
@@ -1569,7 +1569,27 @@ The following section describes the general behavior of original machine hardwar
     - Making 1-3 awards 20 replays.
     - Four corners (1, 3, 7, 9) and center (5) awards 5 replays.
     - Any other 3-in-a-row (horizontal, vertical, or diagonal) awards 1 replay.
-  
+
+### 13.2.1 Replay Knocker Timing
+
+When multiple replays are awarded, the knocker fires in sync with Score Motor timing:
+
+- **Original/Impulse:** Score Motor runs; knocker fires once per 147ms slot
+- **Enhanced:** No Score Motor sound, but knocker timing matches (147ms intervals)
+
+**Timing Pattern (example: 20 replays for 1-2-3 pattern):**
+
+| Quarter-Rev | Slots 1-5 | Slot 6 |
+|-------------|-----------|--------|
+| 1st | 5 knocks (147ms each) | Rest (147ms) |
+| 2nd | 5 knocks (147ms each) | Rest (147ms) |
+| 3rd | 5 knocks (147ms each) | Rest (147ms) |
+| 4th | 5 knocks (147ms each) | Rest (147ms) |
+
+Total duration: 4 × 882ms = 3.528 seconds
+
+**Implementation:** Use the same timing mechanism as score increments. Queue 20 credit additions and 20 knocker fires; process them at Score Motor slot intervals.
+
 ### 13.3 EM Device Emulation Logic
 
 The original Screamo used electromechanical devices to control game state. Our software emulates this behavior. Understanding these relationships is critical for implementing correct game logic in both Original/Impulse and Enhanced modes.
@@ -1789,6 +1809,7 @@ Enhanced Style rules are based on Original style rules, with additions and chang
   - First tilt warning: Play teasing audio line, do NOT end the ball.
   - Second tilt warning: Play tilt buzzer and announcement, ball immediately ends.
   - Tilt warning count resets at the start of each ball.
+  - Tilt Behavior is also discussed in Section 4.6.
 
 ### 14.2 Shaker Motor
 
@@ -1840,13 +1861,25 @@ All volume settings are persisted to EEPROM.
 
 **Audio Ducking:**
 - When a voice line (COM) plays, music volume is temporarily reduced by the Duck Offset.
-- SFX is NOT ducked (plays at full volume alongside voice).
+- SFX is NOT ducked (plays at full volume alongside voice), primarily because SFX tracks are generally only a few seconds long.
+  - Exceptions are the Hill Climb loop and the First Hill Drop sound, but those are only ever played at the beginning of Ball 1.
 - Music volume is restored when voice line ends.
 
 **Track Definitions:**
-See 'Pinball_Audio_Tracks.h' for complete track listings with track numbers, durations, and priorities.
-Music is played in numerical track order for each of the two themes, cycling back to the first song of the theme after the last one has been played.  Partially-played songs count as fully-played.
+- See 'Pinball_Audio_Tracks.h' for complete track listings with track numbers, durations, and priorities.
+- Music is played in numerical track order for each of the two themes, cycling back to the first song of the theme after the last one has been played.  Partially-played songs count as fully-played.
 "Last" songs played are based on EEPROM_ADDR_LAST_CIRCUS_SONG_PLAYED and EEPROM_ADDR_LAST_SURF_SONG_PLAYED.
+
+**Audio Priority**
+- COM tracks always duck MUS (MUS continues at reduced volume)
+- SFX plays through regardless of COM/MUS state
+- MUS never stops; when a track ends, start the next track immediately
+- When a new COM track wants to play:
+  - If no COM is playing: Play immediately
+  - When a COM track is playing and another COM track wants to play, look at the relative priority settings of the two tracks: AUDIO_PRIORITY_HIGH, AUDIO_PRIORITY_MED, and AUDIO_PRIORITY_LOW.
+  - If new COM priority >= current COM priority: Stop current, play new
+  - If new COM priority < current COM priority: Skip new track (don't play)
+- While COM is playing, skip new SFX tracks (they're short and non-critical)
 
 ### 14.4 Starting a New Game (Enhanced)
 
@@ -1895,6 +1928,8 @@ If Ball Save triggers but `ballInLift == true` (a ball is already waiting):
 This edge case can occur if:
 - Rapid instant drains where player doesn't shoot the replacement.
 - Multiball with rapid successive drains.
+
+- See Section 10.3.7 (Ball Tracking Summary) for more details on drain handling.
 
 ### 14.6 Multiball
 
@@ -2342,6 +2377,111 @@ In all blocked cases:
 
 **Post-Mode Grace Period:**
 If a ball drains within MODE_END_GRACE_PERIOD_MS (5000ms) after a mode ends, the ball is replaced as if the mode were still active. This prevents unfair ball loss during the transition period.
+
+#### 14.9.1 Drain Handling Decision Flow
+
+When a drain switch closes:
+
+1. **Decrement `ballsInPlay`**
+
+2. **Check if in Mode:**
+   - IF `inMode == true`: Replace ball, pause timer. EXIT.
+
+3. **Check Post-Mode Grace Period:**
+   - IF `modeEndedAtMs > 0` AND `(millis() - modeEndedAtMs) < MODE_END_GRACE_PERIOD_MS`:
+     - Replace ball, play TRACK_BALL_SAVED_MODE_END. EXIT.
+
+4. **Check Ball Save (timed):**
+   - IF `ballSaveState.active` AND `millis() < ballSaveState.endMs` AND NOT `hasUsedSave`:
+     - IF NOT multiball: Set `hasUsedSave = true`
+     - Replace ball, play ball-saved announcement. EXIT.
+
+5. **Check Instant Drain Protection:**
+   - IF `gameState.hasScored == false`:
+     - Replace ball, play ball-saved announcement. EXIT.
+
+6. **Check Extra Ball:**
+   - IF `ballsInPlay == 0` AND `ballInLift == false` AND `extraBallAwarded == true`:
+     - Clear `extraBallAwarded`, dispense ball, announce. EXIT.
+
+7. **Normal Drain:**
+   - IF `ballsInPlay > 0` OR `ballInLift == true`: Stay in PHASE_BALL_IN_PLAY. EXIT.
+   - IF `currentBall < 5`: Transition to PHASE_BALL_ENDED.
+   - IF `currentBall == 5`: Transition to PHASE_GAME_OVER.
+
+#### 14.9.2 Drain Handling Flowchart
+
+                          [Drain Switch Closes]
+                                   |
+                                   v
+                        [Decrement ballsInPlay]
+                                   |
+                                   v
+                          +----------------+
+                          |   inMode?      |
+                          +----------------+
+                           |            |
+                          YES           NO
+                           |            |
+                           v            v
+                  [Replace ball,    +------------------+
+                   pause timer]     | In Grace Period? |
+                        |           +------------------+
+                        |            |              |
+                      EXIT          YES             NO
+                                     |              |
+                                     v              v
+                            [Replace ball,    +------------------+
+                             play grace       | Ball Save Active |
+                             announcement]    | AND NOT hasUsed? |
+                                 |            +------------------+
+                               EXIT            |              |
+                                              YES             NO
+                                               |              |
+                                               v              v
+                                      [Replace ball,    +------------------+
+                                       set hasUsedSave  | hasScored=false? |
+                                       if single-ball]  | (Instant Drain)  |
+                                            |           +------------------+
+                                          EXIT           |              |
+                                                        YES             NO
+                                                         |              |
+                                                         v              v
+                                                [Replace ball,    +------------------+
+                                                 play saved       | extraBallAwarded?|
+                                                 announcement]    +------------------+
+                                                      |            |              |
+                                                    EXIT          YES             NO
+                                                                   |              |
+                                                                   v              v
+                                                            [Dispense      +------------------+
+                                                              Extra Ball,  | ballsInPlay > 0  |
+                                                              announce]    | OR ballInLift?   |
+                                                                  |        +------------------+
+                                                                EXIT        |              |
+                                                                           YES             NO
+                                                                            |              |
+                                                                            v              v
+                                                                   [Stay in        +----------------+
+                                                                    BALL_IN_PLAY]  | currentBall<5? |
+                                                                         |         +----------------+
+                                                                       EXIT         |            |
+                                                                                   YES           NO
+                                                                                    |            |
+                                                                                    v            v
+                                                                           [PHASE_BALL_   [PHASE_GAME_
+                                                                            ENDED]         OVER]
+
+
+**Decision Order Summary:**
+1. In Mode? -> Replace ball, pause timer
+2. In Grace Period? -> Replace ball (post-mode protection)
+3. Ball Save Active + Not Used? -> Replace ball, mark used
+4. Instant Drain (hasScored=false)? -> Replace ball
+5. Extra Ball Awarded? -> Dispense extra ball
+6. More balls in play or lift? -> Stay in BALL_IN_PLAY
+7. More balls remaining? -> PHASE_BALL_ENDED
+8. Ball 5 complete? -> PHASE_GAME_OVER
 
 ### 14.10 Game Timeout
 
@@ -2793,5 +2933,124 @@ When constants in this document conflict with `Pinball_Consts.h`, the code file 
 | SCORE_REPORT       | Current score response       | score int 0.999 |
 
 ---
+
+## 20. State Variables Summary
+
+### 20.1 Game State Variables
+
+| Variable      | Type | Initial Value   | Description                       |
+|---------------|------|-----------------|-----------------------------------|
+| `gamePhase`   | byte | PHASE_ATTRACT   | Current game phase                |
+| `gameStyle`   | byte | GAME_STYLE_NONE | Original/Enhanced/Impulse         |
+| `currentBall` | byte | 0               | Current ball number (1-5)         |
+| `score`       | int  | 0               | Current score (1-999 = 10K-9.99M) |
+| `hasScored`   | bool | false           | Has scored any points this ball   |
+
+### 20.2 Ball Tracking Variables
+
+| Variable                   | Type | Initial Value | Description               |
+|----------------------------|------|---------------|---------------------------|
+| `ballsInPlay`              | byte | 0             | Balls on playfield (0-3)  |
+| `ballInLift`               | bool | false         | Ball waiting at lift base |
+| `ballsLocked`              | byte | 0             | Balls in kickouts (0-2)   |
+| `ballLaunchedWithoutScore` | bool | false         | For rollback detection    |
+
+### 20.3 Enhanced Mode State Variables
+
+| Variable          | Type          | Initial Value | Description                  |
+|-------------------|---------------|---------------|------------------------------|
+| `inMode`          | bool          | false         | Currently in a timed mode    |
+| `inMultiball`     | bool          | false         | Currently in multiball       |
+| `currentMode`     | byte          | MODE_NONE     | Which mode (0-3)             |
+| `modeCount`       | byte          | 0             | Modes played this game (0-3) |
+| `modeTimerEndMs`  | unsigned long | 0             | When mode timer expires      |
+| `modeTimerPaused` | bool          | false         | Timer paused (ball draining) |
+| `modeEndedAtMs`   | unsigned long | 0             | For grace period tracking    |
+
+### 20.4 Ball Save State Variables
+
+| Variable         | Type          | Initial Value | Description               |
+|------------------|---------------|---------------|---------------------------|
+| `ballSaveActive` | bool          | false         | Ball save timer running   |
+| `ballSaveEndMs`  | unsigned long | 0             | When ball save expires    |
+| `hasUsedSave`    | bool          | false         | Used timed save this ball |
+
+### 20.5 Extra Ball State Variables
+
+| Variable           | Type | Initial Value | Description                     |
+|--------------------|------|---------------|---------------------------------|
+| `extraBallAwarded` | bool | false         | Extra ball earned, not yet used |
+| `extraBallsUsed`   | byte | 0             | Count for statistics            |
+
+### 20.6 Tilt State Variables
+
+| Variable           | Type | Initial Value | Description                        |
+|--------------------|------|---------------|------------------------------------|
+| `tiltWarningCount` | byte | 0             | Warnings this ball (Enhanced: 0-1) |
+| `isTilted`         | bool | false         | Currently tilted                   |
+
+### 20.7 EM Emulation Variables
+
+| Variable                | Type     | Initial Value | Description                                 |
+|-------------------------|----------|---------------|---------------------------------------------|
+| `selectionUnitPosition` | byte     | random(0,50)  | Selection Unit position (0-49)              |
+| `tenKUnitPosition`      | byte     | 0             | 10K Unit position (0-9), derived from score |
+| `gobbleCount`           | byte     | 0             | Balls gobbled this game (0-)                |
+| `bumperLitMask`         | byte     | 0x7F 01111111 | Which bumpers are lit (7 bits)              |
+| `whiteLitMask`          | uint16_t | 0             | Which WHITE inserts are lit (9 bits)        |
+
+### 20.8 Mode Constants
+```
+  const byte MODE_NONE        = 0;
+  const byte MODE_BUMPER_CARS = 1;
+  const byte MODE_ROLL_A_BALL = 2;
+  const byte MODE_GOBBLE_HOLE = 3;
+```
+
+## 21. Constants Quick Reference
+
+These values are defined in `Pinball_Consts.h`. This section provides a quick reference; the code file is authoritative.
+
+### 21.1 Timing Constants (milliseconds unless noted)
+
+| Constant                         | Value  | Description                         |
+|----------------------------------|--------|-------------------------------------|
+| `TICK_MS`                        | 10     | Main loop tick duration             |
+| `START_STYLE_DETECT_WINDOW_MS`   | 500    | Window for Start button taps        |
+| `BALL_DETECTION_STABILITY_MS`    | 1000   | 5-ball switch stability requirement |
+| `BALL_TROUGH_TO_LIFT_TIMEOUT_MS` | 3000   | Max wait for ball to reach lift     |
+| `BALL_SEARCH_TIMEOUT_MS`         | 30000  | Ball search phase timeout           |
+| `GAME_TIMEOUT_MS`                | 300000 | Inactivity timeout (5 min)          |
+| `MODE_END_GRACE_PERIOD_MS`       | 5000   | Post-mode ball save grace           |
+| `SCORE_MOTOR_QUARTER_REV_MS`     | 882    | Score motor timing                  |
+| `SCORE_MOTOR_SLOT_MS`            | 147    | Per-slot timing                     |
+| `EEPROM_SAVE_INTERVAL_MS`        | 60000  | Score save frequency                |
+
+### 21.2 Shaker Motor Constants
+
+| Constant                  | Value | Description             |
+|---------------------------|-------|-------------------------|
+| `SHAKER_POWER_MIN`        | 70    | Minimum starting power  |
+| `SHAKER_POWER_MAX`        | 140   | Maximum safe power      |
+| `SHAKER_POWER_HILL_CLIMB` | 80    | Chain lift rumble       |
+| `SHAKER_POWER_HILL_DROP`  | 110   | First drop intensity    |
+| `SHAKER_HILL_DROP_MS`     | 11000 | Drop duration           |
+| `SHAKER_DRAIN_MS`         | 2000  | Drain feedback duration |
+| `SHAKER_GOBBLE_MS`        | 1000  | Gobble hit feedback     |
+
+### 21.3 Ball Save Constants
+
+| Constant                      | Value | Description                |
+|-------------------------------|-------|----------------------------|
+| `BALL_SAVE_DEFAULT_SECONDS`   | 15    | Default ball save duration |
+| `BALL_DRAIN_INSULT_FREQUENCY` | 50    | % chance of snarky comment |
+
+### 21.4 Mode Timer Defaults (seconds)
+
+| Constant              | Value | Description          |
+|-----------------------|-------|----------------------|
+| `MODE_1_DEFAULT_TIME` | 45    | BUMPER CARS duration |
+| `MODE_2_DEFAULT_TIME` | 45    | ROLL-A-BALL duration |
+| `MODE_3_DEFAULT_TIME` | 45    | GOBBLE HOLE duration |
 
 *End of Screamo Overview*
