@@ -1,4 +1,4 @@
-// PINBALL_AUDIO.H Rev: 01/21/26
+// PINBALL_AUDIO.H Rev: 01/26/26
 // Audio management functions for Tsunami WAV Trigger
 // Handles gain control, EEPROM persistence, and track playback
 
@@ -6,27 +6,16 @@
 #define PINBALL_AUDIO_H
 
 #include <Arduino.h>
+#include <Tsunami.h>
+#include <Pinball_Consts.h>        // For EEPROM addresses
+#include <Pinball_Audio_Tracks.h>  // For music track arrays and counts
 
 // Forward declaration for Tsunami class
-class Tsunami;
-
-// EEPROM addresses for audio settings (must match Pinball_Diagnostics.h)
-const int AUDIO_EEPROM_ADDR_TSUNAMI_GAIN       = 10;
-const int AUDIO_EEPROM_ADDR_TSUNAMI_GAIN_VOICE = 11;
-const int AUDIO_EEPROM_ADDR_TSUNAMI_GAIN_SFX   = 12;
-const int AUDIO_EEPROM_ADDR_TSUNAMI_GAIN_MUSIC = 13;
-const int AUDIO_EEPROM_ADDR_TSUNAMI_DUCK_DB    = 14;
+// class Tsunami;   *************************** NOT NEEDED CONFIRM
 
 // Tsunami hardware constants
 // NOTE: Tsunami.h defines TSUNAMI_NUM_OUTPUTS as 8, but we only use 4 outputs
 const byte AUDIO_TSUNAMI_NUM_OUTPUTS = 4;
-
-// Gain range constants
-const int8_t TSUNAMI_GAIN_DB_DEFAULT = -10;
-const int8_t TSUNAMI_GAIN_DB_MIN     = -40;
-const int8_t TSUNAMI_GAIN_DB_MAX     =   0;
-const int8_t TSUNAMI_CAT_GAIN_MIN    = -20;
-const int8_t TSUNAMI_CAT_GAIN_MAX    =  20;
 
 // Audio category constants
 const byte AUDIO_CATEGORY_VOICE = 0;

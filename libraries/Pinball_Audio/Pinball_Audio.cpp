@@ -1,11 +1,8 @@
-// PINBALL_AUDIO.CPP Rev: 01/21/26
+// PINBALL_AUDIO.CPP Rev: 01/26/26
 // Implementation of audio management functions
 
 #include "Pinball_Audio.h"
 #include <EEPROM.h>
-#include <Tsunami.h>
-#include <Pinball_Consts.h>        // For EEPROM addresses
-#include <Pinball_Audio_Tracks.h>  // For music track arrays and counts
 
 // ****************************************
 // ***** CORE TSUNAMI GAIN FUNCTIONS ******
@@ -16,7 +13,7 @@ void audioApplyMasterGain(int8_t gainDb, Tsunami* pTsunami) {
     return;
   }
   int gain = (int)gainDb;
-  for (int out = 0; out < AUDIO_TSUNAMI_NUM_OUTPUTS; out++) {  // CHANGED: Use new constant name
+  for (int out = 0; out < AUDIO_TSUNAMI_NUM_OUTPUTS; out++) {
     pTsunami->masterGain(out, gain);
   }
 }
@@ -39,7 +36,7 @@ void audioApplyTrackGain(unsigned int trackNum, int8_t categoryOffset, int8_t ma
 // ****************************************
 
 void audioSaveMasterGain(int8_t gainDb) {
-  EEPROM.update(AUDIO_EEPROM_ADDR_TSUNAMI_GAIN, (byte)gainDb);
+  EEPROM.update(EEPROM_ADDR_TSUNAMI_GAIN, (byte)gainDb);
 }
 
 void audioLoadMasterGain(int8_t* pGainDb) {
@@ -47,7 +44,7 @@ void audioLoadMasterGain(int8_t* pGainDb) {
     return;
   }
 
-  byte raw = EEPROM.read(AUDIO_EEPROM_ADDR_TSUNAMI_GAIN);
+  byte raw = EEPROM.read(EEPROM_ADDR_TSUNAMI_GAIN);
   int8_t val = (int8_t)raw;
 
   if (val < TSUNAMI_GAIN_DB_MIN || val > TSUNAMI_GAIN_DB_MAX) {
@@ -59,9 +56,9 @@ void audioLoadMasterGain(int8_t* pGainDb) {
 }
 
 void audioSaveCategoryGains(int8_t voiceGain, int8_t sfxGain, int8_t musicGain) {
-  EEPROM.update(AUDIO_EEPROM_ADDR_TSUNAMI_GAIN_VOICE, (byte)voiceGain);
-  EEPROM.update(AUDIO_EEPROM_ADDR_TSUNAMI_GAIN_SFX, (byte)sfxGain);
-  EEPROM.update(AUDIO_EEPROM_ADDR_TSUNAMI_GAIN_MUSIC, (byte)musicGain);
+  EEPROM.update(EEPROM_ADDR_TSUNAMI_GAIN_VOICE, (byte)voiceGain);
+  EEPROM.update(EEPROM_ADDR_TSUNAMI_GAIN_SFX, (byte)sfxGain);
+  EEPROM.update(EEPROM_ADDR_TSUNAMI_GAIN_MUSIC, (byte)musicGain);
 }
 
 void audioLoadCategoryGains(int8_t* pVoiceGain, int8_t* pSfxGain, int8_t* pMusicGain) {
@@ -69,14 +66,14 @@ void audioLoadCategoryGains(int8_t* pVoiceGain, int8_t* pSfxGain, int8_t* pMusic
     return;
   }
 
-  int8_t v = (int8_t)EEPROM.read(AUDIO_EEPROM_ADDR_TSUNAMI_GAIN_VOICE);
-  int8_t s = (int8_t)EEPROM.read(AUDIO_EEPROM_ADDR_TSUNAMI_GAIN_SFX);
-  int8_t m = (int8_t)EEPROM.read(AUDIO_EEPROM_ADDR_TSUNAMI_GAIN_MUSIC);
+  int8_t v = (int8_t)EEPROM.read(EEPROM_ADDR_TSUNAMI_GAIN_VOICE);
+  int8_t s = (int8_t)EEPROM.read(EEPROM_ADDR_TSUNAMI_GAIN_SFX);
+  int8_t m = (int8_t)EEPROM.read(EEPROM_ADDR_TSUNAMI_GAIN_MUSIC);
 
-  // Validate and clamp to valid range
-  if (v < TSUNAMI_CAT_GAIN_MIN || v > TSUNAMI_CAT_GAIN_MAX) v = 0;
-  if (s < TSUNAMI_CAT_GAIN_MIN || s > TSUNAMI_CAT_GAIN_MAX) s = 0;
-  if (m < TSUNAMI_CAT_GAIN_MIN || m > TSUNAMI_CAT_GAIN_MAX) m = 0;
+  // Validate and use default if out of range
+  if (v < TSUNAMI_CAT_GAIN_MIN || v > TSUNAMI_CAT_GAIN_MAX) v = TSUNAMI_CAT_GAIN_DEFAULT;
+  if (s < TSUNAMI_CAT_GAIN_MIN || s > TSUNAMI_CAT_GAIN_MAX) s = TSUNAMI_CAT_GAIN_DEFAULT;
+  if (m < TSUNAMI_CAT_GAIN_MIN || m > TSUNAMI_CAT_GAIN_MAX) m = TSUNAMI_CAT_GAIN_DEFAULT;
 
   *pVoiceGain = v;
   *pSfxGain = s;
@@ -87,7 +84,7 @@ void audioLoadCategoryGains(int8_t* pVoiceGain, int8_t* pSfxGain, int8_t* pMusic
 }
 
 void audioSaveDucking(int8_t duckingDb) {
-  EEPROM.update(AUDIO_EEPROM_ADDR_TSUNAMI_DUCK_DB, (byte)duckingDb);
+  EEPROM.update(EEPROM_ADDR_TSUNAMI_DUCK_DB, (byte)duckingDb);
 }
 
 void audioLoadDucking(int8_t* pDuckingDb) {
@@ -95,10 +92,10 @@ void audioLoadDucking(int8_t* pDuckingDb) {
     return;
   }
 
-  int8_t val = (int8_t)EEPROM.read(AUDIO_EEPROM_ADDR_TSUNAMI_DUCK_DB);
+  int8_t val = (int8_t)EEPROM.read(EEPROM_ADDR_TSUNAMI_DUCK_DB);
   if (val < TSUNAMI_GAIN_DB_MIN || val > TSUNAMI_GAIN_DB_MAX) {
-    *pDuckingDb = -20;  // Default ducking level
-    audioSaveDucking(-20);
+    *pDuckingDb = TSUNAMI_DUCKING_DB_DEFAULT;
+    audioSaveDucking(TSUNAMI_DUCKING_DB_DEFAULT);
   } else {
     *pDuckingDb = val;
   }
@@ -136,7 +133,7 @@ bool audioStartPrimaryMusic(byte primaryTheme, byte* lastIdx, Tsunami* tsunami, 
   }
 
   // Select track array and count based on theme
-  const AudioMusTrackDef* trackArray;  // ? CORRECT TYPE
+  const AudioMusTrackDef* trackArray;
   byte trackCount;
 
   if (primaryTheme == 0) {  // Circus
@@ -151,7 +148,6 @@ bool audioStartPrimaryMusic(byte primaryTheme, byte* lastIdx, Tsunami* tsunami, 
   *lastIdx = (*lastIdx + 1) % trackCount;
 
   unsigned int trackNum = trackArray[*lastIdx].trackNum;
-  // byte trackLength = trackArray[*lastIdx].lengthSeconds; (apparently not needed as of 1/25/26)
 
   // Play track
   tsunami->trackPlayPoly((int)trackNum, 0, false);

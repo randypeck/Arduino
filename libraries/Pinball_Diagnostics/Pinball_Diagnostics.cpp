@@ -2,14 +2,6 @@
 // Implementation of diagnostic test suites and EEPROM settings management
 
 #include "Pinball_Diagnostics.h"
-#include <EEPROM.h>
-#include <Pinball_LCD.h>
-#include <Pinball_Centipede.h>
-#include <Tsunami.h>
-#include <Pinball_Message.h>
-#include <Pinball_Consts.h>
-#include <Pinball_Descriptions.h>
-#include <Pinball_Audio.h>  // NEW: Use consolidated audio functions
 
 // External references to arrays defined in Screamo_Master.ino
 extern struct LampParmStruct {

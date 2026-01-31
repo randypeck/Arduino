@@ -168,14 +168,22 @@ DeviceParmStruct deviceParm[NUM_DEVS_MASTER] = {
   { 25, 255,  0,   0, 0, 0 }   // MOTOR_SCORE         = 13, A/C SSR; on/off only; NOT PWM.
 };
 
-const int8_t COIL_REST_TICKS = -8;  // Coil rest period: 8 ticks * 10ms = 80ms
+const int8_t COIL_REST_TICKS     = -8;  // Coil rest period: 8 ticks * 10ms = 80ms
+const uint8_t IMPULSE_FLIPPER_UP_TICKS = 10;  // Hold impulse flippers up for 100ms (10 ticks) before releasing
+
+const byte COIL_WATCHDOG_MARGIN_TICKS = 5;           // 50ms grace period for countdown corruption detection
+const byte COIL_WATCHDOG_SCAN_INTERVAL_TICKS = 100;  // 1 second full PWM scan
+byte coilWatchdogScanCounter = 0;                    // Counter for periodic full scan
 
 // ********************************************************************************************************************************
 // ***************************************************** GAME STATE ***************************************************************
 // ********************************************************************************************************************************
 
-const byte MAX_PLAYERS = 4;  // Currently only supporting single player, even for Enhanced, but may support more in future
-const byte MAX_BALLS   = 5;
+const byte MAX_PLAYERS                       =    1;  // Currently only support single player, even for Enhanced
+const byte MAX_BALLS                         =    5;
+const byte MAX_MODES_PER_GAME                =    3;  // Maximum modes that can be played per game
+const unsigned long MODE_END_GRACE_PERIOD_MS = 5000;  // 5 seconds grace period after mode timer ends to get ball back
+const unsigned int GAME_TIMEOUT_SECONDS      =  300;   // 5 minutes no activity means exit to Attract mode
 
 // ***** GAME PHASE CONSTANTS *****
 const byte PHASE_ATTRACT     = 0;
@@ -212,7 +220,7 @@ unsigned int startupTickCounter = 0;
 unsigned int startupTimeoutTicks = 0;
 
 // ***** STARTUP PHASE TIMEOUTS *****
-const unsigned long STARTUP_BALL_TROUGH_TO_LIFT_TIMEOUT_MS = 3000;  // 3 seconds max for ball to reach lift from trough release
+const unsigned long BALL_TROUGH_TO_LIFT_TIMEOUT_MS = 3000;  // 3 seconds max for ball to reach lift from trough release
 unsigned long startupBallDispenseMs = 0;  // When ball was dispensed (for timeout tracking)
 
 // ***** BALL LIFT TRACKING *****
@@ -237,8 +245,39 @@ struct GameStateStruct {
   byte ballsLocked;          // Enhanced: balls locked in kickouts
   bool ballTrayOpen;         // Is Ball Tray currently open?
 };
-
 GameStateStruct gameState;
+
+// ***** GAME-WITHIN-A-GAME MODE STRUCTURE *****
+struct ModeStateStruct {
+  bool active;
+  byte currentMode;
+  unsigned long timerStartMs;
+  unsigned long timerDurationMs;
+  bool timerPaused;
+  unsigned long pausedTimeRemainingMs;
+  bool reminderPlayed;
+  bool hurryUpPlayed;
+  byte modeProgress;  // For BUMPER_CARS: next expected letter (0-6)
+                      // For GOBBLE_HOLE: gobbles hit (0-5)
+};
+ModeStateStruct modeState;
+
+// ***** MULTIBALL STATE *****
+struct MultiballStateStruct {
+  bool active;
+  unsigned long ballSaveEndMs;
+};
+MultiballStateStruct multiballState;
+
+// ***** BALL SAVE STATE *****
+struct BallSaveState {
+  bool active;              // Ball save timer active
+  unsigned long endMs;      // When ball save expires
+  bool hasUsedSave;         // Already used this ball
+  byte instantDrainCount;   // Number of "instant drains" this ball (before timer starts)
+};
+
+BallSaveState ballSave;
 
 // ***** START BUTTON DETECTION *****
 const unsigned long START_STYLE_DETECT_WINDOW_MS = 500;  // 500ms to detect double-tap for Enhanced
@@ -262,7 +301,7 @@ const unsigned long BALL_SEARCH_KICKOUT_INTERVAL_MS = 15000;  // Fire kickouts d
 // ***** BALL TRAY TIMEOUT *****
 // If we start a game and need to do a ball search, give up after this much time has passed.
 unsigned long ballTrayOpenStartMs = 0;
-const unsigned long BALL_TRAY_OPEN_TIMEOUT_MS = 30000;  // 30 seconds for testing (change to 300000 for 5 minutes)
+const unsigned long BALL_SEARCH_TIMEOUT_MS = 30000;  // 30 seconds for testing (change to 300000 for 5 minutes)
 
 // ***** BALL DETECTION STABILITY CHECK *****
 // When waiting for balls to arrive in trough, require "5 balls" switch to remain closed for this long
@@ -299,15 +338,7 @@ const unsigned long SHAKER_HAT_MS = 800;            // Roll-A-Ball hat rollover
 const unsigned long SHAKER_DRAIN_MS = 2000;         // Ball drain (non-mode)
 unsigned long shakerDropStartMs = 0;  // When hill drop shaker started (0 = not running)
 
-// ***** BALL SAVE STATE *****
-struct BallSaveState {
-  bool active;              // Ball save timer active
-  unsigned long endMs;      // When ball save expires
-  bool hasUsedSave;         // Already used this ball
-  byte instantDrainCount;   // Number of "instant drains" this ball (before timer starts)
-};
-
-BallSaveState ballSave;
+const byte BALL_DRAIN_INSULT_FREQUENCY = 50;  // 0..100 indicates percent of the time we make a random snarky comment when the ball drains
 
 // ***** FLIPPER STATE *****
 bool leftFlipperHeld = false;
@@ -317,6 +348,20 @@ bool rightFlipperHeld = false;
 unsigned long knockoffPressStartMs = 0;
 bool knockoffBeingHeld = false;
 const unsigned long KNOCKOFF_RESET_HOLD_MS = 1000;  // Hold knockoff for 1s to trigger reset
+
+// ***** SELECTION UNIT *****
+const byte SELECTION_UNIT_RED_INSERT[10] = { 8, 3, 4, 9, 2, 5, 7, 2, 1, 6 };
+// Position 0-49 maps to: RED = SELECTION_UNIT_RED_INSERT[position % 10]
+// HATs lit when: (position % 10 == 0) && (position / 10) is 0, 2, or 4
+
+// ***** MISC CONSTS *****
+const unsigned long MODE_END_GRACE_PERIOD_MS = 5000;  // 5 seconds drain after mode ends, you still get the ball back
+const byte BALL_DRAIN_INSULT_FREQUENCY = 50;  // 50%
+const unsigned long GAME_TIMEOUT_SECONDS = 300;  // 5 minutes of no activity and game reverts to Attract mode
+const unsigned int STARTUP_BALL_TROUGH_TO_LIFT_TIMEOUT_MS = 3000;  // > 3 seconds and we throw a critical error
+const unsigned int BALL_DETECTION_STABILITY_MS = 1000;  // How long 5-balls-in-trough switch must be closed to be valid
+const unsigned int START_STYLE_DETECT_WINDOW_MS = 500;  // Wait up to 500ms for next press of 1/2/3-press of Start to choose mode
+const unsigned SCORE_MOTOR_CYCLE_MS = 882;                 // one 1/4 revolution of score motor (ms)
 
 // ********************************************************************************************************************************
 // ******************************************************** AUDIO STATE ***********************************************************
@@ -415,7 +460,6 @@ unsigned long loopNextMillis = 0;
 
 // ***** MISC GLOBALS *****
 char msgType = ' ';
-bool debugOn = false;
 
 // ********************************************************************************************************************************
 // ********************************************************* SETUP ****************************************************************
@@ -1042,7 +1086,7 @@ void updateModeDiagnostic() {
 // ***** BALL SEARCH PHASE HANDLER *****
 void updatePhaseBallSearch() {
   // Check for timeout (30 seconds with tray open, no balls found)
-  if (millis() - ballTrayOpenStartMs >= BALL_TRAY_OPEN_TIMEOUT_MS) {
+  if (millis() - ballTrayOpenStartMs >= BALL_SEARCH_TIMEOUT_MS) {
     // Timeout - give up and return to attract
     releaseDevice(DEV_IDX_BALL_TRAY_RELEASE);
     gameState.ballTrayOpen = false;
@@ -1524,7 +1568,7 @@ void updatePhaseStartup() {
     }
 
     // Check for timeout (3 seconds)
-    if (millis() - startupBallDispenseMs >= STARTUP_BALL_TROUGH_TO_LIFT_TIMEOUT_MS) {
+    if (millis() - startupBallDispenseMs >= BALL_TROUGH_TO_LIFT_TIMEOUT_MS) {
       // Timeout - ball didn't reach lift
       criticalError("BALL STUCK", "Ball did not reach", "lift in 3 seconds");
       return;
@@ -1620,7 +1664,8 @@ bool canActivateDeviceNow(byte t_devIdx) {
 void activateDevice(byte t_devIdx) {
   if (t_devIdx >= NUM_DEVS_MASTER) {
     sprintf(lcdString, "DEV ERR %u", t_devIdx);
-    pLCD2004->println(lcdString);
+    criticalError("CRITICAL ERROR", "activateDevice", lcdString);
+
     return;
   }
   if (deviceParm[t_devIdx].countdown != 0) {
@@ -1633,9 +1678,27 @@ void activateDevice(byte t_devIdx) {
   }
 }
 
-// ***** DEVICE TIMER UPDATE *****
+// ***** DEVICE TIMER UPDATE WITH WATCHDOG *****
 void updateDeviceTimers() {
+  // Increment watchdog scan counter
+  coilWatchdogScanCounter++;
+
   for (byte i = 0; i < NUM_DEVS_MASTER; i++) {
+    // ***** WATCHDOG CHECK 1: Countdown corruption detection *****
+    // For non-holdable coils, countdown should never exceed timeOn + margin
+    if (deviceParm[i].powerHold == 0 && deviceParm[i].timeOn > 0) {
+      if (deviceParm[i].countdown > (int8_t)(deviceParm[i].timeOn + COIL_WATCHDOG_MARGIN_TICKS)) {
+        // Countdown is impossibly high - force off
+        analogWrite(deviceParm[i].pinNum, 0);
+        deviceParm[i].countdown = 0;
+        deviceParm[i].queueCount = 0;
+        sprintf(lcdString, "Coil %u", i);
+        criticalError("CRITICAL ERROR", "Countdown 1", lcdString);
+        continue;
+      }
+    }
+
+    // Normal countdown processing
     if (deviceParm[i].countdown > 0) {
       deviceParm[i].countdown--;
       if (deviceParm[i].countdown == 0) {
@@ -1669,6 +1732,33 @@ void updateDeviceTimers() {
         analogWrite(deviceParm[i].pinNum, deviceParm[i].powerInitial);
         deviceParm[i].countdown = deviceParm[i].timeOn;
       }
+    }
+  }
+
+  // ***** WATCHDOG CHECK 2: Periodic full PWM scan (every 1 second) *****
+  if (coilWatchdogScanCounter >= COIL_WATCHDOG_SCAN_INTERVAL_TICKS) {
+    coilWatchdogScanCounter = 0;
+    coilWatchdogFullScan();
+  }
+}
+
+// ***** COIL WATCHDOG FULL SCAN *****
+// Verifies no coil is stuck on without an active timer
+void coilWatchdogFullScan() {
+  for (byte i = 0; i < NUM_DEVS_MASTER; i++) {
+    // Skip holdable coils and motors
+    if (i == DEV_IDX_FLIPPER_LEFT || i == DEV_IDX_FLIPPER_RIGHT ||
+      i == DEV_IDX_BALL_TRAY_RELEASE || i == DEV_IDX_MOTOR_SHAKER ||
+      i == DEV_IDX_MOTOR_SCORE) {
+      continue;
+    }
+
+    // For non-holdable coils: if countdown is 0 or negative (idle/resting),
+    // the coil should NOT be outputting power
+    if (deviceParm[i].countdown <= 0) {
+      // We can't easily read PWM state, but we can force it off as a safety measure
+      // This is a belt-and-suspenders approach
+      analogWrite(deviceParm[i].pinNum, 0);
     }
   }
 }
@@ -1747,6 +1837,11 @@ void stopAllShakers() {
 
   // Stop any other shaker source (if motor is running but flags are inconsistent)
   analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, 0);
+}
+
+// ***** CALCULATE NUMBER OF TICKS SCORE MOTOR SHOULD RUN BASED ON OPERATION *****
+unsigned int calculateScoreMotorTicks(byte t_operation, unsigned int t_fromScore, unsigned int t_toScore) {
+  return (SCORE_MOTOR_CYCLE_MS * 2);  // This will be two 1/4 revolutions, until we have a real function here
 }
 
 // ********************************************************************************************************************************
@@ -2149,6 +2244,10 @@ void criticalError(const char* line1, const char* line2, const char* line3) {
   lcdPrintRow(2, line2);
   lcdPrintRow(3, line3);
   lcdPrintRow(4, "HOLD KNOCKOFF=RST");
+  Serial.println("CRITICAL ERROR:");
+  Serial.println(line1);
+  Serial.println(line2);
+  Serial.println(line3);
 
   if (pTsunami != nullptr) {
     pTsunami->trackPlayPoly(TRACK_TILT_BUZZER, 0, false);

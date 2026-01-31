@@ -1,4 +1,4 @@
-// PINBALL_CONSTS.H Rev: 01/21/26.
+// PINBALL_CONSTS.H Rev: 01-28-26b.
 
 #ifndef PINBALL_CONSTS_H
 #define PINBALL_CONSTS_H
@@ -30,6 +30,12 @@ const byte MODE_ENHANCED   = 3;
 const byte MODE_IMPULSE    = 4;
 const byte MODE_ATTRACT    = 5;
 const byte MODE_TILT       = 6;
+
+// *** GAME-WITHIN-A-GAME MODES:
+const byte MODE_NONE        = 0;
+const byte MODE_BUMPER_CARS = 1;
+const byte MODE_ROLL_A_BALL = 2;
+const byte MODE_GOBBLE_HOLE = 3;
 
 const byte LCD_WIDTH      = 20;  // 2004 (20 char by 4 lines) LCD display
 
@@ -129,6 +135,17 @@ const byte START_TAP_ORIGINAL  = 2;  // Original style selected (500ms expired, 
 const byte START_TAP_ENHANCED  = 3;  // Enhanced style selected (2nd tap within 500ms)
 const byte START_TAP_IMPULSE   = 4;  // Impulse style (2nd tap after 500ms, before first point)
 
+// Tsunami WAV Trigger settings incl. default values for out-of-range EEPROM reads
+const int8_t TSUNAMI_GAIN_DB_DEFAULT    = -10;  // Master volume default
+const int8_t TSUNAMI_GAIN_DB_MIN        = -40;
+const int8_t TSUNAMI_GAIN_DB_MAX        =   0;
+const int8_t TSUNAMI_CAT_GAIN_DEFAULT   =   0;  // Category offset default (voice, SFX, music vs. master)
+const int8_t TSUNAMI_CAT_GAIN_MIN       = -20;
+const int8_t TSUNAMI_CAT_GAIN_MAX       =  20;
+const int8_t TSUNAMI_DUCKING_DB_DEFAULT = -20;  // Ducking level default
+
+const unsigned long GAME_TIMEOUT_MS     = 120000;  // 2 minutes default inactivity timeout ends game
+
 // ************************************************************************
 // ************************** EEPROM ADDRESSES ****************************
 // ************************************************************************
@@ -157,6 +174,7 @@ const int EEPROM_ADDR_MODE_3_TIME             = 33;  // Mode 3 time limit (secon
 const int EEPROM_ADDR_MODE_4_TIME             = 34;  // Mode 4 time limit (seconds)
 const int EEPROM_ADDR_MODE_5_TIME             = 35;  // Mode 5 time limit (seconds)
 const int EEPROM_ADDR_MODE_6_TIME             = 36;  // Mode 6 time limit (seconds)
+const int EEPROM_ADDR_GAME_TIMEOUT            = 37;  // Inactivity before game ends automatically (seconds)
 
 // Replay scores (Original/Impulse style) - 2 bytes each
 const int EEPROM_ADDR_ORIGINAL_REPLAY_1       = 40;  // Replay threshold 1
@@ -204,89 +222,103 @@ const unsigned int TRACK_DIAG_COMMENTS          =  117;
 const unsigned int TRACK_TILT_BUZZER            =  211;
 
 // Start sequence
+const unsigned int TRACK_BALL_MISSING           =  301;  // There's a ball missing
+const unsigned int TRACK_BALL_IN_LIFT           =  302;  // Press the ball lift rod
+const unsigned int TRACK_SHOOT_BALLS_IN_LANE    =  303;  // Shoot any balls in shooter lane; not used at this time
+const unsigned int TRACK_BALL_STILL_MISSING     =  304;  // There's still a ball missing
 const unsigned int TRACK_START_REJECT_HORN      =  311;
-const unsigned int TRACK_START_P1_OK            =  351;
-const unsigned int TRACK_START_WILDER           =  352;
-const unsigned int TRACK_START_MORE_FRIENDS     =  353;
-const unsigned int TRACK_START_P2               =  354;
-const unsigned int TRACK_START_P3               =  355;
-const unsigned int TRACK_START_P4               =  356;
-const unsigned int TRACK_START_PARK_FULL        =  357;
-const unsigned int TRACK_START_SCREAM           =  401;
-const unsigned int TRACK_START_HEY_GANG         =  402;
-const unsigned int TRACK_START_LIFT_LOOP        =  403;
-const unsigned int TRACK_START_DROP             =  404;
+const unsigned int TRACK_START_P1_OK            =  351;  // Okay kid, you're in
+const unsigned int TRACK_START_WILDER           =  352;  // Press start again for a wilder ride (unused; was for original->enhanced)
+const unsigned int TRACK_START_MORE_FRIENDS     =  353;  // Keep pressin' Start if ya wanna admit more of your little friends
+const unsigned int TRACK_START_P2               =  354;  // 2nd guest, c'mon in
+const unsigned int TRACK_START_P3               =  355;  // 3rd guest, you're in
+const unsigned int TRACK_START_P4               =  356;  // 4th guest, through the turnstile
+const unsigned int TRACK_START_PARK_FULL        =  357;  // The park's full, no more admissions
+const unsigned int TRACK_START_SCREAM           =  401;  // Scream SFX played at beginning of game
+const unsigned int TRACK_START_HEY_GANG         =  402;  // Hey gang, let's ride the Screamo!
+const unsigned int TRACK_START_LIFT_LOOP        =  403;  // Loopable 2-min coaster being hauled to top of first drop
+const unsigned int TRACK_START_DROP             =  404;  // Roller coaster first big drop screaming/roaring SFX
 
 // Player/Ball announcements (add player/ball number - 1 to get track)
-const unsigned int TRACK_PLAYER_BASE            =  451;  // 451 + (playerNum - 1)
-const unsigned int TRACK_BALL_BASE              =  461;  // 461 + (ballNum - 1)
+const unsigned int TRACK_PLAYER_BASE            =  451;  // 451 + (playerNum - 1) (i.e. P2=452, P3=453, P4=454)
+const unsigned int TRACK_BALL_BASE              =  461;  // 461 + (ballNum - 1) (i.e. Ball 2=462, Ball 3=463, Ball 4=464, Ball 5=465)
 
 // Shoot prompts
-const unsigned int TRACK_SHOOT_LIFT_ROD         =  611;
+const unsigned int TRACK_SHOOT_LIFT_ROD         =  611;  // Press the ball lift rod so we can start a game
 
 // Ball saved special case
-const unsigned int TRACK_BALL_SAVED_MODE_END    =  641;
+const unsigned int TRACK_BALL_SAVED_MODE_END    =  641;  // Here's your ball back if ball returned at end of timed mode
+
+const unsigned int TRACK_SHOOT_AGAIN            =  660;  // Used with Extra Ball "Shoot again"; also part of 651-662 Ball Saved urgent prompts
+const unsigned int TRACK_LOCK_1                 =  671;  // First ball locked
+const unsigned int TRACK_LOCK_2                 =  672;  // Second ball locked
+const unsigned int TRACK_MULTIBALL_START        =  674;  // Multiball! All rides are running!
+const unsigned int TRACK_BUMPERS_DOUBLE         =  675;  // Every bumper worth double during multiball (not used)
+const unsigned int TRACK_SPECIAL_LIT            =  811;  // Special is lit! (above Gobble Hole)
+const unsigned int TRACK_REPLAY                 =  812;  // Replay!
+const unsigned int TRACK_3_IN_A_ROW             =  821;  // You lit up 3 in a row! Replay!
+const unsigned int TRACK_4_CORNERS              =  822;  // You hit all 4 corners! Five replays!
+const unsigned int TRACK_1_2_3                  =  823;  // You hit 1, 2, and 3! Twenty replays!
+const unsigned int TRACK_5_BALLS_IN_GOBBLE      =  824;  // All 5 balls in the Gobble Hole! Replay!
+const unsigned int TRACK_SPELLED_SCREAMO        =  831;  // You spelled S-C-R-E-A-M-O!
+const unsigned int TRACK_EXTRA_BALL_AWARDED     =  841;  // "EXTRA BALL!" Used when Extra Ball is earned, not collected
+const unsigned int TRACK_EXTRA_BALL_COLLECTED   =  842;  // "Here's another ball! Send it!" Used when Extra Ball is collected
 
 // Mode common
-const unsigned int TRACK_MODE_STINGER_START     = 1001;
-const unsigned int TRACK_MODE_JACKPOT           = 1002;
-const unsigned int TRACK_MODE_HURRY             = 1003;
-const unsigned int TRACK_MODE_COUNTDOWN         = 1004;
-const unsigned int TRACK_MODE_TIME_UP           = 1005;
-const unsigned int TRACK_MODE_STINGER_END       = 1006;
+const unsigned int TRACK_MODE_STINGER_START     = 1001;  // School bell ringing
+const unsigned int TRACK_MODE_JACKPOT           = 1002;  // Jackpot!
+const unsigned int TRACK_MODE_HURRY             = 1003;  // Ten seconds left!
+const unsigned int TRACK_MODE_COUNTDOWN         = 1004;  // SFX 10-second ticking timer
+const unsigned int TRACK_MODE_TIME_UP           = 1005;  // Time's up!
+const unsigned int TRACK_MODE_STINGER_END       = 1006;  // Factory whistle
 
 // Mode intros
-const unsigned int TRACK_MODE_BUMPER_INTRO      = 1101;
-const unsigned int TRACK_MODE_BUMPER_REMIND     = 1111;
-const unsigned int TRACK_MODE_BUMPER_ACHIEVED   = 1197;
-const unsigned int TRACK_MODE_RAB_INTRO         = 1201;
-const unsigned int TRACK_MODE_RAB_REMIND        = 1211;
-const unsigned int TRACK_MODE_RAB_ACHIEVED      = 1297;
-const unsigned int TRACK_MODE_GOBBLE_INTRO      = 1301;
-const unsigned int TRACK_MODE_GOBBLE_REMIN      = 1311;
-const unsigned int TRACK_MODE_GOBBLE_HIT        = 1321;
-const unsigned int TRACK_MODE_GOBBLE_ACHIEVED   = 1397;
+const unsigned int TRACK_MODE_BUMPER_INTRO      = 1101;  // Let's ride the Bumper Cars
+const unsigned int TRACK_MODE_BUMPER_REMIND     = 1111;  // Keep smashing the bumpers
+const unsigned int TRACK_MODE_BUMPER_ACHIEVED   = 1197;  // Bell ding-ding-ding!
+const unsigned int TRACK_MODE_RAB_INTRO         = 1201;  // Let's play Roll-A-Ball
+const unsigned int TRACK_MODE_RAB_REMIND        = 1211;  // Keep rolling over the hats
+const unsigned int TRACK_MODE_RAB_ACHIEVED      = 1297;  // Ta da
+const unsigned int TRACK_MODE_GOBBLE_INTRO      = 1301;  // Let's visit the Shooting Gallery
+const unsigned int TRACK_MODE_GOBBLE_REMIND     = 1311;  // Keep shooting at the Gobble Hole
+const unsigned int TRACK_MODE_GOBBLE_HIT        = 1321;  // Slide whistle down (only one SFX track for Gobble Hole hit since it's very rare)
+const unsigned int TRACK_MODE_GOBBLE_ACHIEVED   = 1397;  // Applause
 
 // *** TRACK RANGES (for random selection) ***
-const unsigned int TRACK_TILT_WARNING_FIRST     =  201;
+const unsigned int TRACK_TILT_WARNING_FIRST     =  201;  // First of several tilt warning announcements
 const unsigned int TRACK_TILT_WARNING_LAST      =  205;
-const unsigned int TRACK_TILT_COM_FIRST         =  212;
+const unsigned int TRACK_TILT_COM_FIRST         =  212;  // First of many tilt announcements
 const unsigned int TRACK_TILT_COM_LAST          =  216;
-const unsigned int TRACK_BALL_MISSING_FIRST     =  301;
-const unsigned int TRACK_BALL_IN_LIFT           =  302;
-const unsigned int TRACK_BALL_MISSING_LAST      =  304;
-const unsigned int TRACK_START_REJECT_FIRST     =  312;
+const unsigned int TRACK_START_REJECT_FIRST     =  312;  // First of several trying to start with no credits announcements
 const unsigned int TRACK_START_REJECT_LAST      =  330;
-const unsigned int TRACK_BALL1_COM_FIRST        =  511;
+const unsigned int TRACK_BALL1_COM_FIRST        =  511;  // First of many P2-4, B1 announcements i.e. "Climb aboard", "Fire away", etc.
 const unsigned int TRACK_BALL1_COM_LAST         =  519;
-const unsigned int TRACK_BALL5_COM_FIRST        =  531;
+const unsigned int TRACK_BALL5_COM_FIRST        =  531;  // First of many B5 announcements i.e. "Last chance", "Final ride", etc.
 const unsigned int TRACK_BALL5_COM_LAST         =  540;
-const unsigned int TRACK_GAME_OVER_FIRST        =  551;
+const unsigned int TRACK_GAME_OVER_FIRST        =  551;  // First of many Game Over announcements
 const unsigned int TRACK_GAME_OVER_LAST         =  577;
-const unsigned int TRACK_SHOOT_FIRST            =  612;
+const unsigned int TRACK_SHOOT_FIRST            =  612;  // First of several "Shoot the ball" prompts
 const unsigned int TRACK_SHOOT_LAST             =  620;
-const unsigned int TRACK_BALL_SAVED_FIRST       =  631;
+const unsigned int TRACK_BALL_SAVED_FIRST       =  631;  // First of many Ball Saved announcements
 const unsigned int TRACK_BALL_SAVED_LAST        =  636;
-const unsigned int TRACK_BALL_SAVED_URG_FIRST   =  651;
+const unsigned int TRACK_BALL_SAVED_URG_FIRST   =  651;  // First of many urgent Ball Saved announcements "Hurry, shoot again!"
 const unsigned int TRACK_BALL_SAVED_URG_LAST    =  662;
-const unsigned int TRACK_MULTIBALL_FIRST        =  671;
-const unsigned int TRACK_MULTIBALL_LAST         =  675;
-const unsigned int TRACK_COMPLIMENT_FIRST       =  701;
+const unsigned int TRACK_COMPLIMENT_FIRST       =  701;  // First of many Compliment announcements "Good shot" etc.
 const unsigned int TRACK_COMPLIMENT_LAST        =  714;
-const unsigned int TRACK_DRAIN_FIRST            =  721;
+const unsigned int TRACK_DRAIN_FIRST            =  721;  // First of many Drain comments "Kid not that way!" etc.
 const unsigned int TRACK_DRAIN_LAST             =  748;
-const unsigned int TRACK_AWARD_FIRST            =  811;
-const unsigned int TRACK_AWARD_LAST             =  842;
-const unsigned int TRACK_MODE_BUMPER_HIT_FIRST  = 1121;
+
+const unsigned int TRACK_MODE_BUMPER_HIT_FIRST  = 1121;  // First of many Car Honks
 const unsigned int TRACK_MODE_BUMPER_HIT_LAST   = 1133;
-const unsigned int TRACK_MODE_BUMPER_MISS_FIRST = 1141;
+const unsigned int TRACK_MODE_BUMPER_MISS_FIRST = 1141;  // First of many Car Crashes
 const unsigned int TRACK_MODE_BUMPER_MISS_LAST  = 1148;
-const unsigned int TRACK_MODE_RAB_HIT_FIRST     = 1221;
+const unsigned int TRACK_MODE_RAB_HIT_FIRST     = 1221;  // First of many Bowling Strikes
 const unsigned int TRACK_MODE_RAB_HIT_LAST      = 1225;
-const unsigned int TRACK_MODE_RAB_MISS_FIRST    = 1241;
+const unsigned int TRACK_MODE_RAB_MISS_FIRST    = 1241;  // First of many Glass Breaking
 const unsigned int TRACK_MODE_RAB_MISS_LAST     = 1254;
-const unsigned int TRACK_MODE_GOBBLE_MISS_FIRST = 1341;
+const unsigned int TRACK_MODE_GOBBLE_MISS_FIRST = 1341;  // First of many Ricochets
 const unsigned int TRACK_MODE_GOBBLE_MISS_LAST  = 1348;
+
 const unsigned int TRACK_MUSIC_CIRCUS_FIRST     = 2001;
 const unsigned int TRACK_MUSIC_CIRCUS_LAST      = 2019;
 const unsigned int TRACK_MUSIC_SURF_FIRST       = 2051;
@@ -298,10 +330,11 @@ const byte NUM_CIRCUS_TRACKS                    =   19;  // 2001-2019
 const byte NUM_SURF_TRACKS                      =   18;  // 2051-2068
 
 // *** SETTINGS AND EEPROM CATEGORIES ***
-const byte SETTINGS_CAT_GAME        = 0;
-const byte SETTINGS_CAT_ORIG_REPLAY = 1;
-const byte SETTINGS_CAT_ENH_REPLAY  = 2;
-const byte NUM_SETTINGS_CATEGORIES  = 3;
+// These constants define the three categories of settings available in the Diagnostics "Settings" menu:
+const byte SETTINGS_CAT_GAME        = 0;  // General game settings (theme, ball save time, mode timers, etc.)
+const byte SETTINGS_CAT_ORIG_REPLAY = 1;  // Replay score thresholds for Original/Impulse style (inferred, not actually referenced in code.)
+const byte SETTINGS_CAT_ENH_REPLAY  = 2;  // Replay score thresholds for Enhanced style.
+const byte NUM_SETTINGS_CATEGORIES  = 3;  // The total number of categories (3).
 
 // Game settings parameter indices
 const byte GAME_SETTING_THEME      = 0;

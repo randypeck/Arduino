@@ -6,6 +6,14 @@
 #define PINBALL_DIAGNOSTICS_H
 
 #include <Arduino.h>
+#include <EEPROM.h>
+#include <Pinball_LCD.h>
+#include <Pinball_Centipede.h>
+#include <Tsunami.h>
+#include <Pinball_Message.h>
+#include <Pinball_Consts.h>
+#include <Pinball_Descriptions.h>
+#include <Pinball_Audio.h>  // NEW: Use consolidated audio functions
 
 // Forward declarations for hardware classes
 class Pinball_LCD;
