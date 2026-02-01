@@ -1,4 +1,4 @@
-// Screamo_Master.INO Rev: 01/26/26
+// Screamo_Master.INO Rev: 02/01/26
 // 11/12/25: Moved Right Kickout from pin 13 to pin 44 to avoid MOSFET firing twice on power-up.  Don't use MOSFET on pin 13.
 // 12/28/25: Changed flipper inputs from direct Arduino inputs to Centipede inputs.
 // 01/07/26: Added "5 Balls in Trough" switch to Centipede inputs. All switches tested and working.
@@ -168,8 +168,11 @@ DeviceParmStruct deviceParm[NUM_DEVS_MASTER] = {
   { 25, 255,  0,   0, 0, 0 }   // MOTOR_SCORE         = 13, A/C SSR; on/off only; NOT PWM.
 };
 
-const int8_t COIL_REST_TICKS     = -8;  // Coil rest period: 8 ticks * 10ms = 80ms
-const uint8_t IMPULSE_FLIPPER_UP_TICKS = 10;  // Hold impulse flippers up for 100ms (10 ticks) before releasing
+const int8_t COIL_REST_TICKS           =  -8;  // Coil rest period: 8 ticks * 10ms = 80ms
+const uint8_t IMPULSE_FLIPPER_UP_TICKS =  10;  // Hold impulse flippers up for 100ms (10 ticks) before releasing
+const unsigned int KICKOUT_RETRY_TICKS = 100;  // 1 second (1000ms, 100 ticks) between retry attempts for stuck kickout ball
+byte kickoutLeftRetryTicks             =   0;  // Countdown to next Left retry attempt
+byte kickoutRightRetryTicks            =   0;  // Countdown to next Right retry attempt
 
 const byte COIL_WATCHDOG_MARGIN_TICKS = 5;           // 50ms grace period for countdown corruption detection
 const byte COIL_WATCHDOG_SCAN_INTERVAL_TICKS = 100;  // 1 second full PWM scan
@@ -272,8 +275,6 @@ MultiballStateStruct multiballState;
 struct BallSaveState {
   bool active;              // Ball save timer active
   unsigned long endMs;      // When ball save expires
-  bool hasUsedSave;         // Already used this ball
-  byte instantDrainCount;   // Number of "instant drains" this ball (before timer starts)
 };
 
 BallSaveState ballSave;
@@ -342,7 +343,7 @@ const unsigned long SHAKER_GOBBLE_MS = 1000;        // Gobble Hole Shooting Gall
 const unsigned long SHAKER_BUMPER_MS = 500;         // Bumper Cars hit
 const unsigned long SHAKER_HAT_MS = 800;            // Roll-A-Ball hat rollover
 const unsigned long SHAKER_DRAIN_MS = 2000;         // Ball drain (non-mode)
-unsigned long shakerDropStartMs = 0;  // When hill drop shaker started (0 = not running)
+unsigned long shakerDropStartMs = 0;                // When hill drop shaker started (0 = not running)
 
 // ***** FLIPPER STATE *****
 bool leftFlipperHeld = false;
@@ -1446,19 +1447,11 @@ void handleBallDrain(byte drainType) {
 
   // ***** ENHANCED MODE: Ball Save Logic *****
   if (gameStyle == GAME_STYLE_ENHANCED) {
-    // Case 1: First drain of ball (instant drain - may or may not have scored)
-    if (ballSave.instantDrainCount == 0) {
-      Serial.println("DEBUG: First drain of ball, saving (instant drain)");
-      saveBall("instant_drain");
-      ballSave.instantDrainCount++;
-      return;
-    }
 
     // Case 2: Ball save timer active and not used yet
-    if (ballSave.active && millis() < ballSave.endMs && !ballSave.hasUsedSave) {
+    if (ballSave.active && millis() < ballSave.endMs) {
       Serial.println("DEBUG: Ball save timer active, saving ball");
       saveBall("timed_save");
-      ballSave.hasUsedSave = true;
       ballSave.active = false;
       return;
     }
@@ -1638,7 +1631,6 @@ void handleFirstPointScored() {
     // Start ball save timer (TODO: load from EEPROM)
     ballSave.active = true;
     ballSave.endMs = millis() + 10000UL;  // 10 seconds for testing
-    ballSave.hasUsedSave = false;
 
     Serial.println("DEBUG: First point scored, scream + music + shaker started, ball save active");
   }
@@ -1839,11 +1831,6 @@ void stopAllShakers() {
 
   // Stop any other shaker source (if motor is running but flags are inconsistent)
   analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, 0);
-}
-
-// ***** CALCULATE NUMBER OF TICKS SCORE MOTOR SHOULD RUN BASED ON OPERATION *****
-unsigned int calculateScoreMotorTicks(byte t_operation, unsigned int t_fromScore, unsigned int t_toScore) {
-  return (SCORE_MOTOR_CYCLE_MS * 2);  // This will be two 1/4 revolutions, until we have a real function here
 }
 
 // ********************************************************************************************************************************
@@ -2152,8 +2139,6 @@ void initGameState() {
   // Initialize ball save state
   ballSave.active = false;
   ballSave.endMs = 0;
-  ballSave.hasUsedSave = false;
-  ballSave.instantDrainCount = 0;
 }
 
 // ***** BALL READY PHASE ENTRY *****
@@ -2166,8 +2151,6 @@ void onEnterBallReady() {
   // Reset ball save state
   ballSave.active = false;
   ballSave.endMs = 0;
-  ballSave.hasUsedSave = false;
-  ballSave.instantDrainCount = 0;
 
   // Reset hill climb tracking
   hillClimbStarted = false;
@@ -2188,6 +2171,25 @@ void onEnterBallReady() {
 
   // Reset first point tracking
   // (DO NOT set gameState.hasScored here - that happens on first switch hit)
+}
+
+// ***** SCORE MOTOR HELPER *****
+unsigned int calculateScoreMotorQuarterRevs(int deltaScore) {
+  // Usage:
+  // byte quarterRevs = calculateScoreMotorQuarterRevs(delta);
+  // if (quarterRevs > 0) {
+  //   activateDevice(DEV_IDX_MOTOR_SCORE);
+  //   scoreMotorOffTicks = quarterRevs * 88;  // 88 ticks = 880ms approx. 882ms
+  // }
+  // Single 10K or 100K: no motor
+  if (deltaScore == 1 || deltaScore == 10) return 0;
+
+  // 2-5 units (20K-50K or 200K-500K): 1 quarter-rev
+  int units = (deltaScore >= 10) ? (deltaScore / 10) : deltaScore;
+  if (units <= 5) return 1;
+
+  // 6-10 units: 2 quarter-revs
+  return 2;
 }
 
 // ***** BALL TRACKING HELPER *****

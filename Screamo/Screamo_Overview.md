@@ -1,5 +1,5 @@
 # 1954 Williams Screamo - Modernized Control System Overview
-Rev: 01-31-26. Revised by RDP and Claude Opus 4.5.
+Rev: 02-01-26. Revised by RDP and Claude Opus 4.5.
 
 ## 1. Introduction
 
@@ -450,7 +450,7 @@ Tilting always affects only the CURRENT BALL; it never ends the game prematurely
 - When the game is fully tilted in any playing style (1st tilt in Original/Impulse, 2nd tilt in Enhanced):
   - Flippers are disabled.
   - All playfield lights momentarily turn off.
-  - Any balls in side kickouts are retained (locked balls carry over to next ball).
+  - Any balls locked in side kickouts are **ejected immediately** (`ballsLocked` set to 0, both kickouts fired).
   - TILT lamp is turned on and flashes for about 4 seconds.
   - Game waits for all in-play balls to drain.
 - After all balls have drained:
@@ -462,21 +462,36 @@ Tilting always affects only the CURRENT BALL; it never ends the game prematurely
 **PHASE_TILT:**
 - Entered when a full tilt occurs (1st tilt in Original/Impulse, 2nd tilt in Enhanced).
 - Each tick:
-  - Monitor drain switches for ball drains (decrement `ballsInPlay` as balls drain).
+  - Monitor drain switches for ball drains (decrement `ballsInPlay` as balls drain, only if `ballsInPlay > 0`).
   - Check `ballsInPlay == 0` AND `ballInLift == false`.
   - Do NOT monitor scoring switches (no points awarded during tilt).
   - Flippers remain disabled.
 - Exit condition: `ballsInPlay == 0` AND `ballInLift == false`:
-  - If `currentBall < 5`: Transition to PHASE_BALL_ENDED (then to PHASE_BALL_READY for next ball).
+  - If `currentBall < 5`: Increment `currentBall`, transition to PHASE_BALL_READY.
   - If `currentBall == 5`: Transition to PHASE_GAME_OVER.
+
+**Tilt Recognition Conditions:**
+Tilt bob closures are only processed when `ballsInPlay > 0`. This simplifies logic and avoids edge cases:
+- If `ballsInPlay == 0` (ball in lift but not yet launched, or between balls): Tilt bob is ignored.
+- If `ballsInPlay > 0` (one or more balls on playfield): Tilt is recognized.
+
+This means:
+- Player cannot tilt while ball is sitting in lift waiting to be launched.
+- During multiball, if a ball is in the lift (Ball Save replacement or pre-multiball dispense), tilt only affects balls currently on the playfield.
+
+**Tilt During Multiball with Ball in Lift:**
+If the player tilts during multiball while `ballInLift == true`:
+- Multiball ends immediately.
+- All balls on playfield (`ballsInPlay`) must drain.
+- The ball in the lift remains there.
+- When `ballsInPlay == 0`: The ball in lift becomes the start of the next Ball Number (or remains for Game Over cleanup if Ball 5).
+- `ballInLift` is NOT cleared by tilt - the physical ball is still there.
 
 **Tilt During PHASE_BALL_READY:**
 - If tilt bob closes while in PHASE_BALL_READY (ball in lift, not yet launched):
-  - In Original/Impulse: Full tilt. Ball is forfeited. Transition to PHASE_BALL_ENDED.
+  - In Original/Impulse: Full tilt. Ball is forfeited. Increment `currentBall`, transition to PHASE_BALL_READY (or PHASE_GAME_OVER if Ball 5).
   - In Enhanced: First tilt = warning only, stay in PHASE_BALL_READY. Second tilt = full tilt, forfeit ball.
 - The ball in the lift does NOT need to drain (it hasn't been launched). Simply advance to next Ball Number.
-
-**Note:** If the player pushed the ball partway and it rolled back (triggering rollback to PHASE_BALL_READY), tilt rules apply as if the ball was never launched.
 
 **Scoring After Tilt:**
 Once a full tilt is triggered:
@@ -555,7 +570,7 @@ The following settings are defined in EEPROM:
 **Game Settings**
 - **THEME**: Select Circus or Surf Rock music as the PRIMARY theme.
   - EEPROM_ADDR_THEME (address 20)
-- **BALL SAVE**: Ball save duration in seconds (0=off, 1-30).
+- **BALL SAVE**: Ball save duration in seconds (1-30, default 15). Timer starts when any target is hit; if ball drains within this time, it is replaced. Multiple saves allowed per ball.
   - EEPROM_ADDR_BALL_SAVE_TIME (address 30)
 - **MODE 1-6**: Mode time limits in seconds.
   - EEPROM_ADDR_MODE_1_TIME through EEPROM_ADDR_MODE_6_TIME (addresses 31-36, 3 used and 3 for future use)
@@ -964,23 +979,21 @@ Relays switch 6.3 VAC to the lamps; Centipede outputs control the relays.
 ### 10.3 Game Phase State Machine
 
 Master uses a game phase state machine to track the overall game state. **Phases are mutually exclusive** - the game is in exactly one phase at any time.
-
 ```
-  PHASE_ATTRACT       - Waiting for Start button, processing coins, knockoff presses 
-  PHASE_STARTUP       - Ball recovery and game initialization 
-  PHASE_BALL_READY    - Ball in lift, waiting for player to launch (start of Ball Number) 
-  PHASE_BALL_IN_PLAY  - One or more balls launched and not yet drained 
-  PHASE_BALL_ENDED    - All launched balls drained, advancing to next ball or game over 
-  PHASE_GAME_OVER     - Game finished, transitioning to Attract 
-  PHASE_TILT          - Tilted, waiting for all ball(s) to drain 
-  PHASE_DIAGNOSTIC    - Diagnostic mode active 
+  PHASE_ATTRACT       - Waiting for Start button, processing coins, knockoff presses
+  PHASE_STARTUP       - Ball recovery and game initialization
+  PHASE_BALL_READY    - Ball dispensed or dispensing, waiting for player to launch
+  PHASE_BALL_IN_PLAY  - One or more balls launched and not yet drained
+  PHASE_GAME_OVER     - Game finished, transitioning to Attract
+  PHASE_TILT          - Tilted, waiting for all ball(s) to drain
+  PHASE_DIAGNOSTIC    - Diagnostic mode active
   PHASE_BALL_SEARCH   - Searching for missing balls
 ```
 
 #### 10.3.1 Ball Counting
 
 **Ball Number Initialization:**
-When starting a new Ball Number (transitioning from PHASE_BALL_ENDED to PHASE_BALL_READY):
+When starting a new Ball Number (transitioning to PHASE_BALL_READY):
 - `ballsInPlay = 0`
 - `ballInLift = true` (after ball is dispensed to lift)
 - `ballsLocked` is NOT reset (carries over from previous ball)
@@ -998,14 +1011,33 @@ When starting a new Ball Number (transitioning from PHASE_BALL_ENDED to PHASE_BA
 
 **`ballInLift`** is a boolean flag indicating a ball is waiting at the base of the lift for the player to push up.
 
-**`ballLaunchedWithoutScore`** is a boolean flag used to detect ball rollback. It is set `true` when a ball leaves the lift (switch opens) and set `false` when any scoring switch is hit or when the lift switch closes again.
-
 **When is a ball considered "in play"?**
-A ball transitions from "in lift" to "in play" when the ball-in-lift switch opens (player pushed the Ball Lift Rod). However, if the ball rolls back down before hitting any scoring switch, it can transition back to "in lift" state. See Section 12.5 for rollback handling.
-Once a scoring switch has been hit, any ball-in-lift switch closure is treated as a NEW ball arriving (Ball Save replacement or multiball), not the original ball rolling back.
+A ball is considered "in play" only after it has scored a point. The ball-in-lift switch opening (player pushing the Ball Lift Rod) transitions the game to `PHASE_BALL_IN_PLAY`, but does NOT increment `ballsInPlay`. The ball count is only incremented when a scoring switch closes. This handles the common case where a ball rolls back into the lift before reaching the playfield.
 
 **When balls are added to `ballsInPlay`:**
-- Player pushes ball from lift into shooter lane (ball-in-lift switch opens after being closed)
+- First scoring switch hit after launch (ball has definitively entered the playfield)
+- Ball-in-lift switch opens AFTER `hasScored == true` (replacement ball launched during multiball or after Ball Save)
+
+**When balls are removed from `ballsInPlay`:**
+- Drain switch closes (Gobble Hole OR any of the three bottom drain rollovers: left, center, right)
+
+**Note:** Drain detection is based on switch closures, not on balls entering the trough. This works correctly regardless of whether the Ball Tray is open or closed.
+
+**Decrement Guard:**
+When decrementing `ballsInPlay`, always verify `ballsInPlay > 0` first:
+```
+  if (ballsInPlay > 0) { ballsInPlay--; }
+```
+This prevents underflow if a drain is somehow detected when no balls are tracked as in play (e.g., switch noise, missed increment). Since `ballsInPlay` is a `byte` (unsigned), decrementing from 0 would wrap to 255.
+
+**Ball Rollback Handling:**
+Before the first point is scored on a ball, the ball-in-lift switch may open and close multiple times as the player attempts to launch. This is handled gracefully:
+- Switch opens: `ballInLift = false`, transition to `PHASE_BALL_IN_PLAY` (but `ballsInPlay` stays at 0)
+- Switch closes (rollback): `ballInLift = true` (ball rolled back, ready for another attempt)
+- Switch opens again: `ballInLift = false` (player trying again)
+- Scoring switch closes: NOW `ballsInPlay++` and `hasScored = true`
+
+Once `hasScored == true`, any subsequent ball-in-lift switch closure is treated as a NEW ball arriving (Ball Save replacement or multiball dispense), and the switch opening will increment `ballsInPlay`.
 
 **When balls are removed from `ballsInPlay`:**
 - Drain switch closes (Gobble Hole OR any of the three bottom drain rollovers: left, center, right)
@@ -1015,47 +1047,43 @@ Once a scoring switch has been hit, any ball-in-lift switch closure is treated a
 #### 10.3.2 Phase Definitions
 
 **PHASE_BALL_READY:**
-- Used only at the **start of a Ball Number**.
-- One ball is in the lift, waiting for the player to launch it.
-- `ballsInPlay == 0`, `ballInLift == true`.
+- Entered at the **start of each Ball Number** after incrementing `currentBall`.
+- Handles two sub-states internally:
+  1. **Dispensing**: If `ballInLift == false`, dispense a ball and wait for it to arrive.
+  2. **Waiting**: Once `ballInLift == true`, wait for player to launch.
+- `ballsInPlay == 0` throughout this phase.
 - No balls are on the playfield yet.
+- In Enhanced mode: May play ball announcement audio (e.g., "Ball 2!") during dispense.
+- Duration: Typically 1-3 seconds (dispense + player reaction time).
 
 **PHASE_BALL_IN_PLAY:**
 - One or more balls have been launched.
 - Continues until ALL launched balls have drained AND no ball is waiting in the lift.
 - A saved ball sitting in the lift during multiball remains part of `PHASE_BALL_IN_PLAY`.
 - `ballInLift` is a flag within this phase, not a reason to change phases.
-
-**PHASE_BALL_ENDED:**
-- Entered when `ballsInPlay == 0` AND `ballInLift == false`.
-- Advances Ball Number or transitions to Game Over.
-
-This is a brief transitional phase that:
-1. Increments `currentBall`.
-2. Checks if `currentBall > 5`:
-   - If yes: Transition to PHASE_GAME_OVER.
-   - If no: Dispense ball to lift, wait for ball-in-lift switch, transition to PHASE_BALL_READY.
-3. In Enhanced mode: May play ball-end audio (e.g., "Ball 2!") during the dispense wait.
-
-Duration: Typically 1-3 seconds (time for ball to reach lift). Not instantaneous.
+- When `ballsInPlay == 0` AND `ballInLift == false`:
+  - If `currentBall < 5`: Increment `currentBall`, transition to PHASE_BALL_READY.
+  - If `currentBall == 5`: Transition to PHASE_GAME_OVER.
 
 #### 10.3.3 Phase Transitions
 
-| From               | To                 | Trigger                                                                                                   |
-|--------------------|--------------------|-----------------------------------------------------------------------------------------------------------|
-| PHASE_BALL_READY   | PHASE_BALL_IN_PLAY | Player launches ball (ball-in-lift switch opens)                                                          |
-| PHASE_BALL_IN_PLAY | PHASE_BALL_IN_PLAY | Drain detected but `ballsInPlay > 0` OR `ballInLift == true`                                              |
-| PHASE_BALL_IN_PLAY | PHASE_BALL_ENDED   | `ballsInPlay == 0` AND `ballInLift == false` AND Ball Save not active                                     |
-| PHASE_BALL_IN_PLAY | PHASE_BALL_READY   | Ball rolled back: ballLaunchedWithoutScore == true AND ball-in-lift closes AND resulting ballsInPlay == 0 |
-| PHASE_BALL_ENDED   | PHASE_BALL_READY   | More balls remain, dispense next ball                                                                     |
-| PHASE_BALL_ENDED   | PHASE_GAME_OVER    | No balls remain (Ball 5 completed)                                                                        |
+| From               | To                 | Trigger                                                               |
+|--------------------|--------------------|-----------------------------------------------------------------------|
+| PHASE_BALL_READY   | PHASE_BALL_IN_PLAY | Player launches ball (ball-in-lift switch opens)                      |
+| PHASE_BALL_IN_PLAY | PHASE_BALL_IN_PLAY | Drain detected but `ballsInPlay > 0` OR `ballInLift == true`          |
+| PHASE_BALL_IN_PLAY | PHASE_BALL_READY   | `ballsInPlay == 0` AND `ballInLift == false` AND `currentBall < 5`    |
+| PHASE_BALL_IN_PLAY | PHASE_GAME_OVER    | `ballsInPlay == 0` AND `ballInLift == false` AND `currentBall == 5`   |
 
 #### 10.3.4 Single-Ball Play Example
 
-1. `PHASE_BALL_READY`: Ball in lift, `ballsInPlay = 0`, `ballInLift = true`.
-2. Player pushes ball: `ballsInPlay = 1`, `ballInLift = false`, transition to `PHASE_BALL_IN_PLAY`.
-3. Ball drains (no Ball Save): `ballsInPlay = 0`, `ballInLift = false`.
-4. Transition to `PHASE_BALL_ENDED`.
+1. `PHASE_BALL_READY`: Ball in lift, `ballsInPlay = 0`, `ballInLift = true`, `hasScored = false`.
+2. Player pushes ball (switch opens): `ballInLift = false`, transition to `PHASE_BALL_IN_PLAY`. (`ballsInPlay` still 0)
+3. Ball rolls back (switch closes): `ballInLift = true`. (Player can try again)
+4. Player pushes ball again (switch opens): `ballInLift = false`.
+5. Ball hits scoring switch: `ballsInPlay = 1`, `hasScored = true`. Ball is now truly in play.
+6. Ball drains (no Ball Save): `ballsInPlay = 0`, `ballInLift = false`.
+7. If `currentBall < 5`: Increment `currentBall`, transition to `PHASE_BALL_READY`.
+8. If `currentBall == 5`: Transition to `PHASE_GAME_OVER`.
 
 #### 10.3.5 Multiball Ball Tracking (Enhanced Mode Only)
 
@@ -1082,9 +1110,9 @@ This section covers the ball tracking mechanics for multiball. See Section 14.6 
 3. Result: `ballsInPlay = 3`
 
 **Ball Save During Multiball:**
-- During Ball Save window, drained balls trigger replacement dispense
-- If `ballInLift == true`, cannot dispense another - that drain is lost
-- After Ball Save expires, drained balls simply decrement `ballsInPlay`
+- Ball Save is NOT active during multiball
+- Drained balls simply decrement `ballsInPlay` (no replacements)
+- This keeps multiball intense and skill-based
 
 **Multiball End Condition:**
 - Multiball ends when: `ballsInPlay + (ballInLift ? 1 : 0) <= 1`
@@ -1095,48 +1123,53 @@ This section covers the ball tracking mechanics for multiball. See Section 14.6 
 - Flippers, pop bumper, and slingshots disabled
 - Both kickouts remain active to eject any balls that land in them during drain
 - All balls eventually drain
-- Transition to PHASE_BALL_ENDED when `ballsInPlay == 0` AND `ballInLift == false`
+- When `ballsInPlay == 0` AND `ballInLift == false`:
+  - If `currentBall < 5`: Increment `currentBall`, transition to PHASE_BALL_READY
+  - If `currentBall == 5`: Transition to PHASE_GAME_OVER
 
 #### 10.3.6 Multiball Example Scenario
 
-| Step | Event                               | `ballsInPlay` | `ballInLift` | `ballsLocked` | Phase        |
-|------|-------------------------------------|---------------|--------------|---------------|--------------|
-|    0 | Ball launched                       |       1       |     false    |        0      | BALL_IN_PLAY |
-|    1 | Ball enters left kickout            |       0       |     false    |        1      | BALL_IN_PLAY |
-|    2 | Replacement dispensed               |       0       |      true    |        1      | BALL_IN_PLAY |
-|    3 | Player launches replacement         |       1       |     false    |        1      | BALL_IN_PLAY |
-|    4 | Ball enters right kickout           |       0       |     false    |        2      | BALL_IN_PLAY |
-|    5 | Replacement dispensed               |       0       |      true    |        2      | BALL_IN_PLAY |
-|    6 | Player launches, hits target        |       1       |     false    |        2      | BALL_IN_PLAY |
-|    7 | Multiball triggered! Kickouts eject |       3       |     false    |        0      | BALL_IN_PLAY |
-|    8 | Ball enters kickout; ejected        |       3       |     false    |        0      | BALL_IN_PLAY |
-|    9 | Ball A drains, saved                |       2       |      true    |        0      | BALL_IN_PLAY |
-|   10 | Player ignores lift                 |       2       |      true    |        0      | BALL_IN_PLAY |
-|   11 | Ball Save expires                   |       2       |      true    |        0      | BALL_IN_PLAY |
-|   12 | Ball B drains, not saved            |       1       |      true    |        0      | BALL_IN_PLAY |
-|   13 | Ball C drains, not saved            |       0       |      true    |        0      | BALL_IN_PLAY |
-|   14 | Player shoots lift ball             |       1       |     false    |        0      | BALL_IN_PLAY |
-|   15 | That ball drains                    |       0       |     false    |        0      | BALL_ENDED   |
-
-**Key point:** At step 13, even though `ballsInPlay == 0`, we do NOT transition to `PHASE_BALL_ENDED` because `ballInLift == true`.
+| Step | Event                               | `ballsInPlay` | `ballInLift` | `ballsLocked` | Phase                      |
+|------|-------------------------------------|---------------|--------------|---------------|----------------------------|
+|    0 | Ball launched                       |       1       |     false    |        0      | BALL_IN_PLAY               |
+|    1 | Ball enters left kickout            |       0       |     false    |        1      | BALL_IN_PLAY               |
+|    2 | Replacement dispensed               |       0       |      true    |        1      | BALL_IN_PLAY               |
+|    3 | Player launches replacement         |       1       |     false    |        1      | BALL_IN_PLAY               |
+|    4 | Ball enters right kickout           |       0       |     false    |        2      | BALL_IN_PLAY               |
+|    5 | Replacement dispensed               |       0       |      true    |        2      | BALL_IN_PLAY               |
+|    6 | Player launches, hits target        |       1       |     false    |        2      | BALL_IN_PLAY               |
+|    7 | Multiball triggered! Kickouts eject |       3       |     false    |        0      | BALL_IN_PLAY               |
+|    8 | Ball enters kickout; ejected        |       3       |     false    |        0      | BALL_IN_PLAY               |
+|    9 | Ball A drains                       |       2       |     false    |        0      | BALL_IN_PLAY               |
+|   10 | Ball B drains                       |       1       |     false    |        0      | BALL_IN_PLAY               |
+|   11 | Ball C drains                       |       0       |     false    |        0      | BALL_IN_PLAY               |
+|   12 | Multiball ends (1 ball left)        |       0       |     false    |        0      | -> BALL_READY or GAME_OVER |
 
 #### 10.3.7 Ball Tracking Summary
 
-| Event                                              | `ballsInPlay`                     | `ballInLift` | `ballsLocked` |
-|----------------------------------------------------|-----------------------------------|--------------|---------------|
-| Ball dispensed to lift                             | No change                         | Set true     | No change     |
-| Player launches ball from lift                     | +1                                | Set false    | No change     |
-| Ball enters kickout (normal play)                  | -1                                | No change    | +1            |
-| Ball enters kickout (during multiball)             | No change (eject immediately)     | No change    | No change     |
-| Ball enters kickout (during mode)                  | No change (eject immediately)     | No change    | No change     |
-| Kickouts eject (multiball start)                   | +`ballsLocked`                    | No change    | Set to 0      |
-| Drain detected, Ball Save active, lift empty       | No change (replacement dispensed) | Set true     | No change     |
-| Drain detected, Ball Save active, lift occupied    | -1 (cannot dispense)              | No change    | No change     |
-| Drain detected, Ball Save expired                  | -1                                | No change    | No change     |
-| Drain detected during mode                         | -1, then dispense replacement     | Set true     | No change     |
-| Ball rolls back to lift (launched without scoring) | -1                                | Set true     | No change     |
-| Transition to PHASE_BALL_ENDED                     | Must be 0                         | Must be false| (any value)   |
-| Game Over (cleanup)                                | 0                                 | false        | Set to 0      |
+| Event                                              | `ballsInPlay`                              | `ballInLift`  | `ballsLocked` |
+|----------------------------------------------------|--------------------------------------------|---------------|---------------|
+| Ball dispensed to lift                             | No change                                  | Set true      | No change     |
+| Ball-in-lift switch opens (before hasScored)       | No change                                  | Set false     | No change     |
+| Ball-in-lift switch closes (before hasScored)      | No change (rollback)                       | Set true      | No change     |
+| First scoring switch hit (hasScored becomes true)  | `ballsInPlay++`                            | No change     | No change     |
+| Ball-in-lift switch opens (after hasScored)        | `ballsInPlay++`                            | Set false     | No change     |
+| Ball-in-lift switch closes (after hasScored)       | No change (new ball arrived)               | Set true      | No change     |
+| Ball enters kickout (normal play)                  | `ballsInPlay--`                            | No change     | +1            |
+| Ball enters kickout (during multiball)             | No change (eject immediately)              | No change     | No change     |
+| Ball enters kickout (during mode)                  | No change (eject immediately)              | No change     | No change     |
+| Kickouts eject (multiball start)                   | +`ballsLocked`                             | No change     | Set to 0      |
+| Drain detected, Ball Save active, lift empty       | No change (replacement dispensed)          | Set true      | No change     |
+| Drain detected, Ball Save active, lift occupied    | `ballsInPlay--` (cannot dispense)          | No change     | No change     |
+| Drain detected, Ball Save expired                  | `ballsInPlay--`                            | No change     | No change     |
+| Drain detected during mode                         | `ballsInPlay--`, then dispense replacement | Set true      | No change     |
+| Transition to next ball or Game Over               | Must be 0                                  | Must be false | (any value)   |
+| Game Over (cleanup)                                | 0                                          | false         | Set to 0      |
+
+**Implementation Notes:**
+- All `ballsInPlay--` operations must be guarded: `if (ballsInPlay > 0) ballsInPlay--;`
+- All drain switches (left, center, right rollovers, Gobble Hole) are processed independently each tick. If multiple drains occur simultaneously (extremely rare but possible in multiball), each is handled.
+- The `hasScored` flag is reset to `false` when: starting a new Ball Number, OR dispensing an Extra Ball.
 
 #### 10.3.8 Lock Handling State
 
@@ -1148,7 +1181,7 @@ When a ball enters a kickout (Enhanced mode, not during multiball):
 
 **Implementation Note:** Steps 1-3 must occur within the same tick. The phase transition check should only occur at the END of each tick, after all switch processing is complete.
 
-**Phase Transition Guard:** Before transitioning to `PHASE_BALL_ENDED`, verify that `ballsInPlay == 0` AND `ballInLift == false`. This prevents premature phase transitions when a ball is captured but a replacement is being dispensed.
+**Phase Transition Guard:** Before transitioning to `PHASE_BALL_READY` or `PHASE_GAME_OVER`, verify that `ballsInPlay == 0` AND `ballInLift == false`. This prevents premature phase transitions when a ball is captured but a replacement is being dispensed.
 
 #### 10.3.9 Phase Transition Diagram
 
@@ -1165,14 +1198,56 @@ stateDiagram-v2
     PHASE_BALL_READY --> PHASE_BALL_IN_PLAY: Ball launched
     PHASE_BALL_IN_PLAY --> PHASE_TILT: Full tilt
     PHASE_BALL_READY --> PHASE_TILT: Tilt (Original/Impulse)
-    PHASE_BALL_IN_PLAY --> PHASE_BALL_ENDED: All balls drained
-    PHASE_BALL_IN_PLAY --> PHASE_BALL_READY: Ball rollback
-    PHASE_BALL_ENDED --> PHASE_BALL_READY: Next ball
-    PHASE_BALL_ENDED --> PHASE_GAME_OVER: Ball 5 done
-    PHASE_TILT --> PHASE_BALL_ENDED: Balls drained
+    PHASE_BALL_IN_PLAY --> PHASE_BALL_READY: All drained, balls remain
+    PHASE_BALL_IN_PLAY --> PHASE_GAME_OVER: All drained, Ball 5
+    PHASE_TILT --> PHASE_BALL_READY: Drained, balls remain
+    PHASE_TILT --> PHASE_GAME_OVER: Drained, Ball 5
     PHASE_GAME_OVER --> PHASE_ATTRACT: Cleanup done
     PHASE_DIAGNOSTIC --> PHASE_ATTRACT: BACK button
 ```
+Note: Ball Save, Extra Ball, and mode ball replacement occur within PHASE_BALL_IN_PLAY without changing phase. See Sections 14.5, 14.7, and 14.13 for details.
+
+#### 10.3.10 Kickout Eject Retry Logic
+
+When a kickout coil fires to eject a ball, the ball should leave within the coil's active period. If the kickout switch remains closed after a retry delay, the ball is assumed stuck and we retry.
+
+**Implementation:**
+- Each kickout has a `kickoutRetryTicksRemaining` counter (per-kickout, not global).
+- When kickout fires (for any reason): Set `kickoutRetryTicksRemaining = KICKOUT_RETRY_TICKS` (500ms).
+- Each tick: If `kickoutRetryTicksRemaining > 0`, decrement it.
+- Each tick: If switch is closed AND `kickoutRetryTicksRemaining == 0` AND coil is not currently active:
+  - Fire the kickout coil.
+  - Set `kickoutRetryTicksRemaining = KICKOUT_RETRY_TICKS`.
+
+This rate-limits retries to approximately 2 per second (500ms interval), which is:
+- Fast enough to clear a ball that bounced back in.
+- Slow enough to not overheat the coil if truly stuck.
+
+**Kickout State Variables:**
+```
+  byte kickoutLeftRetryTicks;   // Countdown to next retry attempt
+  byte kickoutRightRetryTicks;  // Countdown to next retry attempt
+```
+**Note:** The standard `COIL_REST_TICKS` (80ms) still applies for coil thermal protection. The `KICKOUT_RETRY_TICKS` (1000ms) is an additional, longer delay specifically for the "ball still present" retry logic. The coil will not fire if either timer is active.
+
+**Kickout Switch Monitoring (each tick during PHASE_BALL_IN_PLAY):**
+```
+  // For each kickout (left and right):
+  if (switchJustClosed[SWITCH_IDX_KICKOUT_LEFT]) {
+    // Ball entered - handle based on game state (lock or eject)
+    handleKickoutEntry(KICKOUT_LEFT);
+  }
+  if (switchCurrentlyClosed[SWITCH_IDX_KICKOUT_LEFT] && !coilIsActive(DEV_IDX_KICKOUT_LEFT)) {
+    // Ball still present and coil is idle - fire eject
+    fireCoil(DEV_IDX_KICKOUT_LEFT);
+  }
+```
+This approach:
+- Reuses existing coil timing infrastructure
+- Naturally handles stuck balls without complex retry logic
+- Prevents machine-gun firing (coil rest period enforced)
+- Works for both "eject immediately" scenarios (modes/multiball) and stuck ball recovery
+
 ### 10.4 Coil Safety Watchdog
 
 **Critical Safety Requirement:** All coils (except Ball Tray Release and Flippers at hold power) must not remain energized at full power for more than approximately 100ms. Prolonged activation at full power causes overheating, potential coil damage, and fire risk.
@@ -1420,68 +1495,64 @@ Enhanced style uses a **silent score reset** - no Score Motor, Relay Reset Bank,
 3. If ball doesn't arrive: Throw critical error.
 4. Transition to 'PHASE_BALL_READY'.
 
-### 12.5 Ball Ready Phase
+### 12.5 Ball Ready Phase and Ball Launch Detection
 
 **Ball ready state tracking:**
-- 'ballSettledInLift' = true once ball arrives at lift base (rising edge of switch).
-- 'hillClimbStarted' = false initially (reset for each ball).
-- 'prevBallInLift' tracks previous switch state for edge detection.
+- `ballSettledInLift` = true once ball arrives at lift base (switch closes).
+- `hillClimbStarted` = false initially (reset for each ball).
+- `hasScored` = false initially (reset for each ball).
+
+**Key Insight:** A ball cannot score without leaving the shooter lane, and once a ball scores it cannot return to the lift. Therefore, scoring a point is the reliable indicator that a ball has truly entered play.
 
 **Events monitored every tick:**
 
-1. **Ball-in-lift switch closes (ball arrives at lift base):**
-   - Mark `ballSettledInLift = true`.
-   - Ready for player to push Ball Lift Rod.
+1. **Ball-in-lift switch closes (ball arrives or rolls back):**
+   - Set `ballInLift = true`.
+   - If `hasScored == false`: This is either initial arrival or a rollback. Ready for player to push.
+   - If `hasScored == true`: This is a NEW ball (Ball Save replacement or multiball dispense).
 
-2. **Ball-in-lift switch opens (player pushes ball into shooter lane):**
-   - Increment `ballsInPlay` by 1.
+2. **Ball-in-lift switch opens (player pushes ball):**
    - Set `ballInLift = false`.
-   - If currently in `PHASE_BALL_READY`: **Transition to PHASE_BALL_IN_PLAY.**
-   - If already in `PHASE_BALL_IN_PLAY`: Stay in same phase (multiball replacement launched).
-   - (Enhanced, Ball 1 only): Start hill climb sequence (play sound, activate shaker).
+   - If currently in `PHASE_BALL_READY`: Transition to `PHASE_BALL_IN_PLAY`.
+   - If `hasScored == false`: Do NOT increment `ballsInPlay` yet (ball might roll back).
+   - If `hasScored == true`: Increment `ballsInPlay` (replacement ball launched).
+   - (Enhanced, Ball 1 only, first time): Start hill climb sequence (play sound, activate shaker).
 
-3. **First scoring switch hit (while in PHASE_BALL_IN_PLAY):**
-   - Mark `gameState.hasScored = true`.
-   - Start Ball Save timer.
-   - (Enhanced, Ball 1 only): End hill climb audio, trigger hill drop audio, increase shaker motor speed for 11 seconds.
+3. **Scoring switch hit (while in PHASE_BALL_IN_PLAY):**
+   - If `hasScored == false`:
+     - Set `hasScored = true`.
+     - Increment `ballsInPlay` (ball is now definitively in play).
+     - Start Ball Save timer.
+     - (Enhanced, Ball 1 only): End hill climb audio, trigger hill drop sequence.
+   - Process normal scoring for the switch.
 
-**Drain During PHASE_BALL_READY:**
-If a drain switch closes while in PHASE_BALL_READY (before the ball is launched):
-- This should be impossible under normal conditions (ball is in lift, not on playfield)
-- If detected, treat as instant drain: save the ball, dispense replacement
-- Log warning for diagnostics
+**Ball Rollback Handling:**
 
-**Ball Lift Rod Rollback Handling:**
+Before `hasScored == true`, the ball-in-lift switch may toggle multiple times:
 
-The player can push the Ball Lift Rod partway up (opening the ball-in-lift switch), then release the rod, allowing the ball to roll back down (closing the switch again). This is uncommon but possible.
+| Lift Switch | hasScored | Action |
+|-------------|-----------|--------|
+| Opens | false | `ballInLift = false`, transition to BALL_IN_PLAY if needed, but `ballsInPlay` unchanged |
+| Closes | false | `ballInLift = true` (rollback - player can try again) |
+| Opens | true | `ballInLift = false`, `ballsInPlay++` (new ball launched) |
+| Closes | true | `ballInLift = true` (new ball arrived from Ball Save/multiball) |
 
-**State tracking:**
-- `ballLaunchedWithoutScore`: Set to `true` when ball-in-lift switch opens. Set to `false` when any scoring switch is hit OR when ball-in-lift switch closes (ball arrived or rolled back).
+This approach handles repeated rollbacks gracefully without corrupting the ball count.
 
-**When ball-in-lift switch opens (ball pushed up):**
-- Increment `ballsInPlay`
-- Set `ballInLift = false`
-- Set `ballLaunchedWithoutScore = true`
-- If in `PHASE_BALL_READY`: Transition to `PHASE_BALL_IN_PLAY`
-- (Enhanced, Ball 1): Start hill climb sequence
+**Drain During PHASE_BALL_IN_PLAY Before Scoring:**
 
-**When ball-in-lift switch closes (ball arrives or rolls back):**
-- **If `ballLaunchedWithoutScore == true`:**
-  - This ball rolled back without hitting anything
-  - Decrement `ballsInPlay`
-  - Set `ballInLift = true`
-  - Set `ballLaunchedWithoutScore = false`
-  - If `ballsInPlay == 0`: Transition back to `PHASE_BALL_READY`
-  - (Enhanced, Ball 1): Stop hill climb sound/shaker if started
-- **If `ballLaunchedWithoutScore == false`:**
-  - This is a NEW ball arriving (Ball Save replacement or multiball dispense)
-  - Set `ballInLift = true`
-  - Do NOT decrement `ballsInPlay`
-  - Stay in `PHASE_BALL_IN_PLAY`
+If a drain switch closes while `hasScored == false`:
+- This means the ball drained without hitting any target (instant drain).
+- Instant drain protection activates (see Section 14.5).
+- `ballsInPlay` is NOT decremented (it was never incremented).
+- Dispense replacement ball.
 
-**When any scoring switch is hit:**
-- Set `ballLaunchedWithoutScore = false`
-- (This prevents treating subsequent lift closures as rollbacks)
+**Phase Transition Guard:**
+
+The phase transition check at the end of each tick uses:
+- `ballsInPlay == 0` AND `ballInLift == false` AND `hasScored == true`
+
+The `hasScored == true` guard prevents transitioning to `PHASE_BALL_READY` or `PHASE_GAME_OVER` when a ball is still being launched (rollback scenario).
 
 ### 12.6 First Point Scored Handler (Enhanced Mode, Ball 1 Only)
 
@@ -1498,17 +1569,21 @@ On Balls 2-5: Skip the hill climb/drop sequence. Just start ball save timer and 
 
 **Note:** The shaker motor and drop sound complete on their own timing (~11 seconds). If the ball drains before they finish, they continue to completion.
 
-### 12.7 First Ball Drains Before Scoring (Edge Case)
+### 12.7 First Ball Drains Before Scoring (Instant Drain)
 
-If the first scoring switch hit IS a drain (ball went straight down without hitting anything):
+If a drain switch closes before any scoring switch has been hit (`hasScored == false`):
 
-1. Do NOT call 'handleFirstPointScored()' (no drop sequence).
-2. Ball Save activates (instant drain protection).
-3. Duck music (if playing).
-4. Play "Ball saved!" announcement.
-5. Release new ball to lift.
-6. Wait for ball to settle in lift, then wait for player to push again.
-7. Hill climb sequence can repeat for the replacement ball (Ball 1 only).
+1. Ball went straight down without hitting anything.
+2. `ballsInPlay` is still 0 (was never incremented).
+3. Instant drain protection activates (always active for single-ball play).
+4. Do NOT call `handleFirstPointScored()` (no drop sequence).
+5. Duck music (if playing).
+6. Play "Ball saved!" announcement.
+7. Dispense new ball to lift (`ballInLift = true` when it arrives).
+8. Wait for player to push ball again.
+9. Hill climb sequence can repeat for the replacement ball (Ball 1 only).
+
+**Note:** Since `ballsInPlay` was never incremented, there is no need to decrement it. The drain is detected, but the ball count remains consistent.
 
 ### 12.8 Ball Search Phase
 
@@ -1890,46 +1965,78 @@ All volume settings are persisted to EEPROM.
 
 ### 14.5 Ball Save
 
-- After first point is scored on each ball, Ball Save is active for N seconds (N stored in EEPROM).
-  - If ball drains during Ball Save period:
-    - Duck music.
-    - Play "Ball saved!" announcement.
-    - Release another ball into Ball Lift.
-    - Restore music volume after announcement.
-    - Mark 'hasUsedSave = true' (only one timed save per ball).
-- **Instant drain protection** (always active):
-  - If ball drains and has not hit ANY scoring switch yet, save the ball regardless of timer.
-  - This catches balls that drain without hitting anything.
+Ball Save provides a grace period after hitting any target. If the ball drains within this period, it is replaced.
 
-**Ball Save State:**
+**Ball Save Timer:**
+- Timer starts when **any playfield target is hit** (scoring or non-scoring)
+- Timer duration is configurable via EEPROM (`EEPROM_ADDR_BALL_SAVE_TIME`, default 15 seconds)
+- Timer **restarts** each time a replacement ball hits a target
+- **Multiple saves are allowed** per Ball Number (no limit)
 
-  struct BallSaveState {
-    bool active;              // Timer is running
-    unsigned long endMs;      // When timer expires
-    bool hasUsedSave;         // Already used timed save this ball
-  };
+**Targets that start/restart the Ball Save timer:**
+- All 7 bumpers (S, C, R, E, A, M, O)
+- Both slingshots
+- All 4 hat rollovers
+- All 9 side targets (even though they don't score points)
+- Both kickouts (when ball enters)
 
-**Ball Save Timer Start:**
-- **Single-ball play:** Timer starts when first scoring switch is hit.
-- **Multiball:** Timer starts immediately when multiball begins (when locked balls are ejected). The triggering score event counts as "first point scored."
+**NOT targets (do not start/restart timer):**
+- Gobble Hole - this IS a drain
+- Drain rollovers (left, center, right) - these ARE drains
+- Tilt bob
 
-**Ball Save Rules:**
-- **Single-ball play:** One timed save per Ball Number. After using it, `hasUsedSave = true` and timed Ball Save is disabled for that ball.
-- **Multiball:** Unlimited saves during the Ball Save window. `hasUsedSave` is NOT set.
-- **Instant drain protection:** Always active regardless of `hasUsedSave` or multiball state. If ball drains without hitting ANY switch, save it.
+**Ball Save Rules by Game State:**
+
+| Game State       | Ball Save Behavior                                                             |
+|------------------|--------------------------------------------------------------------------------|
+| Normal Play      | Timer-based: if drain occurs within N seconds of last target hit, replace ball |
+| During Mode      | Always replace ball (mode timer continues running)                             |
+| During Multiball | NO ball save - drained balls are lost                                          |
+
+**Ball Save State (simplified):**
+```
+  unsigned long ballSaveEndMs = 0;  // When timer expires (0 = not active)
+```
+**Implementation:**
+```
+  // When any target switch closes (in onTargetHit or equivalent):
+  void onTargetHit(byte switchIdx) {
+    // Start/restart ball save timer
+    ballSaveEndMs = millis() + (ballSaveSeconds * 1000UL);
+    // ... process scoring for this target
+  }
+  // When drain detected:
+  void onDrainDetected() {
+    if (inMode) {
+      // Mode: always replace ball
+      dispenseBallToLift();
+      return;
+    }
+    if (inMultiball) {
+      // Multiball: no saves
+      if (ballsInPlay > 0) ballsInPlay--;
+      return;
+    }
+    // Normal play: check ball save timer
+    if (ballSaveEndMs > 0 && millis() < ballSaveEndMs) {
+      // Ball saved!
+      playBallSavedAnnouncement();
+      dispenseBallToLift();
+      // Timer will restart when new ball hits a target
+      return;
+    }
+  // No save - ball lost
+  processBallLost();
+  }
+```
 
 **Ball Save When Ball Already In Lift:**
 If Ball Save triggers but `ballInLift == true` (a ball is already waiting):
-- Do NOT dispense another ball (would cause jam).
-- Do NOT play "Ball saved!" announcement.
-- The ball already in the lift IS the player's saved ball - they just haven't shot it yet.
-- In this case, it's not really a "drain" from the player's perspective.
+- Do NOT dispense another ball (would cause jam)
+- Do NOT play "Ball saved!" announcement
+- The ball already in the lift IS the player's saved ball
 
-This edge case can occur if:
-- Rapid instant drains where player doesn't shoot the replacement.
-- Multiball with rapid successive drains.
-
-- See Section 10.3.7 (Ball Tracking Summary) for more details on drain handling.
+**Note:** A ball that drains without hitting ANY target is NOT saved. This is intentional - the player must at least touch something to earn ball save protection. This simplifies implementation and is acceptable behavior for the rare "house ball" scenario.
 
 ### 14.6 Multiball
 
@@ -1974,7 +2081,6 @@ You can NEVER be in a Mode and Multiball simultaneously. See Section 14.8 for de
 2. Eject both locked balls simultaneously
 3. `ballsInPlay += ballsLocked`, `ballsLocked = 0`
 4. Switch to secondary/opposite theme music
-5. Start Ball Save timer
 
 **Special Case - Multiball Trigger on Same Hit as SCREAMO Completion:**
 If the player has 2 balls locked and completes SCREAMO with the same scoring switch hit:
@@ -1998,11 +2104,10 @@ Future enhancement: Consider 2x scoring during multiball.
 
 #### 14.6.4 Ball Save During Multiball
 
-- Ball Save timer starts when multiball begins
-- During the Ball Save window, ANY drained ball is saved (unlimited saves)
-- If a ball is already in the lift, no additional ball can be dispensed - that drain is not saved
-- After Ball Save expires, drained balls are not replaced
-- Ball Save does NOT pause during multiball (timer continues regardless of drains)
+- Ball Save is NOT active during multiball
+- Drained balls simply decrement `ballsInPlay` and are not replaced
+- This makes multiball more challenging and skill-based
+- Multiball ends naturally as balls drain
 
 #### 14.6.5 Multiball End
 
@@ -2018,11 +2123,11 @@ When multiball ends:
 When the player tilts during multiball:
 - Multiball ends immediately
 - Ball Save cancelled
+- Any locked balls are ejected (`ballsLocked = 0`, fire both kickouts)
 - Flippers, pop bumper, and slingshots disabled
 - Kickouts remain active (to eject any balls that land in them during drain)
 - No points awarded for any switch closures
 - All balls eventually drain
-- `ballsLocked` persists (should always be zero since cannot lock balls during multiball)
 - Proceed to next ball or Game Over
 
 ### 14.7 Modes
@@ -2068,10 +2173,17 @@ Modes rotate in sequence: BUMPER CARS -> ROLL-A-BALL -> GOBBLE HOLE -> (repeat)
 
 **Mode Timer:**
 - Each mode has a configurable time limit (stored in EEPROM, addresses 31-36)
-- Timer pauses when `ballsInPlay == 0` (ball drained, waiting for replacement)
-- Timer resumes when replacement ball hits any scoring switch
+- Timer runs continuously and does NOT pause when ball drains
+- This adds urgency - player must quickly shoot replacement balls
 - At 10 seconds remaining: Play "Ten seconds!" announcement (TRACK_MODE_HURRY = 1003)
 - At 10 seconds remaining: Start countdown sound effect (TRACK_MODE_COUNTDOWN = 1004)
+
+**Processing Order (each tick during mode):**
+1. Check for mode completion (jackpot achieved) - if complete, end mode immediately
+2. Check mode timer expiration - if expired, end mode
+3. Process scoring switches and other events
+
+This order ensures that if a player achieves the jackpot on the exact tick the timer expires, they receive the jackpot.
 
 **Mode End Sequence:**
 1. Stop mode music
@@ -2083,18 +2195,11 @@ Modes rotate in sequence: BUMPER CARS -> ROLL-A-BALL -> GOBBLE HOLE -> (repeat)
 
 **Ball Drain During Mode:**
 - Drained balls are ALWAYS replaced during modes (no ball is lost to drain)
-- Timer pauses when `ballsInPlay == 0`
+- Timer does NOT pause - it continues running during ball replacement
 - Play urgent ball-saved announcement (TRACK_BALL_SAVED_URG_FIRST to TRACK_BALL_SAVED_URG_LAST)
 - Dispense replacement ball
-- Timer resumes when replacement ball hits any scoring switch
-- Mode ball saves are unrelated to timed ball saves during regular play.
-- If ball drains within last 10 seconds, TRACK_MODE_COUNTDOWN will be playing and must be paused until the next point is scored.
-
-**Post-Mode Grace Period:**
-If a ball drains within MODE_END_GRACE_PERIOD_MS (5000ms = 5 seconds) after a mode ends:
-- Replace the ball (same as during-mode behavior)
-- Play ball-saved announcement (TRACK_BALL_SAVED_MODE_END = 641): "Here's your ball back..."
-- This ensures players aren't unfairly penalized for drains that occur during the mode-end transition
+- This creates urgency - player loses mode time while waiting for replacement
+- Mode ball replacement is independent of the normal Ball Save timer
 
 **Kickout Behavior During Mode:**
 When a ball enters a side kickout during a mode:
@@ -2213,10 +2318,12 @@ When the player tilts during a mode:
 - Each Gobble Hole hit awards 100,000 points and extinguishes a 1..5 lamp, in order.
 - **Gobble Hole hit:**
   - Award 100K points
+  - Extinguish next 1..5 lamp (mode-specific counter, NOT `gobbleCount`)
   - Play slide whistle down SFX (TRACK_MODE_GOBBLE_HIT = 1321)
   - Always play random compliment (this is a more difficult target than the other mode targets)
   - Turn on Shaker Motor briefly (SHAKER_GOBBLE_MS = 1000ms)
-  - Ball goes to trough; replacement ball dispensed automatically (mode behavior, with suspended timer)
+  - `gobbleCount` is NOT incremented (mode hits don't count toward 5-gobble goal)
+  - Ball goes to trough; replacement ball dispensed automatically (mode behavior)
 - **Side target hit:**
   - Play random ricochet SFX (TRACK_MODE_GOBBLE_MISS_FIRST to TRACK_MODE_GOBBLE_MISS_LAST: 1341-1348)
   - No points, no Selection Unit advance
@@ -2224,6 +2331,9 @@ When the player tilts during a mode:
   - Eject immediately
   - No points, no sound, no spotted number
 - **All other targets:** No points, no sound
+
+**Mode-Specific Gobble Counter:**
+The mode tracks its own `modeGobbleCount` (0-5) for jackpot progress, separate from the game's `gobbleCount`. The 1..5 lamps around the Gobble Hole show mode progress, not lifetime gobble count.
 
 **Reminder:** After 10 seconds of mode play, play TRACK_MODE_GOBBLE_REMIND (1311): "Keep shooting at the Gobble Hole!"
 
@@ -2375,113 +2485,79 @@ In all blocked cases:
   - Play random Game Over audio comment (always)
   - Resume Attract mode.
 
-**Post-Mode Grace Period:**
-If a ball drains within MODE_END_GRACE_PERIOD_MS (5000ms) after a mode ends, the ball is replaced as if the mode were still active. This prevents unfair ball loss during the transition period.
-
 #### 14.9.1 Drain Handling Decision Flow
 
 When a drain switch closes:
 
-1. **Decrement `ballsInPlay`**
+1. **Check if in Mode:**
+   - IF `inMode == true`: Replace ball (timer continues running). EXIT.
 
-2. **Check if in Mode:**
-   - IF `inMode == true`: Replace ball, pause timer. EXIT.
+2. **Check if in Multiball:**
+   - IF `inMultiball == true`: Decrement `ballsInPlay` (no replacement). Check multiball end condition. EXIT.
 
-3. **Check Post-Mode Grace Period:**
-   - IF `modeEndedAtMs > 0` AND `(millis() - modeEndedAtMs) < MODE_END_GRACE_PERIOD_MS`:
-     - Replace ball, play TRACK_BALL_SAVED_MODE_END. EXIT.
-
-4. **Check Ball Save (timed):**
-   - IF `ballSaveState.active` AND `millis() < ballSaveState.endMs` AND NOT `hasUsedSave`:
-     - IF NOT multiball: Set `hasUsedSave = true`
+3. **Check Ball Save Timer:**
+   - IF `ballSaveEndMs > 0` AND `millis() < ballSaveEndMs`:
      - Replace ball, play ball-saved announcement. EXIT.
 
-5. **Check Instant Drain Protection:**
-   - IF `gameState.hasScored == false`:
-     - Replace ball, play ball-saved announcement. EXIT.
-
-6. **Check Extra Ball:**
-   - IF `ballsInPlay == 0` AND `ballInLift == false` AND `extraBallAwarded == true`:
-     - Clear `extraBallAwarded`, dispense ball, announce. EXIT.
-
-7. **Normal Drain:**
+4. **Normal Drain (no save):**
+   - Decrement `ballsInPlay` (if > 0)
    - IF `ballsInPlay > 0` OR `ballInLift == true`: Stay in PHASE_BALL_IN_PLAY. EXIT.
-   - IF `currentBall < 5`: Transition to PHASE_BALL_ENDED.
+   - IF `currentBall < 5`: Increment `currentBall`, transition to PHASE_BALL_READY.
    - IF `currentBall == 5`: Transition to PHASE_GAME_OVER.
 
 #### 14.9.2 Drain Handling Flowchart
 
-                          [Drain Switch Closes]
-                                   |
-                                   v
-                        [Decrement ballsInPlay]
-                                   |
-                                   v
-                          +----------------+
-                          |   inMode?      |
-                          +----------------+
-                           |            |
-                          YES           NO
-                           |            |
-                           v            v
-                  [Replace ball,    +------------------+
-                   pause timer]     | In Grace Period? |
+                  [Drain Switch Closes]
+                           |
+                           v
+                  +----------------+
+                  |   inMode?      |
+                  +----------------+
+                   |            |
+                  YES           NO
+                   |            |
+                   v            v
+          [Replace ball,   +------------------+
+         timer continues]  | inMultiball?     |
+                |          +------------------+
+              EXIT          |              |
+                           YES             NO
+                            |              |
+                            v              v
+                   [Decrement       +------------------+
+                    ballsInPlay,    | Ball Save Timer  |
+                    check end]      | Active?          |
                         |           +------------------+
-                        |            |              |
-                      EXIT          YES             NO
+                      EXIT           |              |
+                                    YES             NO
                                      |              |
                                      v              v
                             [Replace ball,    +------------------+
-                             play grace       | Ball Save Active |
-                             announcement]    | AND NOT hasUsed? |
-                                 |            +------------------+
-                               EXIT            |              |
+                             play saved       | ballsInPlay > 0  |
+                             announcement]    | OR ballInLift?   |
+                                  |           +------------------+
+                                EXIT           |              |
                                               YES             NO
                                                |              |
                                                v              v
-                                      [Replace ball,    +------------------+
-                                       set hasUsedSave  | hasScored=false? |
-                                       if single-ball]  | (Instant Drain)  |
-                                            |           +------------------+
-                                          EXIT           |              |
-                                                        YES             NO
-                                                         |              |
-                                                         v              v
-                                                [Replace ball,    +------------------+
-                                                 play saved       | extraBallAwarded?|
-                                                 announcement]    +------------------+
-                                                      |            |              |
-                                                    EXIT          YES             NO
-                                                                   |              |
-                                                                   v              v
-                                                            [Dispense      +------------------+
-                                                              Extra Ball,  | ballsInPlay > 0  |
-                                                              announce]    | OR ballInLift?   |
-                                                                  |        +------------------+
-                                                                EXIT        |              |
-                                                                           YES             NO
-                                                                            |              |
-                                                                            v              v
-                                                                   [Stay in        +----------------+
-                                                                    BALL_IN_PLAY]  | currentBall<5? |
-                                                                         |         +----------------+
-                                                                       EXIT         |            |
-                                                                                   YES           NO
-                                                                                    |            |
-                                                                                    v            v
-                                                                           [PHASE_BALL_   [PHASE_GAME_
-                                                                            ENDED]         OVER]
+                                      [Stay in        +----------------+
+                                       BALL_IN_PLAY]  | currentBall<5? |
+                                            |         +----------------+
+                                          EXIT         |            |
+                                                      YES           NO
+                                                       |            |
+                                                       v            v
+                                      [Increment currentBall,  [PHASE_GAME_OVER]
+                                           PHASE_BALL_READY]
 
 
 **Decision Order Summary:**
-1. In Mode? -> Replace ball, pause timer
-2. In Grace Period? -> Replace ball (post-mode protection)
-3. Ball Save Active + Not Used? -> Replace ball, mark used
-4. Instant Drain (hasScored=false)? -> Replace ball
-5. Extra Ball Awarded? -> Dispense extra ball
-6. More balls in play or lift? -> Stay in BALL_IN_PLAY
-7. More balls remaining? -> PHASE_BALL_ENDED
-8. Ball 5 complete? -> PHASE_GAME_OVER
+1. In Mode? -> Replace ball (timer continues)
+2. In Multiball? -> Decrement count, no replacement
+3. Ball Save Timer Active? -> Replace ball
+4. More balls in play or lift? -> Stay in BALL_IN_PLAY
+5. More balls remaining? -> Increment currentBall, PHASE_BALL_READY
+6. Ball 5 complete? -> PHASE_GAME_OVER
 
 ### 14.10 Game Timeout
 
@@ -2605,14 +2681,13 @@ If the player has a ball *not* in the ball lift but has not scored any points wi
 
 For normal play when a ball is saved, play a random track selected from `TRACK_BALL_SAVED_FIRST` (631) to `TRACK_BALL_SAVED_LAST` (636): "Ball saved, ride again", "Here's another ball, keep shooting", "Ball saved, shoot again", etc.
 
-**Note:** Track 641 (`TRACK_BALL_SAVED_MODE_END`) "Here's your ball back..." is used specifically when a mode ends and a ball drains within the grace period.
-
 #### 14.11.15 Ball Saved - Urgent
 
-For mode and multiball play, where we want to impress urgency, play a random track selected from `TRACK_BALL_SAVED_URG_FIRST` (651) to `TRACK_BALL_SAVED_URG_LAST` (662): "Hurry, shoot another ball", "Quick, shoot again", "For God's sake shoot another ball", etc.
+For mode play, where we want to impress urgency, play a random track selected from `TRACK_BALL_SAVED_URG_FIRST` (651) to `TRACK_BALL_SAVED_URG_LAST` (662): "Hurry, shoot another ball", "Quick, shoot again", "For God's sake shoot another ball", etc.
 
-- Technically, a mode ball save isn't particularly urgent since we pause the timer until they shoot the ball, but it's fun to impress urgency.
-- A ball saved in multiball is somewhat more urgent as we DON'T pause the timer for saved balls.
+- Mode ball saves ARE urgent because the timer continues running while waiting for the replacement ball.
+- This creates real pressure to shoot quickly and maximize remaining mode time.
+- Note: Multiball does NOT have ball saves - drained balls are simply lost.
 
 #### 14.11.16 Multiball Announcements
 
@@ -2694,7 +2769,7 @@ For single-player games (Original, Impulse, or single-player Enhanced):
 
 ### 14.13 Extra Ball
 
-Extra Ball awards the player an additional ball without advancing the Ball Number. It is distinct from Ball Save (which replaces a drained ball during a time window) and Replay (which adds a credit).
+Extra Ball awards the player an additional ball immediately when earned. It is distinct from Ball Save (which replaces a drained ball) and Replay (which adds a credit).
 
 #### 14.13.1 Extra Ball Trigger
 
@@ -2704,67 +2779,76 @@ Extra Ball is awarded when the player lights all nine numbers in the 3x3 WHITE i
 - Lit drain rollovers (award spotted number)
 - Gobble Hole (always awards spotted number)
 
-#### 14.13.2 Extra Ball State
-```
-  bool extraBallAwarded;      // Extra Ball earned but not yet used
-  byte extraBallsUsed;        // Count of Extra Balls used this game (for stats)
-```
-- `extraBallAwarded` is set `true` when the 3x3 matrix is completed
-- `extraBallAwarded` is cleared when the Extra Ball is dispensed
-- The WHITE insert matrix resets after completion, allowing multiple Extra Balls per game
-
-#### 14.13.3 Extra Ball Award Sequence
+#### 14.13.2 Extra Ball Award Sequence
 
 When the player lights the 9th WHITE insert (completing the matrix):
 
-1. Play `TRACK_EXTRA_BALL_AWARDED` (841) - "EXTRA BALL!" (and ring Selection Bell 3x)
-2. Set `extraBallAwarded = true`
+1. Play `TRACK_EXTRA_BALL_AWARDED` (841) - "EXTRA BALL!"
+2. Ring Selection Bell 3x
 3. Reset all WHITE insert lamps (matrix cleared for potential second Extra Ball)
-4. Continue normal play (ball remains in play)
+4. **Immediately** fire `DEV_IDX_BALL_TROUGH_RELEASE` (if lift is empty)
+5. Continue normal play
 
-#### 14.13.4 Extra Ball Redemption
+**If lift is already occupied:** Do not dispense (player already has a queued ball). The Extra Ball is effectively "banked" as the ball currently in the lift.
 
-When all balls drain (`ballsInPlay == 0` AND `ballInLift == false`) and `extraBallAwarded == true`:
+#### 14.13.3 Extra Ball During Multiball
 
-1. Clear `extraBallAwarded = false`
-2. Increment `extraBallsUsed`
-3. Dispense ball to lift
-4. Wait for ball-in-lift switch to close
-5. Play "Shoot again" announcement:
-   - Single-player: Play track 842 "Here's another ball", then play track 660 "Shoot again"
-   - Multi-player (future): Play `TRACK_PLAYER_BASE + (playerNum - 1)` ("Guest N") followed by track 660 ("Shoot again")
-6. Transition to `PHASE_BALL_READY` (do NOT increment `currentBall`)
+If the player completes the WHITE matrix during multiball:
+- Immediately dispense another ball (if lift is empty)
+- Player now has 4 balls in play (3 on playfield + 1 in lift, or 4 on playfield)
+- This is intentional and rewarding - completing the matrix during multiball is difficult
 
-**Note:** The Ball Number remains unchanged. I.e. if the player earned Extra Ball on Ball 3, they continue playing Ball 3.
+#### 14.13.4 Extra Ball and Ball Number
 
-#### 14.13.5 Extra Ball Edge Cases
+Extra Ball does NOT affect the Ball Number:
+- If earned on Ball 3, the player continues on Ball 3
+- The extra ball is simply an additional ball added to the current Ball Number
+- Multiple Extra Balls can be earned per game (matrix resets after each completion)
 
-**Extra Ball During Multiball:**
-- If Extra Ball is earned during multiball, `extraBallAwarded` is set immediately
-- The Extra Ball is redeemed only when `ballsInPlay == 0` AND `ballInLift == false`
-- This simplifies implementation: multiball drains normally, and the Extra Ball appears as a seamless continuation
+#### 14.13.5 Extra Ball Lost on Tilt
 
-**Extra Ball + Ball Save:**
-- Ball Save and Extra Ball are independent
-- If both are available when a ball drains:
-  - Ball Save takes priority (uses timed save first)
-  - Extra Ball remains available for later
-- Instant drain protection does NOT consume Extra Ball
+If the player tilts while a ball is in the lift:
+- The ball in the lift becomes the next Ball Number (if Ball 1-4) or remains for Game Over cleanup (if Ball 5)
+- No additional ball is dispensed
+- The Extra Ball opportunity is simply lost
 
-**Extra Ball Lost on Tilt:**
-- If the player tilts while `extraBallAwarded == true`:
-  - Extra Ball is forfeited (cleared)
-  - Play proceeds to next Ball Number (or Game Over if Ball 5)
-- This ensures there is incentive to not tilt, even when draining.  Of course, the player will also lose the 100K or 500K they would otherwise score via the bottom rollover they are trying to avoid.
+See Section 14.14 for the general rule on ball-in-lift handling.
 
-**Extra Ball on Ball 5:**
-- Extra Ball works normally on Ball 5
-- Player continues with another Ball 5 (Ball Number stays at 5)
-- Game does not end until Ball 5 drains without Extra Ball available
+### 14.14 Ball In Lift Handling (General Rule)
 
-**Multiple Extra Balls:**
-- Only one Extra Ball can be "banked" at a time (`extraBallAwarded` is boolean)
-- If player completes matrix while `extraBallAwarded == true`, they lose it.  This will likely NEVER happen.
+**Critical Rule:** Never dispense a ball when `ballInLift == true`. Doing so would cause a jam.
+
+**When a ball is needed and lift is already occupied:**
+
+The ball already in the lift becomes whatever ball was needed. Any previous purpose for that ball is lost.
+
+| Situation               | Ball Already in Lift | Result                                                     |
+|-------------------------|----------------------|------------------------------------------------------------|
+| Ball Save triggers      | Yes                  | That ball IS the saved ball (no "Ball Saved" announcement) |
+| Extra Ball awarded      | Yes                  | That ball IS the extra ball                                |
+| Mode wants replacement  | Yes                  | That ball IS the replacement                               |
+| Tilt (Ball 1-4)         | Yes                  | That ball becomes the next Ball Number                     |
+| Tilt (Ball 5)           | Yes                  | Ball remains for Game Over cleanup                         |
+| Next Ball Number starts | Yes                  | Use existing ball, don't dispense                          |
+
+**Implementation:**
+```
+  void dispenseBallIfNeeded() {
+    if (ballInLift) {
+      // Ball already there - it serves our purpose
+      // Don't play "ball saved" or similar announcements
+      return;
+    }
+    // Lift is empty - dispense
+    activateDevice(DEV_IDX_BALL_TROUGH_RELEASE);
+  }
+```
+
+**Why this simplifies everything:**
+- No need to track "what kind of ball is in the lift"
+- No risk of intentional jams
+- A ball is just a ball - it serves the next purpose needed
+- Lost opportunities (Extra Ball, Ball Save) are acceptable edge cases
 
 ---
 
@@ -2938,13 +3022,13 @@ When constants in this document conflict with `Pinball_Consts.h`, the code file 
 
 ### 20.1 Game State Variables
 
-| Variable      | Type | Initial Value   | Description                       |
-|---------------|------|-----------------|-----------------------------------|
-| `gamePhase`   | byte | PHASE_ATTRACT   | Current game phase                |
-| `gameStyle`   | byte | GAME_STYLE_NONE | Original/Enhanced/Impulse         |
-| `currentBall` | byte | 0               | Current ball number (1-5)         |
-| `score`       | int  | 0               | Current score (1-999 = 10K-9.99M) |
-| `hasScored`   | bool | false           | Has scored any points this ball   |
+| Variable      | Type | Initial Value   | Description                                                    |
+|---------------|------|-----------------|----------------------------------------------------------------|
+| `gamePhase`   | byte | PHASE_ATTRACT   | Current game phase                                             |
+| `gameStyle`   | byte | GAME_STYLE_NONE | Original/Enhanced/Impulse                                      |
+| `currentBall` | byte | 0               | Current ball number (1-5)                                      |
+| `score`       | int  | 0               | Current score (1-999 = 10K-9.99M)                              |
+| `hasScored`   | bool | false           | Has scored any points this ball (also gates ball count logic)  |
 
 ### 20.2 Ball Tracking Variables
 
@@ -2953,7 +3037,6 @@ When constants in this document conflict with `Pinball_Consts.h`, the code file 
 | `ballsInPlay`              | byte | 0             | Balls on playfield (0-3)  |
 | `ballInLift`               | bool | false         | Ball waiting at lift base |
 | `ballsLocked`              | byte | 0             | Balls in kickouts (0-2)   |
-| `ballLaunchedWithoutScore` | bool | false         | For rollback detection    |
 
 ### 20.3 Enhanced Mode State Variables
 
@@ -2964,16 +3047,14 @@ When constants in this document conflict with `Pinball_Consts.h`, the code file 
 | `currentMode`     | byte          | MODE_NONE     | Which mode (0-3)             |
 | `modeCount`       | byte          | 0             | Modes played this game (0-3) |
 | `modeTimerEndMs`  | unsigned long | 0             | When mode timer expires      |
-| `modeTimerPaused` | bool          | false         | Timer paused (ball draining) |
-| `modeEndedAtMs`   | unsigned long | 0             | For grace period tracking    |
 
 ### 20.4 Ball Save State Variables
 
-| Variable         | Type          | Initial Value | Description               |
-|------------------|---------------|---------------|---------------------------|
-| `ballSaveActive` | bool          | false         | Ball save timer running   |
-| `ballSaveEndMs`  | unsigned long | 0             | When ball save expires    |
-| `hasUsedSave`    | bool          | false         | Used timed save this ball |
+| Variable         | Type          | Initial Value | Description                         |
+|------------------|---------------|---------------|-------------------------------------|
+| `ballSaveEndMs`  | unsigned long | 0             | When ball save expires (0=inactive) |
+
+**Note:** The simplified Ball Save uses only a single timestamp. No `hasUsedSave` flag is needed (multiple saves allowed). No `instantDrainCount` is needed (balls that don't hit targets aren't saved).
 
 ### 20.5 Extra Ball State Variables
 
@@ -3013,18 +3094,19 @@ These values are defined in `Pinball_Consts.h`. This section provides a quick re
 
 ### 21.1 Timing Constants (milliseconds unless noted)
 
-| Constant                         | Value  | Description                         |
-|----------------------------------|--------|-------------------------------------|
-| `TICK_MS`                        | 10     | Main loop tick duration             |
-| `START_STYLE_DETECT_WINDOW_MS`   | 500    | Window for Start button taps        |
-| `BALL_DETECTION_STABILITY_MS`    | 1000   | 5-ball switch stability requirement |
-| `BALL_TROUGH_TO_LIFT_TIMEOUT_MS` | 3000   | Max wait for ball to reach lift     |
-| `BALL_SEARCH_TIMEOUT_MS`         | 30000  | Ball search phase timeout           |
-| `GAME_TIMEOUT_MS`                | 300000 | Inactivity timeout (5 min)          |
-| `MODE_END_GRACE_PERIOD_MS`       | 5000   | Post-mode ball save grace           |
-| `SCORE_MOTOR_QUARTER_REV_MS`     | 882    | Score motor timing                  |
-| `SCORE_MOTOR_SLOT_MS`            | 147    | Per-slot timing                     |
-| `EEPROM_SAVE_INTERVAL_MS`        | 60000  | Score save frequency                |
+| Constant                         | Value  | Description                                  |
+|----------------------------------|--------|----------------------------------------------|
+| `TICK_MS`                        | 10     | Main loop tick duration                      |
+| `START_STYLE_DETECT_WINDOW_MS`   | 500    | Window for Start button taps                 |
+| `BALL_DETECTION_STABILITY_MS`    | 1000   | 5-ball switch stability requirement          |
+| `BALL_TROUGH_TO_LIFT_TIMEOUT_MS` | 3000   | Max wait for ball to reach lift              |
+| `BALL_SEARCH_TIMEOUT_MS`         | 30000  | Ball search phase timeout                    |
+| `GAME_TIMEOUT_MS`                | 300000 | Inactivity timeout (5 min)                   |
+| `MODE_END_GRACE_PERIOD_MS`       | 5000   | Post-mode ball save grace                    |
+| `SCORE_MOTOR_QUARTER_REV_MS`     | 882    | Score motor timing                           |
+| `SCORE_MOTOR_SLOT_MS`            | 147    | Per-slot timing                              |
+| `EEPROM_SAVE_INTERVAL_MS`        | 60000  | Score save frequency                         |
+| `BALL_SAVE_DEFAULT_SECONDS`      | 15     | Default ball save duration (EEPROM settable) |
 
 ### 21.2 Shaker Motor Constants
 
