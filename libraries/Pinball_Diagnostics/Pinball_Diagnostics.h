@@ -30,6 +30,9 @@ void diagWriteThemeToEEPROM(byte theme);
 byte diagReadBallSaveTimeFromEEPROM();
 void diagWriteBallSaveTimeToEEPROM(byte seconds);
 
+byte diagReadGameTimeoutFromEEPROM();
+void diagWriteGameTimeoutToEEPROM(byte minutes);
+
 byte diagReadModeTimeFromEEPROM(byte modeNum);
 void diagWriteModeTimeToEEPROM(byte modeNum, byte seconds);
 

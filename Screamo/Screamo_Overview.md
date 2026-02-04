@@ -1,5 +1,5 @@
 # 1954 Williams Screamo - Modernized Control System Overview
-Rev: 02-01-26. Revised by RDP and Claude Opus 4.5.
+Rev: 02-04-26. Revised by RDP and Claude Opus 4.5.
 
 ## 1. Introduction
 
@@ -19,8 +19,11 @@ This project replaces most of the EM logic with two Arduino Mega 2560 R3 boards 
 
 NOTE: The score is displayed to the player via lamps that illuminate numbers in the head, rather than a digital display. Possible scores range from 10,000 to 9,990,000 points, in increments of 10,000 points. Thus, there are 999 possible score values, and internally we represent the score as an integer from 1 to 999, where each unit represents 10,000 points.
 
-NOTE: Regarding "Mode" versus "Style." We use the term Mode interchangably to mean either 1) The type of game being played (Original, Impulse, or Enhanced) or 2) the special "game-within-a-game" used in Enhanced mode (Bumper Cars, Roll-A-Ball, Gobble Hole Shooting Gallery.)  Technically we should refer to Original/Impuls/Enhanced as the game Style, and the game-within-a-game as the Mode. Hopefully the reader will be able to descern when our use of the word Mode actually refers to game Style.
-
+NOTE: Regarding "Style," "Phase," and "Mode." This document uses three distinct terms for game state:
+- **Style**: The type of game selected at start (Original, Enhanced, or Impulse). Tracked by `gameStyle`.
+- **Phase**: The current system state (Attract, Startup, Ball Ready, Ball In Play, Game Over, Tilt, Diagnostic, Ball Search). Tracked by `gamePhase`.
+- **Mode**: The game-within-a-game in Enhanced style (Bumper Cars, Roll-A-Ball, Gobble Hole Shooting Gallery). Tracked by `modeState.currentMode`.
+These three concepts are independent: you can be in STYLE_ENHANCED, PHASE_BALL_IN_PLAY, and MODE_BUMPER_CARS simultaneously.
 ---
 
 ## 2. High-Level Architecture
@@ -283,11 +286,11 @@ The Ball Tray holds balls that have drained via the three bottom rollovers (left
 | Tilt (waiting for drain)            | Open (held)      | Open (held) |
 | Game Over                           | Closed           | Closed      |
 
-#### 3.6.3 Enhanced Mode Ball Tray During Gameplay
+#### 3.6.3 Enhanced Style Ball Tray During Gameplay
 
-**Simplified Strategy:** In Enhanced mode, the Ball Tray remains OPEN for the entire game after startup. This provides several benefits:
+**Simplified Strategy:** In Enhanced Style, the Ball Tray remains OPEN for the entire game after startup. This provides several benefits:
 - Balls draining via Drain Rollovers immediately fall into the Ball Trough
-- Instant ball availability for Ball Save, Multiball, and Mode replacement
+- Instant ball availability for Ball Save, Multiball, and Mode ball replacement
 - No need to time tray open/close cycles around drain events
 - The Ball Tray Release solenoid hold power (40 PWM) is safe for extended operation
 
@@ -313,12 +316,13 @@ Screamo runs in several styles. Master is style authority and informs Slave via 
 ### 4.2 Enhanced Style
 
 - Triggered by: Double-tap of Start button (second press within 500ms of first, with NO third press within 500ms of second).
-- Single-player only for initial release; future upgrade will support multiple players in this mode.
+- Single-player only for initial release; future upgrade will support multiple players in this Style.
 - A new rule set, uses:
   - Tsunami audio system.
   - Shaker motor.
-  - EM sound devices are NOT used in Enhanced style (no bells, Score Motor, 10K Unit, Selection Unit, or Relay Reset Bank during startup or gameplay except when specifically requested).
+  - EM sound devices, other than bells, are NOT used in Enhanced style (no Score Motor, 10K Unit, Selection Unit, or Relay Reset Bank during startup or gameplay except when specifically requested).
   - Exception: Modes and Multiball may have their own specific rules.
+  - Bells are still used for scoring feedback when NOT in a mode.
 - Theme:
   - Roller-coaster / amusement park flavor.
   - Voice, music, and special effects.
@@ -353,7 +357,7 @@ Screamo runs in several styles. Master is style authority and informs Slave via 
 
 **Window Timing:**
 - Style detection window: 500ms (configurable via 'START_STYLE_DETECT_WINDOW_MS')
-- Game mode is fully determined before ball recovery begins
+- Game Style is fully determined before ball recovery begins
 
 **Three Start Patterns:**
 
@@ -440,7 +444,7 @@ T = 400ms: Start pressed (3rd time, within 500ms of 2nd)
 
 Tilting always affects only the CURRENT BALL; it never ends the game prematurely (unless it was the last ball).
 
-- When the game is tilted in Enhanced mode:
+- When the game is tilted in Enhanced Style:
   - On first tilt: WARNING ONLY, not a full tilt.
     - Play tilt warning voice announcement (randomly chosen from a set).
     - Return to play
@@ -457,7 +461,7 @@ Tilting always affects only the CURRENT BALL; it never ends the game prematurely
   - If more balls remain: Continue with the next ball.
   - If this was the last ball: Game transitions to Game Over / Attract mode.
 
-**Tilt warning count resets at the start of each ball** (not cumulative across balls). See Section 14.1 for Enhanced mode two-warning tilt behavior.
+**Tilt warning count resets at the start of each ball** (not cumulative across balls). See Section 14.1 for Enhanced Style two-warning tilt behavior.
 
 **PHASE_TILT:**
 - Entered when a full tilt occurs (1st tilt in Original/Impulse, 2nd tilt in Enhanced).
@@ -623,7 +627,7 @@ The original Score Motor is used for sound and timing reference only. Actual sco
 **EM Sound Device Usage by Style:**
 - **Original Style**: All EM sound devices used (Score Motor, 10K Unit, Selection Unit, Relay Reset Bank, three Bells, Knocker).
 - **Impulse Style**: Same as Original style.
-- **Enhanced Style**: EM sound devices are NOT used during startup or gameplay except when specifically needed. Tsunami audio provides all sound effects. This makes Enhanced mode feel distinctly different.
+- **Enhanced Style**: EM sound devices, other than bells, are NOT used during startup or gameplay except when specifically needed. Bells are generally used for non-Mode Enhanced play but not during modes.  Tsunami audio provides most sound effects. This makes Enhanced Style feel distinctly different.
 
 Note that the Credit Unit is used in all styles, and one credit is required to start any game (per player.)
 
@@ -645,15 +649,15 @@ Single-unit increments:
 
 - Single 10K increment:
   - Handled as a non-motor pulse.
-  - Fire 10K Unit coil once.
-  - Fire 10K bell once.
+  - Fire 10K Unit coil once (if `silent10KUnit` flag is false)
+  - Fire 10K bell once (if `silentBells` flag is false)
   - NOTE: Some, but not all, 10K increments will also fire the Selection Unit coil via Master for sound.
 
 - Single 100K increment:
   - Also non-motor.
-  - Fire 10K unit coil (for sound).
-  - Fire 10K bell.
-  - Fire 100K bell.
+  - Fire 10K unit coil (if `silent10KUnit` flag is false)
+  - Fire 10K bell (if `silentBells` flag is false)
+  - Fire 100K bell (if `silentBells` flag is false)
 
 Motor-paced batches:
 
@@ -688,20 +692,39 @@ Motor-paced batches:
 | Small score increment (10K or 100K)   | No       | No      | No       |
 | Large score increment (20K+ or 200K+) | Yes      | Yes     | No       |
 
-### 5.5 Future Enhancement: Score Reset Duration Calculation
+### 5.5 Score Persistence Architecture
 
-Currently, only Slave knows the "last score" from previous game/power-up. Master cannot calculate exact reset duration.
+**Design Philosophy:** Master is the single source of truth for all game state, including the last-displayed score. Slave acts as a "dumb I/O" device that displays whatever Master tells it to display.
 
-**Future implementation:**
-1. Master stores last score in EEPROM (and updates approx. every EEPROM_SAVE_INTERVAL_MS during game play and at game over.)
-2. On power-up, Master tells Slave what "last score" to display
-3. Both Arduinos know starting score
-4. Master calculates reset duration based on number of reel decrements needed
-5. Master runs Score Motor for exactly that duration
+**At Power-Up:**
+1. Master loads `lastDisplayedScore` from EEPROM address `EEPROM_ADDR_LAST_SCORE` (2 bytes, 0..999)
+2. Master sends `sendMAStoSLVScoreAbs(lastDisplayedScore)` to Slave
+3. Slave displays the score (no EEPROM access needed on Slave)
 
-**For now:** Master assumes worst-case reset time of 2 full motor cycles (~1764ms).
+**During Gameplay:**
+- Master tracks score in `gameState.score[currentPlayer]`
+- Master sends score updates to Slave via `sendScoreIncrement()` or `sendMAStoSLVScoreAbs()`
+- Slave executes display commands and fires bells/coils as directed
 
-### 5.6 Software Requirements
+**At Game End / Attract Mode Entry:**
+- Master saves `gameState.score[0]` to EEPROM at `EEPROM_ADDR_LAST_SCORE`
+- This preserves the score for display at next power-up (emulating original EM behavior)
+
+**Slave Responsibilities (Score-Related):**
+- Display score lamps as commanded by Master
+- Fire 10K Unit coil and bells as commanded (respecting silence flags)
+- Report current displayed score if queried
+- Does NOT persist score to EEPROM
+
+### 5.6 Score Reset Duration Calculation
+
+- Master stores last score in EEPROM (and updates approx. every EEPROM_SAVE_INTERVAL_MS during game play and at game over.)
+- On power-up, Master tells Slave what "last score" to display
+- Both Arduinos know starting score
+- Master calculates reset duration based on number of reel decrements needed
+- Master runs Score Motor for exactly that duration
+
+### 5.7 Software Requirements
 
 - Slave is responsible for:
   - Timing score lamp updates and bell sounds to emulate Score Motor behavior.
@@ -711,7 +734,7 @@ Currently, only Slave knows the "last score" from previous game/power-up. Master
 - Master is responsible for:
   - Turning the Score Motor and other devices on and off at the appropriate times, for the appropriate duration, so their sounds match the score updates.
 
-### 5.7 Score Motor Duration Calculation API
+### 5.8 Score Motor Duration Calculation API
 
 Master needs to calculate how long to run the Score Motor based on the operation being performed.
 
@@ -731,6 +754,36 @@ Returns the number of 10ms ticks (or 0 if no motor needed).
 | Relay Reset (sound only)         | 88 ticks (1 quarter-rev)                                          |
 
 **Note:** Slave already implements this timing internally. Master only needs this for running the Score Motor sound device. See 'Screamo_Slave.ino' for reference implementation.
+
+### 5.9 EM Sound Device Usage by Style and Mode
+
+The following table summarizes which EM sound devices are used in each style/mode combination:
+
+| Device               | Location | Original/Impulse | Enhanced (Normal) | Enhanced (In Mode) |
+|----------------------|----------|------------------|-------------------|--------------------|
+| **10K Bell**         | Head     | Yes              | Yes               | No (Tsunami SFX)   |
+| **100K Bell**        | Head     | Yes              | Yes               | No (Tsunami SFX)   |
+| **Select Bell**      | Head     | Yes              | Yes               | No (Tsunami SFX)   |
+| **10K Unit**         | Head     | Yes              | No                | No                 |
+| **Score Motor**      | Cabinet  | Yes              | No                | No                 |
+| **Selection Unit**   | Cabinet  | Yes              | No                | No                 |
+| **Relay Reset Bank** | Cabinet  | Yes              | No                | No                 |
+| **Knocker**          | Cabinet  | Yes              | Yes               | Yes                |
+
+**Rationale:**
+- **Original/Impulse styles**: Full authentic EM experience with all mechanical sound devices.
+- **Enhanced style (normal play)**: Bells ring for scoring to preserve old-school amusement park charm, but mechanical stepper sounds (10K Unit, Score Motor, Selection Unit, Relay Reset Bank) are suppressed as they do not add to the experience.
+- **Enhanced style (during Mode)**: All EM sounds suppressed; Tsunami plays mode-specific sound effects instead.
+- **Knocker**: Always used in all styles (for free game awards, special events, etc.)
+
+**Implementation:**
+Master sends two flags with score increment messages to Slave:
+- `silentBells`: When true, suppresses 10K Bell, 100K Bell, and Select Bell.
+- `silent10KUnit`: When true, suppresses 10K Unit coil.
+
+Master controls Score Motor, Selection Unit, and Relay Reset Bank directly based on `gameStyle`:
+- If `gameStyle == STYLE_ENHANCED`: Do not activate these devices.
+- Otherwise: Activate as appropriate for authentic EM behavior.
 
 ---
 
@@ -1053,7 +1106,7 @@ Once `hasScored == true`, any subsequent ball-in-lift switch closure is treated 
   2. **Waiting**: Once `ballInLift == true`, wait for player to launch.
 - `ballsInPlay == 0` throughout this phase.
 - No balls are on the playfield yet.
-- In Enhanced mode: May play ball announcement audio (e.g., "Ball 2!") during dispense.
+- In Enhanced Style: May play ball announcement audio (e.g., "Ball 2!") during dispense.
 - Duration: Typically 1-3 seconds (dispense + player reaction time).
 
 **PHASE_BALL_IN_PLAY:**
@@ -1085,12 +1138,12 @@ Once `hasScored == true`, any subsequent ball-in-lift switch closure is treated 
 7. If `currentBall < 5`: Increment `currentBall`, transition to `PHASE_BALL_READY`.
 8. If `currentBall == 5`: Transition to `PHASE_GAME_OVER`.
 
-#### 10.3.5 Multiball Ball Tracking (Enhanced Mode Only)
+#### 10.3.5 Multiball Ball Tracking (Enhanced Style Only)
 
 This section covers the ball tracking mechanics for multiball. See Section 14.6 for gameplay rules and Section 14.8 for mode/multiball mutual exclusivity rules.
 
 **Ball Locking (Normal Play Only):**
-- When a ball enters a kickout in Enhanced mode during normal play (not during multiball or mode):
+- When a ball enters a kickout in Enhanced Style during normal play (not during multiball or mode):
   - Decrement `ballsInPlay`
   - Increment `ballsLocked`
   - Dispense replacement ball to lift; set `ballInLift = true`
@@ -1173,7 +1226,7 @@ This section covers the ball tracking mechanics for multiball. See Section 14.6 
 
 #### 10.3.8 Lock Handling State
 
-When a ball enters a kickout (Enhanced mode, not during multiball):
+When a ball enters a kickout (Enhanced Style, not during multiball):
 1. Decrement `ballsInPlay`
 2. Increment `ballsLocked`
 3. Dispense replacement ball to lift (set `ballInLift = true`)
@@ -1399,7 +1452,7 @@ Some switches may benefit from different debounce values:
 - Uses:
   - Tsunami audio (voice, music, sound effects).
   - Shaker motor.
-  - NO EM sound devices (no bells, Score Motor, 10K Unit, Selection Unit, Relay Reset Bank) unless specifically called for.
+  - Generally NO EM sound devices except (sometimes) bells (no Score Motor, 10K Unit, Selection Unit, Relay Reset Bank) unless specifically called for.
 - Rules (high-level, to be elaborated separately):
   - Roller-coaster / Screamo theme integration.
   - Ball save for first N seconds per ball after first score, or if ball drains before hitting any targets.
@@ -1438,12 +1491,12 @@ Upon entering ball recovery:
 1. **Open Ball Tray** (to allow any balls in the tray to drop into the trough)
 2. **Eject any balls from kickout holes** (if switch indicates ball present)
 3. **Check if a ball is at the Ball Lift base**:
-   - If CLOSED (ball present): In Enhanced mode, immediately play "Press the ball lift rod..." instruction; in Original/Impulse mode, wait silently.
+   - If CLOSED (ball present): In Enhanced Style, immediately play "Press the ball lift rod..." instruction; in Original/Impulse Style, wait silently.
 4. **Wait for the 5-balls-in-trough switch to close**:
    - Wait up to BALL_SEARCH_TIMEOUT_MS seconds with stability check (switch must stay closed for 1 second).
    - Continue ejecting kickouts during entire wait period.
 5. **If 5 balls are NOT detected within BALL_SEARCH_TIMEOUT_MS seconds total**: Enter PHASE_BALL_SEARCH.
-6. **Once 5 balls are detected and stable**: Proceed with mode-specific startup sequence.
+6. **Once 5 balls are detected and stable**: Proceed with Style-specific startup sequence.
 
 **Note:** No credit is deducted until the game actually starts (after 5 balls are confirmed). This protects the player from losing a credit due to stuck balls.
 
@@ -1554,7 +1607,7 @@ The phase transition check at the end of each tick uses:
 
 The `hasScored == true` guard prevents transitioning to `PHASE_BALL_READY` or `PHASE_GAME_OVER` when a ball is still being launched (rollback scenario).
 
-### 12.6 First Point Scored Handler (Enhanced Mode, Ball 1 Only)
+### 12.6 First Point Scored Handler (Enhanced Style, Ball 1 Only)
 
 When 'handleFirstPointScored()' is called on Ball 1:
 
@@ -1594,7 +1647,7 @@ If 5 balls are not detected within the initial BALL_SEARCH_TIMEOUT_MS wait perio
 1. **Initialization:**
    - Ball Tray remains open (or is opened if not already).
    - Fire both kickout coils once.
-   - Enhanced mode: If ball detected at lift, immediately play "Press the ball lift rod" instruction.
+   - Enhanced Style: If ball detected at lift, immediately play "Press the ball lift rod" instruction.
    - Start new BALL_SEARCH_TIMEOUT_MS overall timeout.
 
 2. **Continuous monitoring:**
@@ -1602,7 +1655,7 @@ If 5 balls are not detected within the initial BALL_SEARCH_TIMEOUT_MS wait perio
    - Every tick: Check 5-balls-in-trough switch.
    - Every 15 seconds: Fire both kickouts, the pop bumper, and both flippers (in case ball is stuck), one after another, not all at once.
 
-3. **Enhanced mode feedback:**
+3. **Enhanced Style feedback:**
    - On Start press: Replay announcements.
 
 4. **Success (5 balls detected):**
@@ -1618,7 +1671,7 @@ If 5 balls are not detected within the initial BALL_SEARCH_TIMEOUT_MS wait perio
 
 ## 13. Original/Impulse Style Rule Details
 
-The following section describes the general behavior of original machine hardware, much of which we will be simulating in software. Thus, although there are firm limitations when operating in Original/Impulse mode, we have flexibility to modify these rules in Enhanced mode.
+The following section describes the general behavior of original machine hardware, much of which we will be simulating in software. Thus, although there are firm limitations when operating in Original/Impulse Style, we have flexibility to modify these rules in Enhanced Style.
 
 - For example, we can light and recognize switch closures of each rollover independently; we can recognize each side target switch closure independently, we can control each of the eight playfield G.I. lamps individually.
 
@@ -2572,14 +2625,14 @@ Game timeout applies regardless of multiball state. If no scoring switch is hit 
 - Transition to PHASE_GAME_OVER
 - Kickouts eject during cleanup
 
-### 14.11 Enhanced Mode Sound Effects (Non-Mode Play)
+### 14.11 Enhanced Style Sound Effects (Non-Mode Play)
 
-During regular Enhanced gameplay (NOT during Modes or Multiball), in order to preserve the novelty of Mode sound effects, we will use original bell sounds for target hits during non-Mode play.
+During regular Enhanced gameplay (NOT during Modes or Multiball), in order to preserve the novelty of Mode sound effects, we will use original bell sounds for target hits during non-Mode play (though we will not be using the 10K Unit, Selection Unit, Relay Reset Unit, or Score Motor).
 
-#### 14.11.1 Target Hit Sounds (Regular Play) FOR FUTURE IMPLEMENTATION; NOT IN INITIAL RELEASE
+#### 14.11.1 Target Hit Sounds (Regular Play)
 
-In order to preserve the novelty of Mode sound effects, during regular Enhanced gameplay and Multiball (NOT during Modes) we will use the game's original three bells for target hit sounds.  The following match Original mode bells.
-HOWEVER, unlike Original mode, we will NOT be firing the 10K Unit, the Selection Unit, the Relay Reset Unit, or the Score Motor along with the bells.  However, our timing will mimick the Original score motor timing when awarding i.e. 5x 10K bells and 5x 100K bells, to preserve the nostalgic sound.
+In order to preserve the novelty of Mode sound effects, during regular Enhanced gameplay and Multiball (NOT during Modes) we will use the game's original three bells for target hit sounds.  The following match Original Style bells.
+HOWEVER, unlike Original Style, we will NOT be firing the 10K Unit, the Selection Unit, the Relay Reset Unit, or the Score Motor along with the bells.  However, our timing will mimick the Original score motor timing when awarding i.e. 5x 10K bells and 5x 100K bells, to preserve the nostalgic sound.
 
 | Target Type            | Sound Effect                                   |
 |------------------------|------------------------------------------------|
@@ -2614,13 +2667,13 @@ On second trigger of tilt bob per ball (full tilt):
 
 #### 14.11.5 Credit Reject
 
-When the player double-taps Start to begin an Enhanced mode game, but there are no credits:
+When the player double-taps Start to begin an Enhanced Style game, but there are no credits:
 1. Play `TRACK_START_REJECT_HORN` (311) "Aoooga horn."
 2. Play a random "No credits" message selected from `TRACK_START_REJECT_FIRST` (312) to `TRACK_START_REJECT_LAST` (330).
 
 #### 14.11.6 Credit Accepted
 
-When a player double-taps Start to begin an Enhanced mode game, after all five balls are found and a credit is deducted, play `TRACK_START_P1_OK` (351) "Okay kid, you're in."
+When a player double-taps Start to begin an Enhanced Style game, after all five balls are found and a credit is deducted, play `TRACK_START_P1_OK` (351) "Okay kid, you're in."
 
 We also have tracks for future use:
 - `TRACK_START_MORE_FRIENDS` (353) - "Keep pressin' Start if ya wanna admit more of your little friends"
@@ -2988,25 +3041,27 @@ When constants in this document conflict with `Pinball_Consts.h`, the code file 
 
 ### 19.1 Master to Slave Messages
 
-| Message Type      | Description               | Payload                   |
-|-------------------|---------------------------|---------------------------|
-| MODE              | Set game mode             | mode byte                 |
-| COMMAND_RESET     | Software reset            | none                      |
-| CREDIT_STATUS     | Query credit availability | none                      |
-| CREDIT_FULL_QUERY | Query if credits are full | none                      |
-| CREDIT_INC        | Add credits               | count byte                |
-| CREDIT_DEC        | Deduct one credit         | none                      |
-| SCORE_RESET       | Reset score to zero       | none                      |
-| SCORE_ABS         | Set absolute score        | score int 0..999          |
-| SCORE_INC_10K     | Adjust score by delta     | delta int, silent bool    |
-| SCORE_FLASH       | Flash score display       | score int 100/200/300/400 |
-| SCORE_QUERY       | Query current score       | none                      |
-| BELL_10K          | Ring 10K bell             | none                      |
-| BELL_100K         | Ring 100K bell            | none                      |
-| BELL_SELECT       | Ring select bell          | none                      |
-| 10K_UNIT          | Pulse 10K unit            | none                      |
-| GI_LAMP           | Set head GI state         | on/off bool               |
-| TILT_LAMP         | Set TILT lamp state       | on/off bool               |
+NOTE: "MODE" can be either a  Style (Original/Enhanced/Impulse) or a phase when a game is not being played i.e. Diagnostic, Attract, or Tilt.
+
+| Message Type      | Description               | Payload                                       |
+|-------------------|---------------------------|-----------------------------------------------|
+| MODE (aka Style)  | Set game Mode/Style       | Mode byte                                     |
+| COMMAND_RESET     | Software reset            | none                                          |
+| CREDIT_STATUS     | Query credit availability | none                                          |
+| CREDIT_FULL_QUERY | Query if credits are full | none                                          |
+| CREDIT_INC        | Add credits               | count byte                                    |
+| CREDIT_DEC        | Deduct one credit         | none                                          |
+| SCORE_RESET       | Reset score to zero       | none                                          |
+| SCORE_ABS         | Set absolute score        | score int 0..999                              |
+| SCORE_INC_10K     | Adjust score by delta     | delta int, silent bells bool, silent 10K bool |
+| SCORE_FLASH       | Flash score display       | score int 100/200/300/400                     |
+| SCORE_QUERY       | Query current score       | none                                          |
+| BELL_10K          | Ring 10K bell             | none                                          |
+| BELL_100K         | Ring 100K bell            | none                                          |
+| BELL_SELECT       | Ring select bell          | none                                          |
+| 10K_UNIT          | Pulse 10K unit            | none                                          |
+| GI_LAMP           | Set head GI state         | on/off bool                                   |
+| TILT_LAMP         | Set TILT lamp state       | on/off bool                                   |
 
 ### 19.2 Slave to Master Messages
 
@@ -3038,7 +3093,7 @@ When constants in this document conflict with `Pinball_Consts.h`, the code file 
 | `ballInLift`               | bool | false         | Ball waiting at lift base |
 | `ballsLocked`              | byte | 0             | Balls in kickouts (0-2)   |
 
-### 20.3 Enhanced Mode State Variables
+### 20.3 Enhanced Style State Variables
 
 | Variable          | Type          | Initial Value | Description                  |
 |-------------------|---------------|---------------|------------------------------|

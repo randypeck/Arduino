@@ -22,7 +22,8 @@ const char* const gameSettingNames[] PROGMEM = {
   "Mode 3: Gobble",
   "Mode 4: Reserved",
   "Mode 5: Reserved",
-  "Mode 6: Reserved"
+  "Mode 6: Reserved",
+  "Game Timeout"
 };
 
 // ***************************************

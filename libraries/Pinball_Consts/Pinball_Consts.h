@@ -1,4 +1,4 @@
-// PINBALL_CONSTS.H Rev: 01-31-26.
+// PINBALL_CONSTS.H Rev: 02/04/26b.
 
 #ifndef PINBALL_CONSTS_H
 #define PINBALL_CONSTS_H
@@ -22,16 +22,23 @@ const byte ARDUINO_MAS =  1;              // Master Arduino (Main controller)
 const byte ARDUINO_SLV =  2;              // Slave Arduino
 const byte ARDUINO_ALL = 99;              // Master broadcasting to all i.e. mode change
 
-// *** OPERATING MODES:
-const byte MODE_UNDEFINED  = 0;
-const byte MODE_DIAGNOSTIC = 1;
-const byte MODE_ORIGINAL   = 2;
-const byte MODE_ENHANCED   = 3;
-const byte MODE_IMPULSE    = 4;
-const byte MODE_ATTRACT    = 5;
-const byte MODE_TILT       = 6;
+// *** GAME STYLES (player selection at game start) ***
+const byte STYLE_NONE      = 0;
+const byte STYLE_ORIGINAL  = 1;
+const byte STYLE_ENHANCED  = 2;
+const byte STYLE_IMPULSE   = 3;
 
-// *** GAME-WITHIN-A-GAME MODES:
+// *** GAME PHASES (system state machine) ***
+const byte PHASE_ATTRACT      = 0;
+const byte PHASE_STARTUP      = 1;
+const byte PHASE_BALL_READY   = 2;
+const byte PHASE_BALL_IN_PLAY = 3;
+const byte PHASE_GAME_OVER    = 4;
+const byte PHASE_TILT         = 5;
+const byte PHASE_DIAGNOSTIC   = 6;
+const byte PHASE_BALL_SEARCH  = 7;
+
+// *** ENHANCED GAME MODES (game-within-a-game) ***
 const byte MODE_NONE        = 0;
 const byte MODE_BUMPER_CARS = 1;
 const byte MODE_ROLL_A_BALL = 2;
@@ -66,7 +73,6 @@ const byte RS845_PAYLOAD_OFFSET =  4;        // fifth byte of message is the fir
 
 // Here is a list of all RS485 message types (the 1-byte TYPE field):
 const byte RS485_TYPE_NO_MESSAGE                    =  0;  // No message.
-const byte RS485_TYPE_MAS_TO_SLV_MODE               =  1;  // Mode change.
 const byte RS485_TYPE_MAS_TO_SLV_COMMAND_RESET      =  2;  // Software reset.
 // MODE_ORIGINAL/ENHANCED/IMPULSE starts new game; tilt off, GI on, revert score, but does not deduct a credit.
 const byte RS485_TYPE_MAS_TO_SLV_CREDIT_STATUS      =  3;  // Request if credits > zero
@@ -154,22 +160,23 @@ const int8_t TSUNAMI_DUCKING_DB_DEFAULT = -20;  // Ducking level default
 // ************************************************************************
 // All persistent storage addresses for game settings and state
 
-const int EEPROM_ADDR_LAST_SCORE              =  0;  // Last game score (2 bytes)
+// Last game score - 2 bytes
+const int EEPROM_ADDR_LAST_SCORE              =  0;  // Last game score (0..999)
 
-// Audio settings
+// Audio settings - 1 byte each
 const int EEPROM_ADDR_TSUNAMI_GAIN            = 10;  // Master volume (-40 to 0 dB)
 const int EEPROM_ADDR_TSUNAMI_GAIN_VOICE      = 11;  // Voice offset (-20 to +20 dB)
 const int EEPROM_ADDR_TSUNAMI_GAIN_SFX        = 12;  // SFX offset (-20 to +20 dB)
 const int EEPROM_ADDR_TSUNAMI_GAIN_MUSIC      = 13;  // Music offset (-20 to +20 dB)
 const int EEPROM_ADDR_TSUNAMI_DUCK_DB         = 14;  // Ducking level (-40 to 0 dB)
 
-// Music theme settings
+// Music theme settings - 1 byte each
 const int EEPROM_ADDR_THEME                   = 20;  // Primary theme (0=Circus, 1=Surf)
 const int EEPROM_ADDR_LAST_CIRCUS_SONG_PLAYED = 21;  // Last Circus track index
 const int EEPROM_ADDR_LAST_SURF_SONG_PLAYED   = 22;  // Last Surf track index
 const int EEPROM_ADDR_LAST_MODE_PLAYED        = 25;  // Last game mode played
 
-// Game settings
+// Game settings - 1 byte each
 const int EEPROM_ADDR_BALL_SAVE_TIME          = 30;  // Ball save duration (seconds)
 const int EEPROM_ADDR_MODE_1_TIME             = 31;  // Mode 1 time limit (seconds)
 const int EEPROM_ADDR_MODE_2_TIME             = 32;  // Mode 2 time limit (seconds)
@@ -177,7 +184,7 @@ const int EEPROM_ADDR_MODE_3_TIME             = 33;  // Mode 3 time limit (secon
 const int EEPROM_ADDR_MODE_4_TIME             = 34;  // Mode 4 time limit (seconds)
 const int EEPROM_ADDR_MODE_5_TIME             = 35;  // Mode 5 time limit (seconds)
 const int EEPROM_ADDR_MODE_6_TIME             = 36;  // Mode 6 time limit (seconds)
-const int EEPROM_ADDR_GAME_TIMEOUT            = 37;  // Inactivity before game ends automatically (seconds)
+const int EEPROM_ADDR_GAME_TIMEOUT            = 37;  // Inactivity before game ends automatically (minutes)
 
 // Replay scores (Original/Impulse style) - 2 bytes each
 const int EEPROM_ADDR_ORIGINAL_REPLAY_1       = 40;  // Replay threshold 1
@@ -348,7 +355,8 @@ const byte GAME_SETTING_MODE_3     = 4;
 const byte GAME_SETTING_MODE_4     = 5;
 const byte GAME_SETTING_MODE_5     = 6;
 const byte GAME_SETTING_MODE_6     = 7;
-const byte NUM_GAME_SETTINGS       = 8;
+const byte GAME_SETTING_TIMEOUT    = 8;
+const byte NUM_GAME_SETTINGS       = 9;
 
 // Replay score count
 const byte NUM_REPLAY_SCORES = 5;

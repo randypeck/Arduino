@@ -1,4 +1,4 @@
-// Screamo_Slave.INO Rev: 01/31/26
+// Screamo_Slave.INO Rev: 02/04/26
 // 11/12/25: Increased Credit Down power to 150 for more reliable credit removal.
 // 12/28/25: Updated SCORE_INC_10K and SCORE_RESET to remain silent (no bells or 10K unit) in Enhanced style.
 // 01/19/26: Updated SCORE_INC_10K message to include silent parm
@@ -8,11 +8,8 @@
 #include <Pinball_Functions.h>
 #include <avr/wdt.h>
 
-#include <EEPROM.h>               // For saving and recalling score, to persist between power cycles.
-const int EEPROM_ADDR_SCORE = 0;  // Address to store 16-bit score (uses addr 0 and 1)
-
 const byte THIS_MODULE = ARDUINO_SLV;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "SLAVE 01/19/26";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "SLAVE 02/04/26";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which effectively makes it a global.
 // No need to pass lcdString[] to any functions that use it!
 
@@ -121,15 +118,14 @@ const byte PIN_OUT_SR_LAMP_HEAD_GI = 25;
 const byte PIN_OUT_SR_LAMP_TILT    = 21;
 
 // *** MISC CONSTANTS AND GLOBALS ***
-byte modeCurrent                 = MODE_UNDEFINED;
 byte msgType                     = RS485_TYPE_NO_MESSAGE;  // Current RS485 message type being processed.
 
 const byte SCREAMO_SLAVE_TICK_MS = 10;  // One scheduler tick == 10ms
 
 int currentScore                 =  0;    // Current game score (0..999).
 int targetScore                  =  0;    // Desired final score (0..999) updated by incoming RS485 score deltas.
-bool scoreCommandSilent = false;  // True when current score command should suppress bells/10K unit
-
+bool scoreCommandSilentBells = false;    // True when current score command should suppress bells
+bool scoreCommandSilent10KUnit = false;  // True when current score command should suppress 10K unit
 unsigned long lastLoopTime       =  0;    // Used to track 10ms loop timing.
 
 // Rapid-fire devices (10K Unit, 10K Bell, 100K Bell) may have timeOn up to n 10ms ticks (i.e. 50ms).
@@ -155,11 +151,6 @@ const unsigned SCORE_MOTOR_CYCLE_MS = 882;                 // one 1/4 revolution
 const unsigned SCORE_MOTOR_STEPS    = 6;                   // sub-steps per 1/4 rev (up to 5 advances + 1 rest)
 const unsigned SCORE_MOTOR_STEP_MS  = SCORE_MOTOR_CYCLE_MS / SCORE_MOTOR_STEPS; // spacing per sub-step (ms)
 
-// Score saving:
-const unsigned long EEPROM_SAVE_INTERVAL_MS = 60000;  // Save score every 60 seconds
-unsigned long lastEEPROMSaveMs = 0;
-int lastSavedScore = -1;  // Track last saved value to avoid redundant writes
-
 // Score reset phases used for Reset State Machine:
 // The score reset sequence runs through several phases to simulate mechanical score motor behavior.
 // SCORE_RESET_PHASE_REV_HIGH:
@@ -172,7 +163,7 @@ int lastSavedScore = -1;  // Track last saved value to avoid redundant writes
 // SCORE_RESET_PHASE_10K_CYCLE2:
 //   Phase 2. Optional second tensK cycle if more than 5 tensK steps were required (i.e. 6..10 total). Same pacing rules as cycle 1.
 // SCORE_RESET_PHASE_DONE:
-//   Final phase. Reset sequence finished; score persisted to EEPROM and resetActive cleared.
+//   Final phase. Reset sequence finished; resetActive cleared.
 const byte SCORE_RESET_PHASE_REV_HIGH   = 0;
 const byte SCORE_RESET_PHASE_10K_CYCLE1 = 1;
 const byte SCORE_RESET_PHASE_10K_CYCLE2 = 2;
@@ -265,14 +256,11 @@ void setup() {
   pLCD2004->begin();  // 20-char x 4-line LCD display via Serial 1.
   pLCD2004->println(lcdString);  // Display app version, defined above.
 
-  // Display previously saved score from EEPROM
-  currentScore = recallScoreFromEEPROM();
+  // Initialize score display to zero; Master will send actual score after startup
+  currentScore = 0;
+  targetScore = 0;
   displayScore(currentScore);
-  // targetScore is the intended final score after all queued adjustments are applied.
-  // It accumulates incoming deltas immediately and is always clamped to 0..999.
-  // currentScore moves toward targetScore over time via processScoreAdjust().
-  targetScore  = currentScore;  // initialize target
-  sprintf(lcdString, "EEPROM score %d", currentScore); pLCD2004->println(lcdString);
+  sprintf(lcdString, "Score init 0"); pLCD2004->println(lcdString);
 
 }  // End of setup()
 
@@ -325,19 +313,6 @@ void loop() {
   processScoreAdjust();
   processScoreReset();
 
-  // Periodic EEPROM save (i.e. every 60 seconds) (only if score has changed.)
-  // Since we don't *really* care if the score displayed at power-up is the absolute latest score.
-  // We could just as easily have the score come up at some always-the-same value; just so it's not zero.
-  // The original game would persist score-at-power-off until the next power-on, so we're just simulating this.
-  now = millis();
-  if ((now - lastEEPROMSaveMs) >= EEPROM_SAVE_INTERVAL_MS) {
-    if (currentScore != lastSavedScore) {
-      saveScoreToEEPROM(currentScore);
-      lastSavedScore = currentScore;
-    }
-    lastEEPROMSaveMs = now;
-  }
-
   // If flash active, toggle lamps at the requested rate (non-blocking).
   if (flashActive) {
     unsigned long nowMs = millis();
@@ -363,13 +338,6 @@ void processMessage(byte t_msgType) {
   // Messages with parameters must call corresponding get*() before using payload.
   // Many score-related messages modify score state machines; score reset preempts adjust.
   switch (t_msgType) {
-  case RS485_TYPE_MAS_TO_SLV_MODE: {
-    // Mode change triggers new game start (resets score and lamp state).
-    byte newMode = 0;
-    pMessage->getMAStoSLVMode(&newMode);
-    sprintf(lcdString, "Mode change %u", newMode); pLCD2004->println(lcdString);
-    startNewGame(newMode);
-  } break;
 
   case RS485_TYPE_MAS_TO_SLV_COMMAND_RESET: {
     // Software reset
@@ -411,6 +379,15 @@ void processMessage(byte t_msgType) {
   case RS485_TYPE_MAS_TO_SLV_SCORE_RESET: {
     // Initiates a multi-phase visual score reset sequence if not already active.
     // Clears pending score adjust queue before beginning.
+    // Retrieve silence flags from message
+    bool silentBells = false;
+    bool silent10KUnit = false;
+    pMessage->getMAStoSLVScoreReset(&silentBells, &silent10KUnit);
+
+    // Set global flags for use during reset execution
+    scoreCommandSilentBells = silentBells;
+    scoreCommandSilent10KUnit = silent10KUnit;
+
     pLCD2004->println("Score Reset");
     if (!resetActive) {
       scoreCmdHead = scoreCmdTail = 0;
@@ -473,10 +450,12 @@ void processMessage(byte t_msgType) {
   case RS485_TYPE_MAS_TO_SLV_SCORE_INC_10K: {
     // Forward signed delta (in 10K units) to the centralized enqueue/validation logic.
     int incAmount = 0;
-    bool silent = false;
-    pMessage->getMAStoSLVScoreInc10K(&incAmount, &silent);  // CHANGED: now gets silent flag
-    scoreCommandSilent = silent;  // NEW: store for use by processScoreAdjust()
-    sprintf(lcdString, "Scr adj %d%s", incAmount, silent ? " SIL" : ""); // FIXED: max 19 chars
+    bool silentBells = false;
+    bool silent10KUnit = false;
+    pMessage->getMAStoSLVScoreInc10K(&incAmount, &silentBells, &silent10KUnit);
+    scoreCommandSilentBells = silentBells;
+    scoreCommandSilent10KUnit = silent10KUnit;
+    sprintf(lcdString, "Scr %d%s%s", incAmount, silentBells ? " NB" : "", silent10KUnit ? " NU" : "");
     pLCD2004->println(lcdString);
 
     // requestScoreAdjust() performs clamping, updates targetScore, prunes saturation, and starts processing if idle.
@@ -907,12 +886,13 @@ void processScoreAdjust() {
     if (batchHundredsRemaining == 1) {
       int nextScore = constrain(currentScore + scoreCmdActiveDirection * 10, 0, 999);
       if (nextScore != currentScore) {
-        if (noiseMakersEnabled()) {
+        if (tenKUnitEnabled()) {
           activateDevice(DEV_IDX_10K_UP);
+        }
+        if (bellsEnabled()) {
           activateDevice(DEV_IDX_10K_BELL);
           activateDevice(DEV_IDX_100K_BELL);
-        }
-        currentScore = nextScore;
+        }        currentScore = nextScore;
         displayScore(currentScore);
       }
       batchHundredsRemaining = 0;
@@ -922,12 +902,12 @@ void processScoreAdjust() {
     else if (batchHundredsRemaining == 0 && batchTensRemaining == 1) {
       int nextScore = constrain(currentScore + scoreCmdActiveDirection, 0, 999);
       if (nextScore != currentScore) {
-        if (noiseMakersEnabled()) {
+        if (tenKUnitEnabled()) {
           activateDevice(DEV_IDX_10K_UP);
+        }
+        if (bellsEnabled()) {
           activateDevice(DEV_IDX_10K_BELL);
-          if ((nextScore % 10) == 0 || (scoreCmdActiveDirection < 0 && (currentScore % 10) == 0)) {
-            activateDevice(DEV_IDX_100K_BELL);
-          }
+          activateDevice(DEV_IDX_100K_BELL);
         }
         currentScore = nextScore;
         displayScore(currentScore);
@@ -960,14 +940,12 @@ void processScoreAdjust() {
       int stepUnits = scoreCycleHundred ? 10 : 1;
       int nextScore = constrain(currentScore + scoreCmdActiveDirection * stepUnits, 0, 999);
       if (nextScore != currentScore) {
-        if (noiseMakersEnabled()) {
+        if (tenKUnitEnabled()) {
           activateDevice(DEV_IDX_10K_UP);
+        }
+        if (bellsEnabled()) {
           activateDevice(DEV_IDX_10K_BELL);
-          if (scoreCycleHundred ||
-            (nextScore % 10) == 0 ||
-            (scoreCmdActiveDirection < 0 && (currentScore % 10) == 0)) {
-            activateDevice(DEV_IDX_100K_BELL);
-          }
+          activateDevice(DEV_IDX_100K_BELL);
         }
         currentScore = nextScore;
         displayScore(currentScore);
@@ -1080,7 +1058,8 @@ void scoreAdjustFinishIfDone() {
   scoreCycleHundred       = false;
   scoreCmdActiveDirection = 0;
   scoreAdjustCycleIndex   = 0;
-  scoreCommandSilent      = false;  // NEW: clear silent flag when batch completes
+  scoreCommandSilentBells = false;
+  scoreCommandSilent10KUnit = false;
 }
 
 void pruneQueuedAtBoundary(int t_saturatedDir) {
@@ -1200,15 +1179,13 @@ void processScoreReset() {
       int millions = (currentScore / 100) % 10;
       int newTensK = (tensK + 1) % 10;
       // At rollover (9->0) play the 100K bell but suppress lamp promotion of hundredK/millions during reset.
-      if (noiseMakersEnabled()) {
-        if (newTensK == 0) {
-          activateDevice(DEV_IDX_100K_BELL);
-        }
-        // Fire 10K unit and bell each advance.
+      if (tenKUnitEnabled()) {
         activateDevice(DEV_IDX_10K_UP);
-        activateDevice(DEV_IDX_10K_BELL);
       }
-
+      if (bellsEnabled()) {
+        activateDevice(DEV_IDX_10K_BELL);
+        activateDevice(DEV_IDX_100K_BELL);
+      }
       currentScore = millions * 100 + hundredK * 10 + newTensK;
       displayScore(currentScore);
       reset10KStepsRemaining--;
@@ -1233,18 +1210,21 @@ void processScoreReset() {
   if (resetPhase == SCORE_RESET_PHASE_DONE) {
     // Finalize reset sequence.
     resetActive = false;
+
+    // Clear silence flags after reset completes
+    scoreCommandSilentBells = false;
+    scoreCommandSilent10KUnit = false;
+
     pLCD2004->println("Reset done");
   }
 }
 
-void startNewGame(byte t_mode) {
+void startNewGame() {
   // Initialize new game state:
-  // - Stores mode
   // - Clears tilt lamp, turns on G.I.
   // - Resets score and score processing queues (any queued adjustments are discarded.)
   //   This ensures score logic restarts from a clean baseline.
   // - Updates score display to zero.
-  modeCurrent   = t_mode;
   setTiltLamp(false);
   setGILamp(true);
   currentScore  = 0;
@@ -1366,35 +1346,6 @@ void displayScore(int t_score) {
   setScoreLampsDirect(t_score);
 }
 
-void saveScoreToEEPROM(int t_score) {
-  // Persists score only if changed to reduce EEPROM wear.
-  // Input clamped into 0..999 before comparison/write.
-  if (t_score < 0) {
-    t_score = 0;
-  }
-  if (t_score > 999) {
-    t_score = 999;
-  }
-  unsigned int newVal = (unsigned int)t_score;
-  unsigned int oldVal = 0;
-  EEPROM.get(EEPROM_ADDR_SCORE, oldVal);
-  if (oldVal != newVal) {
-    EEPROM.put(EEPROM_ADDR_SCORE, newVal);
-    sprintf(lcdString, "Saved score %d", t_score); pLCD2004->println(lcdString);
-  }
-}
-
-int recallScoreFromEEPROM() {
-  // Reads last persisted score (unsigned int) from EEPROM and clamps to 0..999.
-  // Returns 0 if stored value > 999 (treat as invalid).
-  unsigned int s = 0;
-  EEPROM.get(EEPROM_ADDR_SCORE, s);
-  if (s > 999) {
-    s = 0;
-  }
-  return (int)s;
-}
-
 // ************************************************************************************
 // ****************** H E L P E R   &   U T I L I T Y   F U N C T I O N S *************
 // ************************************************************************************
@@ -1404,25 +1355,16 @@ bool hasCredits() {
   return digitalRead(PIN_IN_SWITCH_CREDIT_EMPTY) == LOW;
 }
 
-bool noiseMakersEnabled() {
-  // Return true when mechanical score sounds (10K unit, bells in head; Selection, reset units in cabinet)
-  // should be used for *automatic* scoring behavior.
-  // Original and Impulse styles => authentic EM behavior: noise makers ON.
-  // Enhanced style              => silent scoring: bells/10K unit suppressed for auto scoring.
-  // Silent flag                 => Master explicitly requests silence regardless of mode.
-  // NOTE: This does NOT affect explicit "fire bell/10K unit" commands coming from Master.
-  //       Those commands still directly activate the devices regardless of style.
+bool bellsEnabled() {
+  // Return true when bells (10K, 100K, Select) should ring during automatic scoring.
+  // Suppressed when Master explicitly requests silence (during Enhanced modes).
+  return !scoreCommandSilentBells;
+}
 
-  // If Master explicitly requested silence, honor that first
-  if (scoreCommandSilent) {
-    return false;
-  }
-
-  // Otherwise use mode-based logic
-  if (modeCurrent == MODE_ENHANCED) {
-    return false;
-  }
-  return true;
+bool tenKUnitEnabled() {
+  // Return true when 10K Unit coil should fire during automatic scoring.
+  // Suppressed in Enhanced style (always) and during modes.
+  return !scoreCommandSilent10KUnit;
 }
 
 void handleError(byte t_errorCode) {

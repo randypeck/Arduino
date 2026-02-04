@@ -1,9 +1,10 @@
-// Screamo_Master.INO Rev: 02/01/26
+// Screamo_Master.INO Rev: 02/04/26
 // 11/12/25: Moved Right Kickout from pin 13 to pin 44 to avoid MOSFET firing twice on power-up.  Don't use MOSFET on pin 13.
 // 12/28/25: Changed flipper inputs from direct Arduino inputs to Centipede inputs.
 // 01/07/26: Added "5 Balls in Trough" switch to Centipede inputs. All switches tested and working.
 
 #include <Arduino.h>
+#include <EEPROM.h>
 #include <Pinball_Consts.h>
 #include <Pinball_Functions.h>
 #include <Tsunami.h>
@@ -186,17 +187,6 @@ const byte MAX_PLAYERS                       =    1;  // Currently only support 
 const byte MAX_BALLS                         =    5;
 const byte MAX_MODES_PER_GAME                =    3;  // Maximum modes that can be played per game
 
-// ***** GAME PHASE CONSTANTS *****
-const byte PHASE_ATTRACT     = 0;
-const byte PHASE_STARTUP     = 1;  // Ball recovery and game initialization
-const byte PHASE_BALL_READY  = 2;  // Ball in lift, waiting for player to launch
-const byte PHASE_BALL_IN_PLAY = 3;  // Ball on playfield, processing scoring
-const byte PHASE_BALL_ENDED  = 4;  // Ball drained, advancing to next ball/player
-const byte PHASE_GAME_OVER   = 5;  // Game finished, transitioning to Attract
-const byte PHASE_TILT        = 6;  // Tilted, waiting for ball(s) to drain
-const byte PHASE_DIAGNOSTIC  = 7;  // Diagnostic mode
-const byte PHASE_BALL_SEARCH = 8;  // Searching for missing balls
-
 byte gamePhase = PHASE_ATTRACT;
 
 // ***** STARTUP SUB-STATE CONSTANTS *****
@@ -252,7 +242,7 @@ GameStateStruct gameState;
 // ***** GAME-WITHIN-A-GAME MODE STRUCTURE *****
 struct ModeStateStruct {
   bool active;
-  byte currentMode;
+  byte currentMode;  // None, Bumper Cars, Roll-A-Ball, Gobble Hole
   unsigned long timerStartMs;
   unsigned long timerDurationMs;
   bool timerPaused;
@@ -316,13 +306,7 @@ const unsigned long BALL_SEARCH_TIMEOUT_MS = 30000;  // 30 seconds for testing (
 const unsigned long BALL_DETECTION_STABILITY_MS = 1000;  // 1 second (adjustable)
 unsigned long ballDetectionStableStartMs = 0;  // When switch first closed (for stability tracking)
 
-// ***** GAME STYLE TRACKING *****
-const byte GAME_STYLE_ORIGINAL =   0;
-const byte GAME_STYLE_ENHANCED =   1;
-const byte GAME_STYLE_IMPULSE  =   2;
-const byte GAME_STYLE_NONE     = 255;
-
-byte gameStyle = GAME_STYLE_NONE;  // Selected style (set by start button taps)
+byte gameStyle = STYLE_NONE;  // Selected style (set by start button taps)
 bool playerAdditionWindowOpen = false;  // True from game start until first point scored (Original: for Impulse switch detection ONLY)
 bool hillClimbStarted = false;  // True once hill climb audio/shaker has started (to prevent re-triggering)
 bool ballSettledInLift = false;  // True once ball is confirmed resting at lift base (prevents premature hill climb trigger)
@@ -365,6 +349,9 @@ const byte BALL_DRAIN_INSULT_FREQUENCY = 50;  // 0..100 indicates percent of the
 const unsigned long GAME_TIMEOUT_SECONDS = 300;  // 5 minutes of no activity and game reverts to Attract mode
 const unsigned int STARTUP_BALL_TROUGH_TO_LIFT_TIMEOUT_MS = 3000;  // > 3 seconds and we throw a critical error
 const unsigned SCORE_MOTOR_CYCLE_MS = 882;                 // one 1/4 revolution of score motor (ms)
+const int EEPROM_SAVE_INTERVAL_MS             = 10000;  // Save interval for EEPROM (milliseconds)
+int lastDisplayedScore = 0;  // Score to display at power-up (loaded from EEPROM)
+unsigned long lastEepromSaveMs = 0;  // When we last saved to EEPROM
 
 // ********************************************************************************************************************************
 // ******************************************************** AUDIO STATE ***********************************************************
@@ -498,6 +485,11 @@ void setup() {
   // Set boot display timing
   bootDisplayStartMs = millis();
   initialBootDisplayShown = false;
+
+  // Load and display last game score (emulates EM behavior)
+  loadLastScore();
+  pMessage->sendMAStoSLVScoreAbs(lastDisplayedScore);
+  sprintf(lcdString, "Last: %d", lastDisplayedScore); pLCD2004->println(lcdString);
 
   // Initialize Tsunami WAV player
   pTsunami = new Tsunami();
@@ -712,7 +704,7 @@ void processStartButton() {
   }
 
   // First tap detection
-  if (switchJustClosedFlag[SWITCH_IDX_START_BUTTON] && !startWaitingForSecondTap && gameStyle == GAME_STYLE_NONE) {
+  if (switchJustClosedFlag[SWITCH_IDX_START_BUTTON] && !startWaitingForSecondTap && gameStyle == STYLE_NONE) {
     startFirstPressMs = millis();
     startTapCount = 1;
     startWaitingForSecondTap = true;
@@ -725,7 +717,7 @@ void processStartButton() {
     if (elapsed < START_STYLE_DETECT_WINDOW_MS) {
       // Double-tap detected -> Enhanced mode
       startTapCount = 2;
-      gameStyle = GAME_STYLE_ENHANCED;
+      gameStyle = STYLE_ENHANCED;
       startWaitingForSecondTap = false;
 
       // Check for credits
@@ -749,7 +741,7 @@ void processStartButton() {
         audioComEndMillis = millis() + ((unsigned long)trackLength * 100UL);
 
         delay(2000);
-        gameStyle = GAME_STYLE_NONE;
+        gameStyle = STYLE_NONE;
         return;
       }
 
@@ -762,7 +754,7 @@ void processStartButton() {
     unsigned long elapsed = millis() - startFirstPressMs;
     if (elapsed >= START_STYLE_DETECT_WINDOW_MS) {
       // Single tap confirmed -> Original mode
-      gameStyle = GAME_STYLE_ORIGINAL;
+      gameStyle = STYLE_ORIGINAL;
       startWaitingForSecondTap = false;
 
       // Check for credits
@@ -774,7 +766,7 @@ void processStartButton() {
       if (!creditsAvailable) {
         // Original mode: silent, no feedback
         delay(2000);
-        gameStyle = GAME_STYLE_NONE;
+        gameStyle = STYLE_NONE;
         return;
       }
 
@@ -783,9 +775,9 @@ void processStartButton() {
   }
 
   // Ball check and game start logic
-  if (gameStyle != GAME_STYLE_NONE) {
+  if (gameStyle != STYLE_NONE) {
     // ***** ORIGINAL MODE: Open tray IMMEDIATELY *****
-    if (gameStyle == GAME_STYLE_ORIGINAL) {
+    if (gameStyle == STYLE_ORIGINAL) {
       activateDevice(DEV_IDX_BALL_TRAY_RELEASE);
       gameState.ballTrayOpen = true;
       ballTrayOpenStartMs = millis();
@@ -805,7 +797,7 @@ void processStartButton() {
       bool ballInLiftAtStart = switchClosed(SWITCH_IDX_BALL_IN_LIFT);
 
       // Balls missing
-      if (gameStyle == GAME_STYLE_ENHANCED) {
+      if (gameStyle == STYLE_ENHANCED) {
         activateDevice(DEV_IDX_BALL_TRAY_RELEASE);
         gameState.ballTrayOpen = true;
         ballTrayOpenStartMs = millis();
@@ -907,7 +899,7 @@ void processStartButton() {
         gamePhase = PHASE_BALL_SEARCH;
         ballSearchSubState = BALL_SEARCH_INIT;
 
-        if (gameStyle == GAME_STYLE_ENHANCED) {
+        if (gameStyle == STYLE_ENHANCED) {
           // ***** IMMEDIATE FEEDBACK: Use lift switch state from BEFORE we started waiting *****
           if (ballInLiftAtStart) {
             // Ball was stuck at lift base from the start - play instruction FIRST
@@ -944,7 +936,7 @@ void processStartButton() {
     }
 
     // ***** All 5 balls present! *****
-    if (gameStyle == GAME_STYLE_ENHANCED) {
+    if (gameStyle == STYLE_ENHANCED) {
       releaseDevice(DEV_IDX_BALL_TRAY_RELEASE);
       gameState.ballTrayOpen = false;
 
@@ -965,7 +957,7 @@ void processStartButton() {
     audioCurrentComTrack = 0;
     audioComEndMillis = 0;
 
-    if (gameStyle == GAME_STYLE_ENHANCED) {
+    if (gameStyle == STYLE_ENHANCED) {
       pTsunami->trackPlayPoly(TRACK_START_HEY_GANG, 0, false);
       audioApplyTrackGain(TRACK_START_HEY_GANG, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
       audioCurrentComTrack = TRACK_START_HEY_GANG;
@@ -980,7 +972,7 @@ void processStartButton() {
     startupTickCounter = 0;
 
     // Optional: Brief LCD feedback (will be replaced by status line in PHASE_BALL_READY)
-    if (gameStyle == GAME_STYLE_ENHANCED) {
+    if (gameStyle == STYLE_ENHANCED) {
       lcdClear();
       lcdPrintRow(1, "Starting Enhanced");
     }
@@ -1105,15 +1097,20 @@ void updatePhaseBallSearch() {
     lcdPrintRow(4, "attract mode");
     delay(2000);
 
+    // Save score if we had started a game
+    if (gameState.numPlayers > 0) {
+      saveLastScore(gameState.score[gameState.currentPlayer - 1]);
+    }
+
     lcdClear();
     markAttractDisplayDirty();
     gamePhase = PHASE_ATTRACT;
-    gameStyle = GAME_STYLE_NONE;
+    gameStyle = STYLE_NONE;
     return;
   }
   // Handle START button press (user feedback)
   if (switchJustClosedFlag[SWITCH_IDX_START_BUTTON]) {
-    if (gameStyle == GAME_STYLE_ENHANCED) {
+    if (gameStyle == STYLE_ENHANCED) {
       // Enhanced: replay announcement
       pTsunami->stopAllTracks();
       audioCurrentComTrack = 0;
@@ -1161,7 +1158,7 @@ void updatePhaseBallSearch() {
     audioComEndMillis = 0;
 
     // Close tray (Enhanced only)
-    if (gameStyle == GAME_STYLE_ENHANCED) {
+    if (gameStyle == STYLE_ENHANCED) {
       releaseDevice(DEV_IDX_BALL_TRAY_RELEASE);
       gameState.ballTrayOpen = false;
     }
@@ -1172,7 +1169,7 @@ void updatePhaseBallSearch() {
     delay(1000);
 
     // ***** PLAY SCREAM (Enhanced only) *****
-    if (gameStyle == GAME_STYLE_ENHANCED) {
+    if (gameStyle == STYLE_ENHANCED) {
       pTsunami->trackPlayPoly(TRACK_START_SCREAM, 0, false);
       audioApplyTrackGain(TRACK_START_SCREAM, tsunamiSfxGainDb, tsunamiGainDb, pTsunami);
       delay(1500);  // Let scream play
@@ -1186,11 +1183,11 @@ void updatePhaseBallSearch() {
 
     lcdClear();
     lcdPrintRow(1, "Starting game...");
-    lcdPrintRow(2, gameStyle == GAME_STYLE_ENHANCED ? "Enhanced" : "Original");
+    lcdPrintRow(2, gameStyle == STYLE_ENHANCED ? "Enhanced" : "Original");
     lcdPrintRow(3, "1 Player, Ball 1");
     lcdPrintRow(4, "Please wait...");
 
-    if (gameStyle == GAME_STYLE_ENHANCED) {
+    if (gameStyle == STYLE_ENHANCED) {
       pTsunami->trackPlayPoly(TRACK_START_HEY_GANG, 0, false);
       audioApplyTrackGain(TRACK_START_HEY_GANG, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
       audioCurrentComTrack = TRACK_START_HEY_GANG;
@@ -1243,9 +1240,9 @@ void updatePhaseBallSearch() {
 // ***** BALL READY PHASE HANDLER *****
 void updatePhaseBallReady() {
   // ***** IMPULSE MODE SWITCH: Delayed second START press (Original -> Impulse) *****
-  if (playerAdditionWindowOpen && gameStyle == GAME_STYLE_ORIGINAL && !gameState.hasScored) {
+  if (playerAdditionWindowOpen && gameStyle == STYLE_ORIGINAL && !gameState.hasScored) {
     if (switchJustClosedFlag[SWITCH_IDX_START_BUTTON]) {
-      gameStyle = GAME_STYLE_IMPULSE;
+      gameStyle = STYLE_IMPULSE;
       playerAdditionWindowOpen = false;
 
       lcdClear();
@@ -1264,7 +1261,7 @@ void updatePhaseBallReady() {
   }
 
   // ***** ENHANCED MODE: Wait for ball to settle before monitoring for hill climb *****
-  if (gameStyle == GAME_STYLE_ENHANCED && !hillClimbStarted) {
+  if (gameStyle == STYLE_ENHANCED && !hillClimbStarted) {
     bool ballInLiftNow = switchClosed(SWITCH_IDX_BALL_IN_LIFT);
 
     // ***** STEP 1: Wait for ball to ARRIVE (rising edge) *****
@@ -1394,7 +1391,7 @@ void updatePhaseBallReady() {
 // ***** BALL IN PLAY PHASE HANDLER *****
 void updatePhaseBallInPlay() {
   // ***** SHAKER MOTOR MANAGEMENT (Enhanced mode only) *****
-  if (gameStyle == GAME_STYLE_ENHANCED && shakerDropStartMs != 0) {
+  if (gameStyle == STYLE_ENHANCED && shakerDropStartMs != 0) {
     unsigned long elapsedMs = millis() - shakerDropStartMs;
 
     if (elapsedMs >= SHAKER_HILL_DROP_MS) {
@@ -1446,7 +1443,7 @@ void handleBallDrain(byte drainType) {
   Serial.println(gameState.hasScored);
 
   // ***** ENHANCED MODE: Ball Save Logic *****
-  if (gameStyle == GAME_STYLE_ENHANCED) {
+  if (gameStyle == STYLE_ENHANCED) {
 
     // Case 2: Ball save timer active and not used yet
     if (ballSave.active && millis() < ballSave.endMs) {
@@ -1520,6 +1517,18 @@ void processBallLost() {
   // - Dispense next ball OR end game
   // - Play drain audio
   // - Activate shaker motor
+
+  // If this was the last ball of the last player:
+  if (gameState.currentBall >= MAX_BALLS) {
+    // Save score before returning to attract
+    saveLastScore(gameState.score[gameState.currentPlayer - 1]);
+
+    // Play game over audio, etc.
+    // ...
+
+    gamePhase = PHASE_ATTRACT;
+    gameStyle = STYLE_NONE;
+  }
   Serial.println("DEBUG: processBallLost() - NOT YET IMPLEMENTED");
 }
 
@@ -1583,7 +1592,7 @@ void updatePhaseStartup() {
 
     // Update LCD status line
     snprintf(lcdString, LCD_WIDTH + 1, "%s P%d Ball %d",
-      gameStyle == GAME_STYLE_ENHANCED ? "Enh" : "Org",
+      gameStyle == STYLE_ENHANCED ? "Enh" : "Org",
       gameState.currentPlayer,
       gameState.currentBall);
     lcdPrintRow(4, lcdString);
@@ -1602,7 +1611,7 @@ void handleFirstPointScored() {
   gameState.hasScored = true;
 
   // ***** ORIGINAL/IMPULSE: Close ball tray after first point *****
-  if (gameStyle == GAME_STYLE_ORIGINAL || gameStyle == GAME_STYLE_IMPULSE) {
+  if (gameStyle == STYLE_ORIGINAL || gameStyle == STYLE_IMPULSE) {
     if (gameState.ballTrayOpen) {
       releaseDevice(DEV_IDX_BALL_TRAY_RELEASE);
       gameState.ballTrayOpen = false;
@@ -1610,7 +1619,7 @@ void handleFirstPointScored() {
     }
   }
 
-  if (gameStyle == GAME_STYLE_ENHANCED) {
+  if (gameStyle == STYLE_ENHANCED) {
     // Stop hill climb audio
     pTsunami->trackStop(TRACK_START_LIFT_LOOP);
 
@@ -2116,6 +2125,11 @@ void audioDuckMusicForVoice(bool duck) {
 // ************************************************** SYSTEM UTILITIES ************************************************************
 // ********************************************************************************************************************************
 
+bool isInMode() {
+  // Roll-A-Ball/Impulse/Enhanced mode active
+  return (modeState.active && modeState.currentMode != MODE_NONE);
+}
+
 void initGameState() {
   gameState.numPlayers = 0;
   gameState.currentPlayer = 0;
@@ -2139,6 +2153,91 @@ void initGameState() {
   // Initialize ball save state
   ballSave.active = false;
   ballSave.endMs = 0;
+}
+
+void sendScoreIncrement(int amount) {
+  // Determine silence flags based on game style and mode state
+  bool silentBells = false;
+  bool silent10KUnit = false;
+  if (gameStyle == STYLE_ENHANCED) {
+    // Enhanced style: 10K Unit always silent, bells silent only during modes
+    silent10KUnit = true;
+    silentBells = isInMode();  // Silent bells during Bumper Cars, Roll-A-Ball, Gobble Hole
+  }
+  // Original and Impulse styles: both flags remain false (full EM sounds)
+  pMessage->sendMAStoSLVScoreInc10K(amount, silentBells, silent10KUnit);
+}
+
+void sendScoreReset() {
+  // Determine silence flags for score reset based on game style
+  // Score reset happens AFTER game style is known, at game start
+  bool silentBells = false;
+  bool silent10KUnit = false;
+
+  if (gameStyle == STYLE_ENHANCED) {
+    // Enhanced: 10K Unit always silent, bells ENABLED during reset (not in a mode yet)
+    silent10KUnit = true;
+    silentBells = false;  // Bells are allowed during reset (authentic EM feel at game start)
+  }
+  // Original and Impulse: both flags false (full EM sounds)
+
+  pMessage->sendMAStoSLVScoreReset(silentBells, silent10KUnit);
+}
+
+// Also add a flag or logic to suppress Score Motor, Selection Unit, and Relay Reset Bank
+// when gameStyle == STYLE_ENHANCED. For example:
+
+bool useMechanicalScoringDevices() {
+  // Suppress Score Motor, Selection Unit, and Relay Reset Bank when gameStyle == STYLE_ENHANCED
+  // Returns true if Score Motor, Selection Unit, and Relay Reset Bank should be used.
+  // These are only used in Original and Impulse styles, never in Enhanced.
+  return (gameStyle != STYLE_ENHANCED);
+}
+
+// ***** SCORE PERSISTENCE *****
+void loadLastScore() {
+  // Load 2-byte score from EEPROM (little-endian)
+  byte low = EEPROM.read(EEPROM_ADDR_LAST_SCORE);
+  byte high = EEPROM.read(EEPROM_ADDR_LAST_SCORE + 1);
+  int score = (high << 8) | low;
+
+  // Validate range (0..999)
+  if (score < 0 || score > 999) {
+    score = 0;
+  }
+  lastDisplayedScore = score;
+}
+
+void saveLastScore(int score) {
+  // Clamp to valid range
+  if (score < 0) score = 0;
+  if (score > 999) score = 999;
+
+  // Only write if changed (reduce EEPROM wear)
+  byte low = score & 0xFF;
+  byte high = (score >> 8) & 0xFF;
+
+  if (EEPROM.read(EEPROM_ADDR_LAST_SCORE) != low) {
+    EEPROM.write(EEPROM_ADDR_LAST_SCORE, low);
+  }
+  if (EEPROM.read(EEPROM_ADDR_LAST_SCORE + 1) != high) {
+    EEPROM.write(EEPROM_ADDR_LAST_SCORE + 1, high);
+  }
+
+  lastDisplayedScore = score;
+}
+
+void saveCurrentScoreAndEnterAttract() {
+  // Save the current player's score for display at next power-up
+  if (gameState.numPlayers > 0 && gameState.currentPlayer > 0) {
+    saveLastScore(gameState.score[gameState.currentPlayer - 1]);
+  }
+
+  // Reset to attract mode
+  gamePhase = PHASE_ATTRACT;
+  gameStyle = STYLE_NONE;
+  setAttractLamps();
+  markAttractDisplayDirty();
 }
 
 // ***** BALL READY PHASE ENTRY *****

@@ -75,6 +75,20 @@ void diagWriteBallSaveTimeToEEPROM(byte seconds) {
   }
 }
 
+byte diagReadGameTimeoutFromEEPROM() {
+  byte timeout = EEPROM.read(EEPROM_ADDR_GAME_TIMEOUT);
+  if (timeout == 0 || timeout > 60) {  // 0 or >60 minutes invalid
+    timeout = 5;  // Default 5 minutes
+  }
+  return timeout;
+}
+
+void diagWriteGameTimeoutToEEPROM(byte minutes) {
+  if (minutes > 0 && minutes <= 60) {  // Valid range: 1-60 minutes
+    EEPROM.update(EEPROM_ADDR_GAME_TIMEOUT, minutes);
+  }
+}
+
 byte diagReadModeTimeFromEEPROM(byte modeNum) {
   if (modeNum < 1 || modeNum > 6) {
     return 60;
@@ -957,7 +971,6 @@ void diagRunSettings(Pinball_LCD* pLCD, Pinball_Centipede* pShift,
         if (categoryIdx == SETTINGS_CAT_GAME) {
           const char* paramNamePtr = (const char*)pgm_read_word(&gameSettingNames[paramIdx]);
           diagLcdPrintRow(2, paramNamePtr, pLCD);
-
           // Display current value
           if (paramIdx == GAME_SETTING_THEME) {
             byte theme = diagReadThemeFromEEPROM();
@@ -965,6 +978,9 @@ void diagRunSettings(Pinball_LCD* pLCD, Pinball_Centipede* pShift,
           } else if (paramIdx == GAME_SETTING_BALL_SAVE) {
             byte ballSave = diagReadBallSaveTimeFromEEPROM();
             snprintf(buf, sizeof(buf), "Value: %d sec", ballSave);
+          } else if (paramIdx == GAME_SETTING_TIMEOUT) {  // NEW
+            byte timeout = diagReadGameTimeoutFromEEPROM();
+            snprintf(buf, sizeof(buf), "Value: %d min", timeout);
           } else {
             byte modeTime = diagReadModeTimeFromEEPROM(paramIdx - GAME_SETTING_MODE_1 + 1);
             snprintf(buf, sizeof(buf), "Value: %d sec", modeTime);
@@ -1019,6 +1035,10 @@ void diagRunSettings(Pinball_LCD* pLCD, Pinball_Centipede* pShift,
             byte ballSave = diagReadBallSaveTimeFromEEPROM();
             if (ballSave > 0) ballSave--;
             diagWriteBallSaveTimeToEEPROM(ballSave);
+          } else if (paramIdx == GAME_SETTING_TIMEOUT) {  // NEW
+            byte timeout = diagReadGameTimeoutFromEEPROM();
+            if (timeout > 1) timeout--;  // Min 1 minute
+            diagWriteGameTimeoutToEEPROM(timeout);
           } else {
             byte modeTime = diagReadModeTimeFromEEPROM(paramIdx - GAME_SETTING_MODE_1 + 1);
             if (modeTime > 1) modeTime--;
@@ -1054,6 +1074,10 @@ void diagRunSettings(Pinball_LCD* pLCD, Pinball_Centipede* pShift,
             byte ballSave = diagReadBallSaveTimeFromEEPROM();
             if (ballSave < 30) ballSave++;
             diagWriteBallSaveTimeToEEPROM(ballSave);
+          } else if (paramIdx == GAME_SETTING_TIMEOUT) {  // NEW
+            byte timeout = diagReadGameTimeoutFromEEPROM();
+            if (timeout < 60) timeout++;  // Max 60 minutes
+            diagWriteGameTimeoutToEEPROM(timeout);
           } else {
             byte modeTime = diagReadModeTimeFromEEPROM(paramIdx - GAME_SETTING_MODE_1 + 1);
             if (modeTime < 250) modeTime++;

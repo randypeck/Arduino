@@ -1,4 +1,4 @@
-// PINBALL_MESSAGE.H  Rev: 01/19/26
+// PINBALL_MESSAGE.H  Rev: 02/04/26
 
 // This class includes all of the low-level logic to send and receive messages on the RS-485 network
 // FOR NOTES RE: RS485 INCOMING SERIAL BUFFER OVERFLOW "RS485 in buf ovflow." DISPLAYED ON LCD, see comments at bottom of code.
@@ -24,8 +24,6 @@ class Pinball_Message {
 
     // *** MESSAGES TO/FROM MASTER AND SLAVE ***
     // NOTE: Messages that don't have any parameters don't need a "get" function; the Message Type is the message
-    void sendMAStoSLVMode(const byte t_mode);                      // RS485_TYPE_MAS_TO_SLV_MODE
-    void getMAStoSLVMode(byte* t_mode);                            // RS485_TYPE_MAS_TO_SLV_MODE
     void sendMAStoSLVCommandReset();                               // RS485_TYPE_MAS_TO_SLV_COMMAND_RESET
 
     void sendMAStoSLVGILamp(const bool t_onOrOff);                 // RS485_TYPE_MAS_TO_SLV_GI_LAMP
@@ -49,14 +47,15 @@ class Pinball_Message {
     void getMAStoSLVCreditInc(byte* t_numCreditsToAdd);            // RS485_TYPE_MAS_TO_SLV_CREDIT_INC
     void sendMAStoSLVCreditDec();                                  // RS485_TYPE_MAS_TO_SLV_CREDIT_DEC
 
-    void sendMAStoSLVScoreReset();                                 // RS485_TYPE_MAS_TO_SLV_SCORE_RESET
+    void sendMAStoSLVScoreReset(const bool t_silentBells, const bool t_silent10KUnit); // RS485_TYPE_MAS_TO_SLV_SCORE_RESET
+    void getMAStoSLVScoreReset(bool* t_silentBells, bool* t_silent10KUnit);            // RS485_TYPE_MAS_TO_SLV_SCORE_RESET
     void sendMAStoSLVScoreAbs(const int t_score);                  // RS485_TYPE_MAS_TO_SLV_SCORE_ABS (score 0..999 in 10Ks)
     void getMAStoSLVScoreAbs(int* t_score);                        // RS485_TYPE_MAS_TO_SLV_SCORE_ABS
     void sendMAStoSLVScoreFlash(const int t_score);                // RS485_TYPE_MAS_TO_SLV_SCORE_FLASH (score 0..999 in 10Ks)
     void getMAStoSLVScoreFlash(int* t_score);                      // RS485_TYPE_MAS_TO_SLV_SCORE_FLASH
 
-    void sendMAStoSLVScoreInc10K(const int t_incIn10Ks, const bool t_silent); // RS485_TYPE_MAS_TO_SLV_SCORE_INC_10K (1..999 in 10,000s)
-    void getMAStoSLVScoreInc10K(int* t_incIn10Ks, bool* t_silent); // RS485_TYPE_MAS_TO_SLV_SCORE_INC_10K
+    void sendMAStoSLVScoreInc10K(const int t_incIn10Ks, const bool t_silentBells, const bool t_silent10KUnit); // RS485_TYPE_MAS_TO_SLV_SCORE_INC_10K (1..999 in 10,000s)
+    void getMAStoSLVScoreInc10K(int* t_incIn10Ks, bool* t_silentBells, bool* t_silent10KUnit); // RS485_TYPE_MAS_TO_SLV_SCORE_INC_10K
     void sendMAStoSLVScoreQuery();                                 // RS485_TYPE_MAS_TO_SLV_SCORE_QUERY
     void sendSLVtoMASScoreReport(const int t_score);               // RS485_TYPE_SLV_TO_MAS_SCORE_REPORT (score 0..999 in 10Ks)
     void getSLVtoMASScoreReport(int* t_score);                     // RS485_TYPE_SLV_TO_MAS_SCORE_REPORT
