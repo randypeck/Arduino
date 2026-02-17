@@ -201,5 +201,5 @@ int audioRandomInt(int maxExclusive) {
   if (maxExclusive <= 0) {
     return 0;
   }
-  return (int)(millis() % (unsigned long)maxExclusive);
+  return random(maxExclusive);
 }

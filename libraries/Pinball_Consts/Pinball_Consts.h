@@ -1,4 +1,4 @@
-// PINBALL_CONSTS.H Rev: 02/04/26b.
+// PINBALL_CONSTS.H Rev: 02/15/26.
 
 #ifndef PINBALL_CONSTS_H
 #define PINBALL_CONSTS_H
@@ -15,12 +15,10 @@
 // ball tray release, ball trough release.
 // Coils that are both momentary and when PWM not needed: for full-strength momentary MOSFET-on, use any digital output: knocker,
 // selection unit, relay reset unit.
- 
+
 // *** ARDUINO DEVICE CONSTANTS: Here are all the different Arduinos and their "addresses" (ID numbers) for communication.
-const byte ARDUINO_NUL =  0;              // Use this to initialize etc.
 const byte ARDUINO_MAS =  1;              // Master Arduino (Main controller)
 const byte ARDUINO_SLV =  2;              // Slave Arduino
-const byte ARDUINO_ALL = 99;              // Master broadcasting to all i.e. mode change
 
 // *** GAME STYLES (player selection at game start) ***
 const byte STYLE_NONE      = 0;
@@ -37,6 +35,13 @@ const byte PHASE_GAME_OVER    = 4;
 const byte PHASE_TILT         = 5;
 const byte PHASE_DIAGNOSTIC   = 6;
 const byte PHASE_BALL_SEARCH  = 7;
+
+// *** DRAIN TYPE CONSTANTS (used when updatePhaseBallInPlay() is implemented) ***
+const byte DRAIN_TYPE_NONE           = 0;
+const byte DRAIN_TYPE_LEFT           = 1;
+const byte DRAIN_TYPE_CENTER         = 2;
+const byte DRAIN_TYPE_RIGHT          = 3;
+const byte DRAIN_TYPE_GOBBLE         = 4;
 
 // *** ENHANCED GAME MODES (game-within-a-game) ***
 const byte MODE_NONE        = 0;
@@ -74,7 +79,7 @@ const byte RS845_PAYLOAD_OFFSET =  4;        // fifth byte of message is the fir
 // Here is a list of all RS485 message types (the 1-byte TYPE field):
 const byte RS485_TYPE_NO_MESSAGE                    =  0;  // No message.
 const byte RS485_TYPE_MAS_TO_SLV_COMMAND_RESET      =  2;  // Software reset.
-// MODE_ORIGINAL/ENHANCED/IMPULSE starts new game; tilt off, GI on, revert score, but does not deduct a credit.
+// STYLE_ORIGINAL/ENHANCED/IMPULSE starts new game; tilt off, GI on, revert score, but does not deduct a credit.
 const byte RS485_TYPE_MAS_TO_SLV_CREDIT_STATUS      =  3;  // Request if credits > zero
 const byte RS485_TYPE_SLV_TO_MAS_CREDIT_STATUS      =  4;  // Slave response to credit status request: credits zero or > zero
 const byte RS485_TYPE_MAS_TO_SLV_CREDIT_FULL_QUERY  =  5;  // Master requesting if credit unit full
@@ -128,23 +133,11 @@ const byte PIN_OUT_RS485_TX_ENABLE     = 22;  // Output: set HIGH when in RS485 
 //const byte PIN_OUT_RS485_TX_LED        =  5;  // Output: set HIGH to turn on BLUE LED when RS485 is TRANSMITTING data
 //const byte PIN_OUT_RS485_RX_LED        =  6;  // Output: set HIGH to turn on YELLOW when RS485 is RECEIVING data
 
-// *** MISC HARDWARE CONNECTION PINS ***
-//const byte PIN_OUT_SPEAKER             =  7;  // Output: Piezo buzzer connects positive here
-//const byte PIN_IN_WAV_STATUS           = 10;  // Input: LOW when OCC WAV Trigger track is playing, else HIGH.
-//const byte PIN_IO_FRAM_CS              = 53;  // Output: FRAM  chip select.
-
 const byte PIN_OUT_LED                 = 13;  // Built-in LED always pin 13
 
 // SLAVE ARDUINO HEAD DIRECT INPUT PIN NUMBERS (Switches):
 const byte PIN_IN_SWITCH_CREDIT_EMPTY       =  2;  // Input : Credit wheel "Empty" switch.  Pulled LOW when empty.
 const byte PIN_IN_SWITCH_CREDIT_FULL        =  3;  // Input : Credit wheel "Full" switch.  Pulled LOW when full.
-
-// Start button tap detection states
-const byte START_TAP_IDLE      = 0;  // No detection in progress
-const byte START_TAP_WAITING   = 1;  // Waiting for possible 2nd tap (within 500ms)
-const byte START_TAP_ORIGINAL  = 2;  // Original style selected (500ms expired, no 2nd tap)
-const byte START_TAP_ENHANCED  = 3;  // Enhanced style selected (2nd tap within 500ms)
-const byte START_TAP_IMPULSE   = 4;  // Impulse style (2nd tap after 500ms, before first point)
 
 // Tsunami WAV Trigger settings incl. default values for out-of-range EEPROM reads
 const int8_t TSUNAMI_GAIN_DB_DEFAULT    = -10;  // Master volume default
@@ -199,6 +192,65 @@ const int EEPROM_ADDR_ENHANCED_REPLAY_2       = 52;  // Replay threshold 2
 const int EEPROM_ADDR_ENHANCED_REPLAY_3       = 54;  // Replay threshold 3
 const int EEPROM_ADDR_ENHANCED_REPLAY_4       = 56;  // Replay threshold 4
 const int EEPROM_ADDR_ENHANCED_REPLAY_5       = 58;  // Replay threshold 5
+
+// ************************************************************************
+// ****************** HARDWARE PARAMETER STRUCTURES ***********************
+// ************************************************************************
+// Shared struct definitions used by Screamo_Master.ino and library code
+// (e.g. Pinball_Diagnostics). Defining them here avoids fragile 'extern struct'
+// redeclarations in library .cpp files.
+
+// ***** LAMP PARAMETERS *****
+struct LampParmStruct {
+  byte pinNum;       // Centipede pin number for this lamp (0..63)
+  byte groupNum;     // Group number for this lamp (LAMP_GROUP_*)
+};
+
+// ***** SWITCH PARAMETERS *****
+struct SwitchParmStruct {
+  byte pinNum;       // Centipede #2 pin number for this switch (64..127)
+};
+
+// ***** DEVICE (COIL/MOTOR) PARAMETERS *****
+struct DeviceParmStruct {
+  byte   pinNum;        // Arduino pin number for this coil/motor
+  byte   powerInitial;  // 0..255 PWM power level when first energized
+  byte   timeOn;        // Number of 10ms loop ticks (NOT raw ms). 4 => ~40ms.
+  byte   powerHold;     // 0..255 PWM power level to hold after initial timeOn; 0 = turn off after timeOn
+  int8_t countdown;     // Current countdown in 10ms ticks; -1..-8 = rest period, 0 = idle, >0 = active
+  byte   queueCount;    // Number of pending activation requests while coil busy/resting
+};
+
+// ***** GAME STATE *****
+struct GameStateStruct {
+  byte numPlayers;           // 1-4 (Enhanced) or 1 (Original/Impulse)
+  byte currentPlayer;        // 1-4 (1-indexed for display)
+  byte currentBall;          // 1-5 (1-indexed for display)
+  unsigned int score[1];     // 0..999 per player (in 10K units, so 999 = 9,990,000)
+  byte tiltWarnings;         // 0-2 warnings before tilt (per ball)
+  bool tilted;               // True if current ball has tilted
+  bool hasHitSwitch;            // True if player scored this ball (gates ball count logic)
+  bool ballTrayOpen;         // Is Ball Tray currently open?
+};
+
+// ***** GAME-WITHIN-A-GAME MODE STATE *****
+struct ModeStateStruct {
+  bool active;               // True if currently in a timed mode
+  byte currentMode;          // MODE_NONE, MODE_BUMPER_CARS, MODE_ROLL_A_BALL, MODE_GOBBLE_HOLE
+  byte modeCount;            // Modes played this game (0-3, max MAX_MODES_PER_GAME)
+  unsigned long timerStartMs;
+  unsigned long timerDurationMs;
+  bool timerPaused;
+  unsigned long pausedTimeRemainingMs;
+  bool reminderPlayed;
+  bool hurryUpPlayed;
+  byte modeProgress;         // BUMPER_CARS: next expected letter (0-6); GOBBLE_HOLE: hits (0-5)
+};
+
+// ***** BALL SAVE STATE *****
+struct BallSaveStruct {
+  unsigned long endMs;       // When ball save expires (0 = not active)
+};
 
 // ********************************
 // ***** AUDIO TRACK CONSTANTS ****
@@ -460,7 +512,6 @@ const byte NUM_SWITCHES_MASTER          = 40;
 const byte NUM_SWITCHES_SLAVE           =  2;
 
 // Define array index constants - this list is rather arbitrary and doesn't relate to device number/pin numbers:
-// Flipper buttons are direct-wired to Arduino pins for faster response, so not included here.
 // CABINET SWITCHES:
 const byte SWITCH_IDX_START_BUTTON         =  0;
 const byte SWITCH_IDX_DIAG_1               =  1;  // Back
@@ -505,6 +556,5 @@ const byte SWITCH_IDX_DRAIN_RIGHT          = 37;  // Right drain switch index in
 // Flipper buttons now arrive via Centipede inputs (entries at the end of switchParm[]).
 const byte SWITCH_IDX_FLIPPER_LEFT_BUTTON  = 38;
 const byte SWITCH_IDX_FLIPPER_RIGHT_BUTTON = 39;
-const byte NUM_SWITCHES = 40;
 
 #endif

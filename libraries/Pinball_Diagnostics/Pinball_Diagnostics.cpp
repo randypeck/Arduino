@@ -1,44 +1,14 @@
-// PINBALL_DIAGNOSTICS.CPP Rev: 01/21/26.
+// PINBALL_DIAGNOSTICS.CPP Rev: 02/15/26.
 // Implementation of diagnostic test suites and EEPROM settings management
 
 #include "Pinball_Diagnostics.h"
 
-// External references to arrays defined in Screamo_Master.ino
-extern struct LampParmStruct {
-  byte pinNum;
-  byte groupNum;
-  bool stateOn;
-} lampParm[];
-
-extern struct SwitchParmStruct {
-  byte pinNum;
-  byte loopConst;
-  byte loopCount;
-} switchParm[];
-
-extern struct DeviceParmStruct {
-  byte pinNum;
-  byte powerInitial;
-  byte timeOn;
-  byte powerHold;
-  int8_t countdown;
-  byte queueCount;
-} deviceParm[];
-
-extern const byte NUM_LAMPS_MASTER;
-extern const byte NUM_SWITCHES_MASTER;
-extern const byte NUM_DEVS_MASTER;
-extern const byte MOTOR_SHAKER_POWER_MIN;
-extern const byte DEV_IDX_MOTOR_SHAKER;
-extern const byte DEV_IDX_MOTOR_SCORE;
-
-extern const byte LAMP_IDX_S;
-extern const byte LAMP_IDX_O;
-extern const byte LAMP_GROUP_GI;
-extern const byte LAMP_GROUP_BUMPER;
-
-extern const byte SWITCH_IDX_DIAG_1;
-extern const byte SWITCH_IDX_DIAG_4;
+// External references to arrays defined in Screamo_Master.ino.
+// The struct types (LampParmStruct, SwitchParmStruct, DeviceParmStruct) are now
+// defined in Pinball_Consts.h, so we only need to declare the arrays extern here.
+extern LampParmStruct lampParm[];
+extern SwitchParmStruct switchParm[];
+extern DeviceParmStruct deviceParm[];
 
 extern const char* const settingsCategoryNames[];
 extern const char* const gameSettingNames[];

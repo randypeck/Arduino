@@ -5,6 +5,7 @@ Welcome to the Screamo project. This document defines mandatory contribution sta
 
 ## Coding Standards
 - I much prefer simple and easy-to-understand code over optimized code, or code that uses more advanced C++ features.  Try to keep things as close to C as possible, while still using C++ features where they make sense.
+- It's definitely okay to use C++ classes and objects where they make sense, but try to keep the interface simple and straightforward, and avoid complex patterns or abstractions that make the code harder to read or understand.
 - Language Level: C++14.
 - Target Platform: Arduino Mega (and related hardware modules).
 - File Encoding: UTF-8, but restrict actual characters used to 7-bit ASCII only (no Unicode punctuation or symbols). Use straight single and double quotes (\' and \") and plain ASCII hyphen (-). Do not use smart quotes, en/em dashes, ellipses, or other Unicode punctuation in source files or comments.
