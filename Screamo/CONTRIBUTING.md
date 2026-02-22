@@ -69,6 +69,7 @@ Welcome to the Screamo project. This document defines mandatory contribution sta
   - Add new comments when introducing functionality that might not be immediately obvious.
   - Use ASCII characters only; do not insert smart quotes, en/em dashes, approximate symbols, or other Unicode glyphs in source comments.
 - Testing: Describe any hardware dependencies or assumptions when submitting changes.
+- Regression Vigilance: Every time you suggest code changes or additions, review the full change set to verify no new bugs are introduced. Trace all affected code paths -- including edge cases, phase transitions, and timer/flag state -- before finalizing a suggestion.
 
 ## Project Practices
 - Keep behavior changes focused and well-documented in commit messages.

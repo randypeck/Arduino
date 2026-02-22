@@ -1,4 +1,4 @@
-// Screamo_Slave.INO Rev: 02/04/26
+// Screamo_Slave.INO Rev: 02/20/26
 // 11/12/25: Increased Credit Down power to 150 for more reliable credit removal.
 // 12/28/25: Updated SCORE_INC_10K and SCORE_RESET to remain silent (no bells or 10K unit) in Enhanced style.
 // 01/19/26: Updated SCORE_INC_10K message to include silent parm
@@ -38,17 +38,6 @@ char lcdString[LCD_WIDTH + 1] = "SLAVE 02/04/26";  // Global array holds 20-char
 // spaced 147ms apart (882ms / 6 steps = 147ms per step) plus a "rest" period of 147ms.  It can then repeat this for an
 // additional five advances (plus one rest) if needed.
 
-// Need code to save and recall previous score when machine was turned off or last game ended, so we can display it on power-up.
-//   Maybe automatically save current score every x times through the 10ms loop; i.e. every 15 or 30 seconds.  Or just at game-over.
-
-// Need code to realistically reset score from previous score back to zero: advancing the 10K unit and "resetting" the 100K unit.
-//   startNewGame() should do this automatically.
-
-// Need to update 10K and 100K scoring for realistic timing and to match score motor.
-//   SCORE_BATCH_GAP_MS not being used.
-//   Write Master code to activate score motor when score update commands are sent from Master.
-//   May need function(s) to estimate time needed to update score, so Master can time score motor activation appropriately.
-
 // *** SERIAL LCD DISPLAY CLASS ***
 Pinball_LCD* pLCD2004 = nullptr;  // pLCD2004 is #included in Pinball_Functions.h, so it's effectively a global variable;
 
@@ -62,14 +51,14 @@ Pinball_Message* pMessage = nullptr;
 Pinball_Centipede* pShiftRegister = nullptr;  // Only need ONE object for one or two Centipede boards (SNS only has ONE Centipede.)
 
 // Define struct to store coil/motor power and time parameters.  Coils that may be held on include a hold strength parameter.
-struct DeviceParmStruct {
+/* struct DeviceParmStruct {
   byte   pinNum;        // Arduino pin number for this coil/motor
   byte   powerInitial;  // 0..255 PWM power level when first energized
   byte   timeOn;        // Number of 10ms loop ticks (NOT raw ms). 4 => ~40ms.
   byte   powerHold;     // 0..255 PWM power level to hold after initial timeOn; 0 = turn off after timeOn
   int8_t countdown;     // Current countdown in 10ms ticks; -1..-8 = rest period, 0 = idle, >0 = active
   byte   queueCount;    // Number of pending activation requests while coil busy/resting
-};
+}; */
 
 // *** CREATE AN ARRAY OF DeviceParm STRUCT FOR ALL COILS AND MOTORS ***
 const byte DEV_IDX_CREDIT_UP         =  0;
@@ -208,6 +197,7 @@ bool flashShowOn = false;           // current visible state (true => show flash
 unsigned long flashLastToggleMs = 0;
 const unsigned FLASH_RATE_MS = 250; // 250ms half-period => 2 Hz blink
 int lastDisplayedScore = -1;        // replaced displayScore's static cache (global so we can reset it)
+bool creditFullNotifyPending = false;  // Set by updateDeviceTimers when credit-full discard happens
 
 // *****************************************************************************************
 // **************************************  S E T U P  **************************************
@@ -276,18 +266,19 @@ void loop() {
   if (now - lastLoopTime < SCREAMO_SLAVE_TICK_MS) return;
   lastLoopTime = now;
 
-  // Check for RS485 communication errors
+  // Drain ALL pending RS-485 messages (not just one per tick).
+  // Master can send multiple messages within a single 10ms window,
+  // so processing only one per tick allows the 64-byte serial buffer
+  // to gradually fill up and eventually overflow.
   byte incomingMsg = pMessage->available();
-  if (incomingMsg >= RS485_ERROR_BEGIN) {  // Error code range
-    handleError(incomingMsg);
-    return;  // Stop processing
-  }
+  while (incomingMsg != RS485_TYPE_NO_MESSAGE) {
+    if (incomingMsg >= RS485_ERROR_BEGIN) {
+      handleError(incomingMsg);
+      return;
+    }
 
-  // Drain RS-485 messages. If flashing, any incoming message should stop flashing FIRST.
-  if (incomingMsg != RS485_TYPE_NO_MESSAGE) {
-    // If we're flashing and message is NOT another flash-start, stop flashing and prepare display state.
+    // If we're flashing and message is NOT another flash-start, stop flashing FIRST.
     if (flashActive && incomingMsg != RS485_TYPE_MAS_TO_SLV_SCORE_FLASH) {
-      // Per requirement: if incoming is NOT score-related, set score to zero before processing.
       if (incomingMsg != RS485_TYPE_MAS_TO_SLV_SCORE_ABS &&
         incomingMsg != RS485_TYPE_MAS_TO_SLV_SCORE_INC_10K &&
         incomingMsg != RS485_TYPE_MAS_TO_SLV_SCORE_RESET &&
@@ -299,6 +290,9 @@ void loop() {
       stopFlashScore();
     }
     processMessage(incomingMsg);
+
+    // Check for next message
+    incomingMsg = pMessage->available();
   }
 
   // Advance per-device timers first so device state (countdown/rest) reflects this tick
@@ -312,6 +306,12 @@ void loop() {
   // up-to-date device cooldown/rest state.
   processScoreAdjust();
   processScoreReset();
+
+  // Deferred RS485 notifications (avoid blocking sends inside device timer loop)
+  if (creditFullNotifyPending) {
+    creditFullNotifyPending = false;
+    pMessage->sendSLVtoMASCreditStatus(hasCredits());
+  }
 
   // If flash active, toggle lamps at the requested rate (non-blocking).
   if (flashActive) {
@@ -641,7 +641,7 @@ void updateDeviceTimers() {
           // Credit add blocked (already full) -> discard queued adds and notify Master.
           sprintf(lcdString, "Credit FULL %u", deviceParm[i].queueCount); pLCD2004->println(lcdString);
           deviceParm[i].queueCount = 0;
-          pMessage->sendSLVtoMASCreditStatus(hasCredits());
+          creditFullNotifyPending = true;  // Defer RS485 send to top of loop
         }
       }
       continue;
@@ -654,10 +654,10 @@ void updateDeviceTimers() {
         analogWrite(deviceParm[i].pinNum, deviceParm[i].powerInitial);
         deviceParm[i].countdown = deviceParm[i].timeOn;
       } else if (i == DEV_IDX_CREDIT_UP) {
-        // Discard queued adds if wheel is full while idle.
+        // Credit add blocked (already full) -> discard queued adds and notify Master.
         sprintf(lcdString, "Credit FULL %u", deviceParm[i].queueCount); pLCD2004->println(lcdString);
         deviceParm[i].queueCount = 0;
-        pMessage->sendSLVtoMASCreditStatus(hasCredits());
+        creditFullNotifyPending = true;  // Defer RS485 send to top of loop
       }
     }
   }

@@ -152,7 +152,7 @@ Understanding how the ball moves through the machine is critical for game logic:
 
 1. **Playfield**: Where the ball is in play. Balls can drain from the playfield only two ways:
    - Via one of the three bottom Drain Rollovers (left, center, right; each of which has a rollover switch that closes whenever a ball drains over it).
-   - Via the Gobble Hole (a hole near the center of the playfield; this hole also has a switch that closes whenever a ball drains through it).
+   - Via the Gobble Hole (a hole near the center of the playfield containing a hinged flap that the ball strikes as it falls through; the flap activates a leaf switch, and the ball continues down into the Ball Trough -- the ball does not remain in the hole). See Section 3.7.1 for switch details.
 
 2. **Ball Tray**: A collection area at the very bottom of the playfield that catches balls draining via the three bottom Drain Rollovers (left, center, right) but NOT balls draining via the Gobble Hole. The Ball Tray holds balls until the Ball Tray Release coil is fired, which opens the tray and allows balls to drop into the Ball Trough below.
 
@@ -294,6 +294,56 @@ The Ball Tray holds balls that have drained via the three bottom rollovers (left
 - No need to time tray open/close cycles around drain events
 - The Ball Tray Release solenoid hold power (40 PWM) is safe for extended operation
 
+### 3.7 Playfield Switch Types and Debounce Characteristics
+
+All switches in the game use leaf switches (two metal leaves that make contact when pressed together). The difference between switch types is how the ball (or player) activates the leaf switch. Understanding these activation mechanisms is important because it affects how much contact bounce each switch type produces, which in turn affects debounce requirements.
+
+#### 3.7.1 Switch Activation Mechanisms
+
+**Rollover switches** (3 drain rollovers, 4 hat rollovers):
+- **Drain rollovers** (left, center, right): A wire protrudes above the playfield surface. When the ball rolls over the wire, the wire presses down on a pair of leaf switch contacts. The ball rolls smoothly over the wire, producing clean contact with minimal bounce.
+- **Hat rollovers** (4 switches in hat lanes): A T-shaped plastic piece sits roughly level with the playfield surface. The flat top of the T is what the ball rolls over. The vertical base of the T drops through the playfield and is attached to one leaf of a leaf switch, so the ball's weight pressing down on the hat top pushes the leaves together. Similar to drain rollovers, the ball rolls smoothly over the hat, producing clean contact with minimal bounce.
+
+**Bumper switches** (7 bumper switches: S, C, R, E, A, M, O):
+- Each bumper has a plastic ring that the ball strikes. The ring connects to a vertical plastic piece (similar to the base of a hat switch) that presses the leaves of a leaf switch together. For the pop bumper (one of the seven bumpers), the pop bumper coil fires and kicks the ball away immediately on contact. For "dead" bumpers, the ball strikes the ring and bounces away without any coil action.
+
+**Slingshot switches** (2 switches, each wired as a parallel pair):
+- Vertical leaf switches positioned behind rubber rings on the playfield. The ball bounces against the rubber, which flexes and presses against one leaf of the vertical leaf switch, closing the contacts.
+
+**Side target switches** (9 switches: 4 left side, 5 right side):
+- Same mechanism as slingshots: vertical leaf switches behind rubber. The ball strikes the rubber, which presses a leaf to close the contacts.
+
+**Kickout switches** (2 switches: left and right kickout holes):
+- Leaf switches inside each kickout hole. When a ball lands in the hole, it presses the leaves together, closing the switch. The switch remains closed as long as the ball is in the hole. When the kickout solenoid ejects the ball, the leaves separate and the switch opens.
+
+**Gobble hole switch** (1 switch):
+- A leaf switch activated by a hinged flap inside the gobble hole. When a ball enters the hole, it strikes the flap as it falls through. The flap is attached to a wire that presses the leaf switch contacts together, similar to how a rollover wire works. The key difference is that after the ball falls past the flap, the flap snaps back to its resting position under spring tension. This snap-back likely produces additional mechanical bounce on the leaf switch contacts compared to a smooth rollover, because the flap slaps shut rather than being gently released. The ball does NOT remain in the gobble hole -- it falls through to the Ball Trough below (see Section 3.4).
+
+**Cabinet buttons**:
+- **Flipper buttons** (2): T-shaped plastic buttons on the sides of the cabinet. The player presses the top of the T, and the vertical base pushes a pair of leaf switch contacts together, similar to how hat switches work.
+- **Start button, knockoff button, diagnostic buttons**: Various pushbutton mechanisms NOT affected by ball action.
+
+**Management switches** (not playfield scoring switches):
+- **Coin mechanism switch**: Microswitch; detects coin insertions. Activated by a coin rolling over a wire, which closes the contacts for a brief moment.
+- **Ball-in-lift switch**: Microswitch; detects a ball resting at the base of the Ball Lift. Sustained contact while ball is present.
+- **5-balls-in-trough switch**: Microswitch; detects all five balls in the trough. Sustained contact (with transient considerations per Section 3.4).
+- **Tilt bob**: Pendulum switch. Intermittent, unpredictable contact pattern.
+
+#### 3.7.2 Debounce Approach
+
+All switches use the same debounce mechanism (`SWITCH_DEBOUNCE_TICKS`, currently 5 ticks = 50ms). When a closing edge is detected, the debounce counter is set and both edge detection AND last-state tracking are frozen for the debounce period. This prevents a switch that bounces open and back closed during the debounce window from generating a second false closing edge.
+
+This uniform debounce is sufficient for all switch types, including the gobble hole's flap snap-back, because the debounce freezes `switchLastState` rather than tracking the physical switch state during the suppression window. See `updateAllSwitchStates()` in `Screamo_Master.ino` for the implementation.
+
+#### 3.7.3 Drain Switches: Identical Treatment
+
+All four drain paths (left rollover, center rollover, right rollover, gobble hole) are treated identically in software. They are all drain events that:
+- Count as scoring events (for `hasHitSwitch` and ball save timer purposes).
+- Trigger `handleBallDrain()` with a drain type code for future scoring differentiation based on playfield lamp state.
+- Use the same debounce (`SWITCH_DEBOUNCE_TICKS`).
+
+The only physical difference relevant to software is that balls draining via the gobble hole bypass the Ball Tray and go directly to the Ball Trough (see Section 3.4), while balls draining via the three bottom rollovers pass through the Ball Tray first. This affects ball flow but not drain detection or ball save logic.
+
 ---
 
 ## 4. Game Styles
@@ -409,11 +459,13 @@ T = 400ms: Start pressed (3rd time, within 500ms of 2nd)
              IF no credits: Stay in Attract mode (silent)
 ```
 **Key Points:**
-1. **Credit is confirmed but NOT deducted until AFTER five balls confirmed**
-2. **Zero credits behavior:**
+1. **Original/Impulse: Credit is deducted immediately on the 1st quarter-turn of the Score Motor, before ball recovery is confirmed.**
+   - This matches the original EM behavior.
+2. **Enhanced: Credit is not deducted until after five balls are confirmed in trough.**
+3. **Zero credits behavior:**
    - Original/Impulse: Silent, stay in Attract mode
    - Enhanced: Aoooga horn + random rejection announcement, then Attract mode
-3. **No audio until style is determined:**
+4. **No audio until style is determined:**
    - Keeps Enhanced/Impulse styles hidden from casual players
    - Original/Impulse: Only mechanical EM sounds
    - Enhanced: SCREAM sound effect on game start
@@ -670,18 +722,35 @@ Motor-paced batches:
   - Repeat full cycle(s) as needed.
   - We do NOT finish a remaining single 10K or 100K via a non-motor single pulse; all increments are done via full motor cycles.
 
-### 5.3 Game Start / Relay Reset Timing
+### 5.3 Game Start / Relay Reset Timing (Original/Impulse Only)
 
-- Starting a new game (Original/Impulse only):
-  - Requires one 1/4 revolution for preliminaries:
-    - Slot 1: Fire Relay Reset Bank.
-    - Slot 2: Deduct a credit.
-    - Slot 3: Open the Ball Tray.
-    - Slot 4: Fire Relay Reset Bank again.
-    - Slot 5: Release the 1M/100K rapid reset.
-  - Then one or two additional 1/4 revolutions for tens (0K to 90K) of score reset.
-    - If the 10K Unit is already at zero, the Score Motor still runs for two full 1/4 revolutions (10 score steps) to walk the 10K unit back up to zero.
-- During game play, firing the Relay Reset Bank consumes a full 1/4 revolution (6 slots, 882 ms).
+Starting a new game requires the Score Motor to run for the entire startup sequence. The credit is deducted immediately on the first quarter-turn, matching the original EM behavior. Ball recovery begins concurrently.
+
+**1st quarter-turn (882ms, 6 sub-slots of 147ms each):**
+- Slot 1: Fire Relay Reset Bank (1st firing).
+- Slot 2: Deduct a credit (Master sends CreditDec to Slave).
+- Slot 3: Open the Ball Tray via 'DEV_IDX_BALL_TRAY_RELEASE'.
+- Slot 4: Fire Relay Reset Bank (2nd firing). The original game had two separate relay reset banks; we simulate this by firing our single bank twice, separated by two sub-slots (294ms) to allow the coil to fully release before re-firing.
+- Slots 5-6: Rest.
+
+**2nd quarter-turn (882ms):**
+- At the very beginning: Slave simultaneously begins the 100K/1M rapid reset AND the 10K step-up. These happen in parallel because the 100K/1M reset is purely lamp changes (no mechanical devices), while the 10K step-up uses the 10K Unit coil and bells.
+
+**3rd and possibly 4th quarter-turns:**
+- Slave finishes the 10K step-up (up to 10 steps total = 2 motor cycles).
+- The 10K Unit always advances all the way around back to zero, even if it is already at zero (10 steps).
+
+**Ball recovery begins concurrently with the 1st quarter-turn:**
+- Master opens the Ball Tray (Slot 3 above) and begins monitoring for 5 balls in trough.
+- Kickouts are ejected if occupied.
+- Ball recovery and the Score Motor startup sequence run in parallel.
+- If 5 balls are not found within BALL_RECOVERY_TIMEOUT_MS, Master enters PHASE_BALL_SEARCH (Score Motor has already stopped by then).
+
+**Credit deduction timing:**
+- The credit is deducted on the 1st quarter-turn (Slot 2), before ball recovery is confirmed. This matches the original EM behavior where the credit was consumed immediately upon pressing Start. Since this is a hobby machine, the risk of losing a credit due to a stuck ball is acceptable and the sequence feels more authentic.
+
+**Score Motor duration:**
+- Master always runs the Score Motor for 4 quarter-turns (3528ms) regardless of the starting score. Running it longer than necessary is harmless; it just makes the motor sound for a bit extra.
 
 ### 5.4 Score Motor Usage Summary
 
@@ -1478,67 +1547,73 @@ After style is determined, check credits:
 - **Enhanced with no credits**: Play Aoooga horn + rejection announcement, return to Attract.
 - **Credits available**: Proceed to ball recovery (Section 12.2).
 
-### 12.2 Pre-Start Ball Recovery (All Game Modes)
+### 12.2 Pre-Start Ball Recovery (All Game Styles)
 
-**Critical Requirement:** Before any game can begin, **all five balls must be detected in the ball trough** ('SWITCH_IDX_5_BALLS_IN_TROUGH' switch closed).
+**Original/Impulse Style:**
+Ball recovery runs concurrently with the startup sequence (Section 5.3). The credit is deducted immediately during the 1st quarter-turn of the Score Motor, and the Ball Tray is opened during the same quarter-turn. Ball recovery monitoring begins at that point.
 
-Upon entering ball recovery:
-- Pop bumper, flippers, and slingshots are disabled.
-- If a ball is detected in either side kickout, it is ejected immediately.
+**Enhanced Style:**
+Ball recovery still requires all five balls to be confirmed in the trough BEFORE the credit is deducted and the game-start fanfare plays. Enhanced style does not use the Score Motor or Relay Reset Bank, so there is no 1/4-turn timing to coordinate with. The existing behavior (wait for 5 balls, then deduct credit) is correct for Enhanced style.
 
-**Ball Recovery Behavior:**
-
-1. **Open Ball Tray** (to allow any balls in the tray to drop into the trough)
-2. **Eject any balls from kickout holes** (if switch indicates ball present)
-3. **Check if a ball is at the Ball Lift base**:
-   - If CLOSED (ball present): In Enhanced Style, immediately play "Press the ball lift rod..." instruction; in Original/Impulse Style, wait silently.
-4. **Wait for the 5-balls-in-trough switch to close**:
-   - Wait up to BALL_SEARCH_TIMEOUT_MS seconds with stability check (switch must stay closed for 1 second).
-   - Continue ejecting kickouts during entire wait period.
-5. **If 5 balls are NOT detected within BALL_SEARCH_TIMEOUT_MS seconds total**: Enter PHASE_BALL_SEARCH.
-6. **Once 5 balls are detected and stable**: Proceed with Style-specific startup sequence.
-
-**Note:** No credit is deducted until the game actually starts (after 5 balls are confirmed). This protects the player from losing a credit due to stuck balls.
+**Ball Recovery Behavior (both styles):**
+1. Open Ball Tray (so any balls in the tray drop into the trough).
+2. Eject any balls from kickout holes (if switch indicates ball present).
+3. Wait for the 5-balls-in-trough switch to close with stability check.
+4. If not detected within BALL_RECOVERY_TIMEOUT_MS: Enter PHASE_BALL_SEARCH.
+5. Once 5 balls are detected and stable: Proceed with ball dispensing.
 
 ### 12.3 Original/Impulse Style Start Sequence
 
-**Once 5 balls are confirmed and credits available:**
+**Once credits are confirmed available (style already determined):**
 
-- **Startup sequence** (with Score Motor timing per Section 5.3):
-  - Turn on Score Motor.
-  - Deduct one credit (Motor cycle 1, Slot 1).
-  - Fire the Relay Reset Bank coil (Slot 2).
-  - Open the Ball Tray via 'DEV_IDX_BALL_TRAY_RELEASE' (Slot 3) - **Ball Tray stays open until first point scored**.
-  - Fire the Relay Reset Bank coil again (Slot 4).
-  - Release the 1M/100K rapid reset (Slot 5) (Handled by Slave).
-  - Reset 10K score to zero via Score Motor timing (Motor cycles 2 and possibly 3) (Handled by Slave).
-  - Turn off Score Motor (after score reset complete).
+The startup sequence and ball recovery run concurrently. The Score Motor begins immediately and the credit is deducted during the first quarter-turn, matching original EM behavior.
 
-- **First ball dispensing**:
-  - Check 'SWITCH_IDX_BALL_IN_LIFT':
-    - If CLOSED: Throw critical error (should never happen with Ball 1).
-    - If OPEN: Fire 'DEV_IDX_BALL_TROUGH_RELEASE' to dispense one ball.
+**Startup sequence (Score Motor timing per Section 5.3):**
+1. Turn on Score Motor SSR.
+2. Begin 1st quarter-turn:
+   - Slot 1 (0ms): Fire Relay Reset Bank.
+   - Slot 2 (147ms): Deduct one credit (send CreditDec to Slave).
+   - Slot 3 (294ms): Open Ball Tray via 'DEV_IDX_BALL_TRAY_RELEASE'. Ball Tray stays open until first point scored.
+   - Slot 4 (441ms): Fire Relay Reset Bank again.
+   - Slots 5-6: Rest.
+3. Send score reset command to Slave (which begins 100K/1M rapid reset + 10K step-up on 2nd quarter-turn).
+4. Score Motor runs for another ~2646ms total (3 more quarter-turns), for a TOTAL running time of ~3528ms (4 quarter-turns).
+5. Turn off Score Motor SSR.
+
+**Ball recovery runs concurrently:**
+- Begins when Ball Tray opens (Slot 3 of 1st quarter-turn).
+- Monitor for 5-balls-in-trough switch with stability check.
+- Continue ejecting kickouts if occupied.
+- If 5 balls not found within BALL_RECOVERY_TIMEOUT_MS: Enter PHASE_BALL_SEARCH.
+
+**Once ball recovery confirms 5 balls AND Score Motor has finished:**
+- Ball Tray remains open (it stays open until first point scored per Section 3.6.2).
+- Dispense first ball:
+  - Check 'SWITCH_IDX_BALL_IN_LIFT': If CLOSED, throw critical error. If OPEN, fire 'DEV_IDX_BALL_TROUGH_RELEASE'.
   - Wait for 'SWITCH_IDX_BALL_IN_LIFT' to close (3 second timeout).
-  - If switch doesn't close: Throw critical error.
-
-- **Enable gameplay devices**: Pop bumper, flipper, side kickout, and slingshot solenoids now respond to corresponding switch closures.
-
-- **Transition to PHASE_BALL_READY**.
+  - If timeout: Throw critical error.
+- Enable gameplay devices (flippers, pop bumper, slingshots, kickouts).
+- Transition to PHASE_BALL_READY.
 
 ### 12.4 Enhanced Style Start Sequence
 
-**Once 5 balls are confirmed and credits available:**
+**Once double-tap is confirmed and credits are available:**
 
-Enhanced style uses a **silent score reset** - no Score Motor, Relay Reset Bank, Selection Unit, 10K Unit, or bells during startup.
+Enhanced style deducts the credit and begins audio immediately upon confirming credits, before ball recovery. This provides instant feedback to the player and simplifies the flow. If ball search times out, the credit is already consumed (acceptable for a hobby machine).
 
-**Immediate actions:**
+**Immediate actions (in processStartButton, before PHASE_STARTUP):**
 1. Deduct one credit (send command to Slave).
 2. Play SCREAM sound effect (immediate, for shock value).
-3. Wait approximately 2500ms.
-4. Play "Hey gang, let's ride the Screamo!" announcement.
-5. Send silent score reset command to Slave (Slave resets lamps immediately, no mechanical sounds).
-6. Open Ball Tray - **stays open for entire game**.
-7. Enable flippers, pop bumper, side kickouts, and slingshots.
+
+**PHASE_STARTUP begins:**
+3. Play "Hey gang, let's ride the Screamo!" announcement (plays during ball recovery).
+4. Open Ball Tray - **stays open for entire game**.
+5. Begin ball recovery (same as all styles: wait for 5-balls-in-trough with stability check).
+6. If ball recovery times out: Enter PHASE_BALL_SEARCH.
+
+**Once ball recovery confirms 5 balls:**
+- Ball Tray remains open (Enhanced keeps it open all game per Section 3.6.2).
+- Send silent score reset command to Slave (Slave resets lamps immediately, no mechanical sounds).
 
 **Ball dispensing:**
 1. Check 'SWITCH_IDX_BALL_IN_LIFT':
@@ -1547,6 +1622,9 @@ Enhanced style uses a **silent score reset** - no Score Motor, Relay Reset Bank,
 2. Wait for 'SWITCH_IDX_BALL_IN_LIFT' to close (3 second timeout).
 3. If ball doesn't arrive: Throw critical error.
 4. Transition to 'PHASE_BALL_READY'.
+
+**Hill climb/shaker start:**
+- Hill climb audio and shaker motor do NOT start until PHASE_BALL_READY detects the ball-in-lift switch opening (player pushing the Ball Lift Rod). This is handled in updatePhaseBallReady().
 
 ### 12.5 Ball Ready Phase and Ball Launch Detection
 
@@ -1628,7 +1706,7 @@ If a drain switch closes before any other scoring switch has been hit (`hasHitSw
 5.	Ball Save timer is active and has not expired, so ball is saved.
 6.	Replacement ball is dispensed.
 
-No special-case code is needed. The standard Ball Save mechanism handles instant drains naturally because the drain event is both the first scoring event (which starts the timer) and the drain event (which checks the timer). The elapsed time is effectively zero, which is always within the ball save window.
+No special-case code is needed. The standard Ball Save mechanism handles instant drains naturally because the drain event is both the first scoring event (which starts the timer) and the drain event (which checks the timer). The elapsed time is effectively zero, which is always within the ball save window. All four drain switches (three bottom rollovers and gobble hole) are treated identically per Section 3.7.3. The physical switch type differences (rollover vs. drop-through leaf) are handled by the debounce system, not by drain-specific code.
 
 Additional notes for Ball 1 only:
 •	Do NOT call `handleFirstPointScored()` for the hill drop sequence - a drain is not the right trigger for the dramatic drop.
