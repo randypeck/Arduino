@@ -1,5 +1,5 @@
 # 1954 Williams Screamo - Modernized Control System Overview
-Rev: 02/16/26. Revised by RDP and Claude Opus 4.6.
+Rev: 02/23/26. Revised by RDP and Claude Opus 4.6.
 
 ## 1. Introduction
 
@@ -379,10 +379,10 @@ Screamo runs in several styles. Master is style authority and informs Slave via 
   - Musical main theme can be toggled between Calliope/Circus music and Surf Rock (settable in Diagnostics Settings).
   - One of the two themes is used for music during regular Enhanced play, and the other theme music is played during modes and Multiball.
 - Features:
-  - Special game modes and scoring goals (details to be specified separately).
+  - Special game modes and scoring goals. See Sections 14.1-14.12 for complete details.
   - Ball save for first N seconds after the first playfield switch hit on each ball (time defined in Settings) OR if we drain the ball before hitting any playfield switches.
   - Shaker motor triggered on certain events.
-  - Extra voice prompts, music, jackpots, etc. (details to be specified separately).
+  - Extra voice prompts, music, jackpots, etc. See Sections 14.3 and 14.11 for audio details.
 
 ### 4.3 Impulse Style
 
@@ -391,7 +391,7 @@ Screamo runs in several styles. Master is style authority and informs Slave via 
 - Rules identical to Original style except for flipper behavior:
   - Impulse flippers:
     - Pressing either flipper button causes both flippers to fire briefly and immediately drop.
-    - Flippers stay up for 'IMPULSE_FLIPPER_UP_TICKS' (default 10 ticks = 100ms) then drop.
+    - Flippers stay up for 'IMPULSE_FLIPPER_UP_TICKS' (default 5 ticks = 50ms) then drop.
     - Flippers cannot be held up.
     - A new press is required before flippers can be fired again.
 - Intended to exactly reproduce the original 1954 impulse-flipper behavior and gameplay.
@@ -400,7 +400,7 @@ Screamo runs in several styles. Master is style authority and informs Slave via 
 
 **Impulse Flipper Constant:**
 
-  const byte IMPULSE_FLIPPER_UP_TICKS = 10;  // 100ms flipper up time for Impulse style
+  const byte IMPULSE_FLIPPER_UP_TICKS = 5;  // 50ms flipper up time for Impulse style
 
 ### 4.4 Start Button Tap Detection Summary
 
@@ -475,10 +475,16 @@ T = 400ms: Start pressed (3rd time, within 500ms of 2nd)
 - This is safe because style detection completes within 1 second max.
 
 **Start button during gameplay:**
-- **Before first playfield switch hit:** Start presses are ignored.
-- **After first playfield switch hit:**
-  - If credits available: Pressing Start ends the current game and begins tap detection for new game.
-  - If no credits: Start presses are ignored.
+- **Before ball 1's first playfield switch hit:** Start presses are ignored. This window is reserved for future multi-player support (pressing Start to add players before play begins).
+- **Ball 1 after first playfield switch hit, or any ball 2+:** The game is considered "committed." Pressing Start during PHASE_BALL_READY or PHASE_BALL_IN_PLAY ends the current game immediately and the machine returns to Attract mode. No credit check is required -- the player simply wants to stop playing. The player must then press Start again (1/2/3 taps) to begin a new game, which performs the normal credit check.
+- **During PHASE_STARTUP or PHASE_BALL_SEARCH:** Start presses are NOT processed as mid-game restarts (PHASE_BALL_SEARCH has its own Start button handling to replay the "ball missing" announcement).
+
+**Mid-game restart implementation details:**
+- Handled by `processMidGameStart()`, called every tick from `loop()`.
+- The "committed" check uses: `(gameState.currentBall >= 2) || gameState.hasHitSwitch || ball1SequencePlayed`. The first condition covers any ball after ball 1. The second covers ball 1 after its first target hit. The third covers ball-save replacement balls that have not yet hit a target -- `ball1SequencePlayed` is a game-level flag set once ball 1 hits any non-drain target and never reset until `initGameState()`.
+- On teardown: all audio is stopped, shakers are stopped, flippers are released, score is saved to EEPROM, ball tray is closed, score motor is stopped if running, lamps are reset to attract state, and `initGameState()` is called.
+- **Multi-tap suppression:** When the game ends via mid-game Start, the Start button's debounce counter is set to 150 ticks (1500ms). This ensures that any remaining taps from a double-tap or triple-tap gesture are absorbed before Attract mode begins listening for new style detection. Without this, the second tap of a double-tap would be seen in Attract mode as the first tap of a new game, causing an unintended Original-style game to start 500ms later.
+- The game returns to Attract mode (not directly to a new game). The player's next Start press triggers normal `processStartButton()` tap detection.
 
 ### 4.5 Game Over / Attract Mode
 
@@ -523,7 +529,7 @@ Tilting always affects only the CURRENT BALL; it never ends the game prematurely
   - Flippers remain disabled.
 - Exit condition: `ballsInPlay == 0` AND `ballInLift == false`:
   - If `currentBall < 5`: Increment `currentBall`, transition to PHASE_BALL_READY.
-  - If `currentBall == 5`: Transition to PHASE_GAME_OVER.
+  - If `currentBall == 5`: Transition to PHASE_ATTRACT (game over).
 
 **Tilt Recognition Conditions:**
 Tilt bob closures are only processed when `ballsInPlay > 0`. This simplifies logic and avoids edge cases:
@@ -544,7 +550,7 @@ If the player tilts during multiball while `ballInLift == true`:
 
 **Tilt During PHASE_BALL_READY:**
 - If tilt bob closes while in PHASE_BALL_READY (ball in lift, not yet launched):
-  - In Original/Impulse: Full tilt. Ball is forfeited. Increment `currentBall`, transition to PHASE_BALL_READY (or PHASE_GAME_OVER if Ball 5).
+  - In Original/Impulse: Full tilt. Ball is forfeited. Increment `currentBall`, transition to PHASE_BALL_READY (or PHASE_ATTRACT if Ball 5).
   - In Enhanced: First tilt = warning only, stay in PHASE_BALL_READY. Second tilt = full tilt, forfeit ball.
 - The ball in the lift does NOT need to drain (it hasn't been launched). Simply advance to next Ball Number.
 
@@ -618,9 +624,9 @@ Diagnostic mode provides access to hardware testing and game settings. It is ent
 - Covers all COM (voice), SFX, and MUS tracks.
 - BACK stops playback and exits.
 
-#### Settings to Implement (Future)
+#### Settings (Implemented)
 
-The following settings are defined in EEPROM:
+The following settings are defined in EEPROM and adjustable via the Diagnostics Settings suite:
 
 **Game Settings**
 - **THEME**: Select Circus or Surf Rock music as the PRIMARY theme.
@@ -630,7 +636,7 @@ The following settings are defined in EEPROM:
 - **MODE 1-6**: Mode time limits in seconds.
   - EEPROM_ADDR_MODE_1_TIME through EEPROM_ADDR_MODE_6_TIME (addresses 31-36, 3 used and 3 for future use)
 - **GAME TIMEOUT**: Minutes of inactivity before game ends automatically.
-  - EEPROM_ADDR_GAME_TIMEOUT (address 37) (TODO: it's in consts but not in Master code yet)
+  - EEPROM_ADDR_GAME_TIMEOUT (address 37)
 
 **Replay Scores**
 - **ORIG REPLAY 1-5**: Replay scores for Original/Impulse style (0-999, representing 10K increments).
@@ -638,7 +644,7 @@ The following settings are defined in EEPROM:
 - **ENH REPLAY 1-5**: Replay scores for Enhanced style.
   - EEPROM_ADDR_ENHANCED_REPLAY_1 through EEPROM_ADDR_ENHANCED_REPLAY_5 (addresses 50-58, 2 bytes each)
 
-**Track History** (TODO)
+**Track History**
 - **LAST SCORE**: Score at (approximately) end of last game played (1-999).
   - EEPROM_ADDR_LAST_SCORE (address 0)
 - **LAST CIRCUS SONG**: Most recent Circus track played.
@@ -646,19 +652,19 @@ The following settings are defined in EEPROM:
 - **LAST SURF SONG**: Most recent Surf Rock track played.
   - EEPROM_ADDR_LAST_SURF_SONG_PLAYED (address 22)
 
-**Audio Gain** (TODO)
+**Audio Gain**
 - **MASTER VOLUME**: Master gain to be applied first, before any gain offsets or ducking (-40 to 0 dB)
- - EEPROM_ADDR_TSUNAMI_GAIN (address 10)
+  - EEPROM_ADDR_TSUNAMI_GAIN (address 10)
 - **VOICE GAIN**: Voice offset to Master Gain (-20 to +20 dB)
- - EEPROM_ADDR_TSUNAMI_GAIN_VOICE (address 11)
-- **SFX GAIN**: Voice offset to Master Gain (-20 to +20 dB)
- - EEPROM_ADDR_TSUNAMI_GAIN_SFX (address 12)
-- **MUSIC GAIN**: Voice offset to Master Gain (-20 to +20 dB)
- - EEPROM_ADDR_TSUNAMI_GAIN_MUSIC (address 13)
+  - EEPROM_ADDR_TSUNAMI_GAIN_VOICE (address 11)
+- **SFX GAIN**: SFX offset to Master Gain (-20 to +20 dB)
+  - EEPROM_ADDR_TSUNAMI_GAIN_SFX (address 12)
+- **MUSIC GAIN**: Music offset to Master Gain (-20 to +20 dB)
+  - EEPROM_ADDR_TSUNAMI_GAIN_MUSIC (address 13)
 - **DUCK DB**: Ducking level for music when playing voice (-40 to 0 dB)
- - EEPROM_ADDR_TSUNAMI_DUCK_DB (address 14)
+  - EEPROM_ADDR_TSUNAMI_DUCK_DB (address 14)
 
-**Mode History** (TODO)
+**Mode History** (used when modes are implemented)
 - **LAST GAME MODE**: Most recently-played game mode (BUMPER CARS, ROLL-A-BALL, GOBBLE HOLE)
   - EEPROM_ADDR_LAST_MODE_PLAYED (address 25)
 
@@ -739,6 +745,11 @@ Starting a new game requires the Score Motor to run for the entire startup seque
 **3rd and possibly 4th quarter-turns:**
 - Slave finishes the 10K step-up (up to 10 steps total = 2 motor cycles).
 - The 10K Unit always advances all the way around back to zero, even if it is already at zero (10 steps).
+
+**10K Step-Up Bell Behavior:**
+- The 10K Bell rings on EVERY 10K advance (all 10 steps).
+- The 100K Bell rings ONLY on the FINAL 10K step (when the 10K digit rolls from 9 to 0). In the original game, this is because the 100K unit physically fires once to return to zero. There is always exactly one 100K bell during the 10K step-up, coinciding with the final 10K bell.
+- Advances are packed into the first available slots of each motor cycle. For example, if the 10K digit starts at 40K (6 steps needed), the pattern is: bell-bell-bell-bell-bell-rest (1st cycle), bell+100K-rest-rest-rest-rest-rest (2nd cycle).
 
 **Ball recovery begins concurrently with the 1st quarter-turn:**
 - Master opens the Ball Tray (Slot 3 above) and begins monitoring for 5 balls in trough.
@@ -874,12 +885,50 @@ Master controls Score Motor, Selection Unit, and Relay Reset Bank directly based
     - Reset internal score variables.
     - Command Slave to step the score to 0 using realistic timing.
     - Note that the 100K/1M score resets rapidly back to zero, 100K at a time.
-    - Note that the 10K score resets by stepping UP to zero.  Score steps up even if 10K score is already at zero -- it steps up 10 times to return to zero.
+    - Note that the 10K score resets by stepping UP to zero. Score steps up even if 10K score is already at zero -- it steps up 10 times to return to zero.
+    - The 10K Bell rings on every 10K step-up. The 100K Bell rings once, coinciding with the final 10K step (the 9-to-0 rollover). This simulates the original 100K unit firing once to return to its zero position.
+
+### 6.1.1 Persistent EM Emulation State
+
+In addition to the score, Master persists certain EM emulation state to EEPROM. On the original game, these were physical stepper positions and relay latches that simply stayed where they were across games and power cycles. Our software emulates this by saving them to EEPROM.
+
+**Persisted values:**
+
+| Value | EEPROM Bytes | Range | Description |
+|-------|-------------|-------|-------------|
+| `selectionUnitPosition` | 1 (addr 60) | 0-49 | Selection Unit stepper position (controls RED insert and HAT lamps) |
+| `whiteLitMask` | 2 (addr 61-62) | 0x0000-0x01FF | Which WHITE numbered inserts are lit (bits 0-8 = numbers 1-9) |
+| `gobbleCount` | 1 (addr 63) | 0-5 | Number of balls gobbled (controls GOBBLE lamps and SPECIAL WHEN LIT) |
+
+**NOT persisted (reset each game):**
+
+| Value | Reset To | Reason |
+|-------|----------|--------|
+| `bumperLitMask` | 0x7F (all lit) | The Relay Reset Bank fires at game start, relighting all bumpers |
+| Score | 0 | Score resets to zero at game start (persisted separately for attract display) |
+
+**Save timing:**
+- At game over (explicit save)
+- Periodically during gameplay (same cadence as `EEPROM_SAVE_INTERVAL_MS`)
+- Only bytes that have changed are written (to reduce EEPROM wear)
+
+**Load timing:**
+- At power-up in `setup()` via `initGameState()` -> `loadEmState()`
+- At game start in `initGameState()` -> `loadEmState()` (reloads persisted values)
+
+**Lamp behavior in Attract mode:**
+- All persisted EM state lamps (RED insert, HAT lamps, WHITE inserts, GOBBLE lamps, SPECIAL, and "Spots Number When Lit" kickout/drain lamps) remain lit in Attract mode to match the original EM behavior. The original game did not blank these lamps between games.
+- Bumper lamps are always lit in Attract mode (they relight at game start).
+
+**First boot (uninitialized EEPROM):**
+- `selectionUnitPosition` defaults to 0 if the stored value is >= 50
+- `whiteLitMask` is masked to 9 bits (invalid high bits are cleared)
+- `gobbleCount` defaults to 0 if the stored value is > 5
 
 ### 6.2 Hardware Startup Behavior
 
 - On power-up or hardware reset of Master or Slave:
-  - Both Arduinos should initialize their internal state to GAME_OVER mode.
+  - Both Arduinos should initialize their internal state to ATTRACT mode.
   - Master should read persistent score from EEPROM and send to Slave to display it.
   - All outputs (coils, lamps) should be turned off initially.
   - Head lamps (GI) should be turned on.
@@ -1111,7 +1160,6 @@ Master uses a game phase state machine to track the overall game state. **Phases
   PHASE_STARTUP       - Ball recovery and game initialization
   PHASE_BALL_READY    - Ball dispensed or dispensing, waiting for player to launch
   PHASE_BALL_IN_PLAY  - One or more balls launched and not yet drained
-  PHASE_GAME_OVER     - Game finished, transitioning to Attract
   PHASE_TILT          - Tilted, waiting for all ball(s) to drain
   PHASE_DIAGNOSTIC    - Diagnostic mode active
   PHASE_BALL_SEARCH   - Searching for missing balls
@@ -1186,7 +1234,7 @@ Once `hasHitSwitch == true`, any subsequent ball-in-lift switch closure is treat
 - `ballInLift` is a flag within this phase, not a reason to change phases.
 - When `ballsInPlay == 0` AND `ballInLift == false`:
   - If `currentBall < 5`: Increment `currentBall`, transition to PHASE_BALL_READY.
-  - If `currentBall == 5`: Transition to PHASE_GAME_OVER.
+  - If `currentBall == 5`: Transition to PHASE_ATTRACT.
 
 #### 10.3.3 Phase Transitions
 
@@ -1195,7 +1243,7 @@ Once `hasHitSwitch == true`, any subsequent ball-in-lift switch closure is treat
 | PHASE_BALL_READY   | PHASE_BALL_IN_PLAY | Player launches ball (ball-in-lift switch opens)                      |
 | PHASE_BALL_IN_PLAY | PHASE_BALL_IN_PLAY | Drain detected but `ballsInPlay > 0` OR `ballInLift == true`          |
 | PHASE_BALL_IN_PLAY | PHASE_BALL_READY   | `ballsInPlay == 0` AND `ballInLift == false` AND `currentBall < 5`    |
-| PHASE_BALL_IN_PLAY | PHASE_GAME_OVER    | `ballsInPlay == 0` AND `ballInLift == false` AND `currentBall == 5`   |
+| PHASE_BALL_IN_PLAY | PHASE_ATTRACT      | `ballsInPlay == 0` AND `ballInLift == false` AND `currentBall == 5`   |
 
 #### 10.3.4 Single-Ball Play Example
 
@@ -1206,7 +1254,7 @@ Once `hasHitSwitch == true`, any subsequent ball-in-lift switch closure is treat
 5. Ball hits scoring switch: `ballsInPlay = 1`, `hasHitSwitch = true`. Ball is now truly in play.
 6. Ball drains (no Ball Save): `ballsInPlay = 0`, `ballInLift = false`.
 7. If `currentBall < 5`: Increment `currentBall`, transition to `PHASE_BALL_READY`.
-8. If `currentBall == 5`: Transition to `PHASE_GAME_OVER`.
+8. If `currentBall == 5`: Transition to `PHASE_ATTRACT`.
 
 #### 10.3.5 Multiball Ball Tracking (Enhanced Style Only)
 
@@ -1247,25 +1295,25 @@ This section covers the ball tracking mechanics for multiball. See Section 14.6 
 - All balls eventually drain
 - When `ballsInPlay == 0` AND `ballInLift == false`:
   - If `currentBall < 5`: Increment `currentBall`, transition to PHASE_BALL_READY
-  - If `currentBall == 5`: Transition to PHASE_GAME_OVER
+  - If `currentBall == 5`: Transition to PHASE_ATTRACT
 
 #### 10.3.6 Multiball Example Scenario
 
-| Step | Event                               | `ballsInPlay` | `ballInLift` | `ballsLocked` | Phase                      |
-|------|-------------------------------------|---------------|--------------|---------------|----------------------------|
-|    0 | Ball launched                       |       1       |     false    |        0      | BALL_IN_PLAY               |
-|    1 | Ball enters left kickout            |       0       |     false    |        1      | BALL_IN_PLAY               |
-|    2 | Replacement dispensed               |       0       |      true    |        1      | BALL_IN_PLAY               |
-|    3 | Player launches replacement         |       1       |     false    |        1      | BALL_IN_PLAY               |
-|    4 | Ball enters right kickout           |       0       |     false    |        2      | BALL_IN_PLAY               |
-|    5 | Replacement dispensed               |       0       |      true    |        2      | BALL_IN_PLAY               |
-|    6 | Player launches, hits target        |       1       |     false    |        2      | BALL_IN_PLAY               |
-|    7 | Multiball triggered! Kickouts eject |       3       |     false    |        0      | BALL_IN_PLAY               |
-|    8 | Ball enters kickout; ejected        |       3       |     false    |        0      | BALL_IN_PLAY               |
-|    9 | Ball A drains                       |       2       |     false    |        0      | BALL_IN_PLAY               |
-|   10 | Ball B drains                       |       1       |     false    |        0      | BALL_IN_PLAY               |
-|   11 | Ball C drains                       |       0       |     false    |        0      | BALL_IN_PLAY               |
-|   12 | Multiball ends (1 ball left)        |       0       |     false    |        0      | -> BALL_READY or GAME_OVER |
+| Step | Event                               | `ballsInPlay` | `ballInLift` | `ballsLocked` | Phase                          |
+|------|-------------------------------------|---------------|--------------|---------------|--------------------------------|
+|    0 | Ball launched                       |       1       |     false    |        0      | BALL_IN_PLAY                   |
+|    1 | Ball enters left kickout            |       0       |     false    |        1      | BALL_IN_PLAY                   |
+|    2 | Replacement dispensed               |       0       |      true    |        1      | BALL_IN_PLAY                   |
+|    3 | Player launches replacement         |       1       |     false    |        1      | BALL_IN_PLAY                   |
+|    4 | Ball enters right kickout           |       0       |     false    |        2      | BALL_IN_PLAY                   |
+|    5 | Replacement dispensed               |       0       |      true    |        2      | BALL_IN_PLAY                   |
+|    6 | Player launches, hits target        |       1       |     false    |        2      | BALL_IN_PLAY                   |
+|    7 | Multiball triggered! Kickouts eject |       3       |     false    |        0      | BALL_IN_PLAY                   |
+|    8 | Ball enters kickout; ejected        |       3       |     false    |        0      | BALL_IN_PLAY                   |
+|    9 | Ball A drains                       |       2       |     false    |        0      | BALL_IN_PLAY                   |
+|   10 | Ball B drains                       |       1       |     false    |        0      | BALL_IN_PLAY                   |
+|   11 | Ball C drains                       |       0       |     false    |        0      | BALL_IN_PLAY                   |
+|   12 | Multiball ends (1 ball left)        |       0       |     false    |        0      | -> BALL_READY or PHASE_ATTRACT |
 
 #### 10.3.7 Ball Tracking Summary
 
@@ -1303,7 +1351,7 @@ When a ball enters a kickout (Enhanced Style, not during multiball):
 
 **Implementation Note:** Steps 1-3 must occur within the same tick. The phase transition check should only occur at the END of each tick, after all switch processing is complete.
 
-**Phase Transition Guard:** Before transitioning to `PHASE_BALL_READY` or `PHASE_GAME_OVER`, verify that `ballsInPlay == 0` AND `ballInLift == false`. This prevents premature phase transitions when a ball is captured but a replacement is being dispensed.
+**Phase Transition Guard:** Before transitioning to `PHASE_BALL_READY` or `PHASE_ATTRACT`, verify that `ballsInPlay == 0` AND `ballInLift == false`. This prevents premature phase transitions when a ball is captured but a replacement is being dispensed.
 
 #### 10.3.9 Phase Transition Diagram
 
@@ -1321,10 +1369,9 @@ stateDiagram-v2
     PHASE_BALL_IN_PLAY --> PHASE_TILT: Full tilt
     PHASE_BALL_READY --> PHASE_TILT: Tilt (Original/Impulse)
     PHASE_BALL_IN_PLAY --> PHASE_BALL_READY: All drained, balls remain
-    PHASE_BALL_IN_PLAY --> PHASE_GAME_OVER: All drained, Ball 5
+    PHASE_BALL_IN_PLAY --> PHASE_ATTRACT: All drained, Ball 5
     PHASE_TILT --> PHASE_BALL_READY: Drained, balls remain
-    PHASE_TILT --> PHASE_GAME_OVER: Drained, Ball 5
-    PHASE_GAME_OVER --> PHASE_ATTRACT: Cleanup done
+    PHASE_TILT --> PHASE_ATTRACT: Drained, Ball 5, cleanup done
     PHASE_DIAGNOSTIC --> PHASE_ATTRACT: BACK button
 ```
 Note: Ball Save, Extra Ball, and mode ball replacement occur within PHASE_BALL_IN_PLAY without changing phase. See Sections 14.5, 14.7, and 14.12 for details.
@@ -1460,21 +1507,14 @@ This ensures consistent switch state throughout the tick and prevents re-trigger
 
 **Per-Switch Debounce Configuration:**
 
-All switches currently use the global 'SWITCH_DEBOUNCE_TICKS' (5 ticks = 50ms).
-
-Some switches may benefit from different debounce values:
-- **Flipper buttons**: Minimal debounce (1-2 ticks) for responsiveness
-- **Bumpers/slingshots**: Short debounce (3-5 ticks) - ball contact is brief
-- **Drain rollovers**: Longer debounce (5-10 ticks) - ball may bounce
-- **Kickouts**: Short debounce (3-5 ticks) - ball settles quickly
-- **Tilt bob**: Longer debounce (10+ ticks) - prevent false triggers from vibration
+All switches currently use the global 'SWITCH_DEBOUNCE_TICKS' (5 ticks = 50ms). This uniform debounce works well for all switch types in practice. Per-switch debounce tuning could be considered as a future optimization if specific switches prove problematic.
 
 ### 10.5 Mode/Style and State Management
 
 - On power-up:
-  - Both Master and Slave default to GAME_OVER / Attract mode.
+  - Both Master and Slave default to Attract mode.
 - At end of each game:
-  - Return to GAME_OVER / Attract mode.
+  - Return to Attract mode.
 - From Attract mode:
   - If coin inserted or knock-off pressed:
     - Increment credits (up to a maximum).
@@ -1521,12 +1561,16 @@ Some switches may benefit from different debounce values:
 - Uses:
   - Tsunami audio (voice, music, sound effects).
   - Shaker motor.
-  - Generally NO EM sound devices except (sometimes) bells (no Score Motor, 10K Unit, Selection Unit, Relay Reset Bank) unless specifically called for.
-- Rules (high-level, to be elaborated separately):
+  - Generally NO EM sound devices except bells (no Score Motor, 10K Unit, Selection Unit, Relay Reset Bank) unless specifically called for.
+- Rules:
   - Roller-coaster / Screamo theme integration.
   - Ball save for first N seconds per ball after first score, or if ball drains before hitting any targets.
-  - New scoring goals (for example collecting letters, jackpots, mode progression).
-  - Potential use of gobble / special / kickouts / bumpers for modes and bonuses.
+  - Scoring goals including completing SCREAMO, spotted numbers, and the WHITE insert matrix.
+  - Three game-within-a-game modes: Bumper Cars, Roll-A-Ball, Gobble Hole Shooting Gallery.
+  - Multiball via ball locking in side kickouts.
+  - Extra Ball for completing the 1-9 WHITE insert matrix.
+  - Replays for score thresholds, number patterns, and gobble completions.
+  - See Sections 14.1-14.12 for complete Enhanced style details.
 
 ---
 
@@ -1679,7 +1723,7 @@ If a drain switch closes while hasHitSwitch == false, the drain switch itself is
 The phase transition check at the end of each tick uses:
 - `ballsInPlay == 0` AND `ballInLift == false` AND `hasHitSwitch == true`
 
-The `hasHitSwitch == true` guard prevents transitioning to `PHASE_BALL_READY` or `PHASE_GAME_OVER` when a ball is still being launched (rollback scenario).
+The `hasHitSwitch == true` guard prevents transitioning to `PHASE_BALL_READY` or `PHASE_ATTRACT` when a ball is still being launched (rollback scenario).
 
 ### 12.6 First Point Scored Handler (Enhanced Style, Ball 1 Only)
 
@@ -1729,7 +1773,7 @@ If 5 balls are not detected within the initial BALL_SEARCH_TIMEOUT_MS wait perio
 2. **Continuous monitoring:**
    - Every tick: Check kickout switches; if a ball is detected, immediately fire that kickout.
    - Every tick: Check 5-balls-in-trough switch.
-   - Every 15 seconds: Fire both kickouts, the pop bumper, and both flippers (in case ball is stuck), one after another, not all at once.
+   - Every 15 seconds: Fire both kickouts.
 
 3. **Enhanced Style feedback:**
    - On Start press: Replay announcements.
@@ -1801,14 +1845,14 @@ The original Screamo used electromechanical devices to control game state. Our s
 #### 13.3.1 Device Firing Relationships
 
 **What fires the 10K Unit:**
-- Bumper switches (S, C, R, E, A, M, O)
-- Hat rollover switches (all four)
-- Slingshot switches (left and right)
-- Notably, the nine side targets do NOT fire the 10K unit or otherwise score any points (they fire the Selection Unit)
+- Bumper switches (S, C, R, E, A, M, O) -- directly
+- Hat rollover switches (all four) -- directly
+- Slingshot switches (left and right) -- directly
+- Side target switches (all nine) -- indirectly, via the Selection Unit. On the original game, the Selection Unit coil is wired to also fire the 10K Unit on every advance. Thus, every side target hit scores 10K.
 
 **What fires the Selection Unit:**
 - ONLY the nine side target switches
-- Firing the Selection Unit does not score any points
+- Firing the Selection Unit ALSO fires the 10K Unit (scoring 10K)
 - Bumpers, Hats, and Slingshots do NOT advance the Selection Unit
 
 #### 13.3.2 10K Unit Behavior (Simulated)
@@ -1856,7 +1900,7 @@ Cycle 5: RED INSERT:  8   3   4   9   2   5   7   2   1   6     HATS LIT ON STEP
 - Hats stay lit until the next side target hit advances the Selection Unit
 - All four Hat Rollovers always turn on and off together.
 
-**Implementation:** On game start, initialize `selectionUnitPosition` to a random value 0-49. Each side target hit increments and wraps.
+**Implementation:** The Selection Unit position is persisted to EEPROM across games and power cycles, matching the original EM behavior where the physical stepper simply stayed where it was. On first boot (uninitialized EEPROM), the position defaults to 0. The position is never randomized.
 
 #### 13.3.4 Lamp Behavior Clarifications
 
@@ -1916,12 +1960,13 @@ This section provides the complete scoring logic for each playfield element.
 
 #### 13.4.3 Side Targets (9 targets)
 
-- **Score**: None
-- **Bells**: None
-- **Units**: Fires Selection Unit
+- **Score**: 10K points (via Selection Unit firing the 10K Unit)
+- **Bells**: 10K Bell rings (because the 10K Unit fires)
+- **Units**: Fires Selection Unit (which in turn fires the 10K Unit)
 - **Lamps**: 
   - Advances RED numbered insert to next in sequence
   - May light or extinguish HAT lamps (see Selection Unit behavior)
+  - May change "Spots Number When Lit" lamps (because the 10K score increment changes the 10K digit)
 - **Notes**: The ONLY switches that advance the Selection Unit
 
 #### 13.4.4 Hat Rollovers (4 switches)
@@ -1954,7 +1999,8 @@ This section provides the complete scoring logic for each playfield element.
   - Kickout lamp stays lit (does not extinguish)
 - **Score Motor**: Runs for 500K increment
 - **Action**: Eject ball immediately AFTER 500K score motor sequence
-- TODO: Not yet clear when Selection Bell should ring in relation to Score Motor timing, on this or any other event that lights a spotted number.
+
+**Selection Bell Timing:** The Selection Bell rings at the moment the spotted number is awarded (when the switch closes and the lamp is lit), not after the Score Motor cycle completes. This applies to all events that award a spotted number: last-lit bumper, lit kickouts, lit drain rollovers, and the Gobble Hole.
 
 #### 13.4.6 Drain Rollovers (Left and Right)
 
@@ -2004,7 +2050,7 @@ Enhanced Style rules are based on Original style rules, with additions and chang
 - Tsunami audio for voice, music, and sound effects.
   - Two music themes: CIRCUS and SURF. Settings determines which is primary.
   - Primary theme plays during regular gameplay; secondary during Modes and Multiball.
-- EM Sound Devices: NOT used in Enhanced style. Tsunami audio provides all sound effects.
+- EM Sound Devices: Bells are used for non-Mode Enhanced play (see Section 14.11.1). All other EM devices (10K Unit, Score Motor, Selection Unit, Relay Reset Bank) are NOT used in Enhanced style. Tsunami audio provides the remaining sound effects.
 - Ball Save feature gives a grace period after first scoring a point on each ball.
   - If a ball drains without hitting any targets, the ball is saved regardless of timer.
 - Side Kickouts capture balls for MULTIBALL (not immediately ejected like Original).
@@ -2628,7 +2674,7 @@ When a drain switch closes:
    - Decrement `ballsInPlay` (if > 0)
    - IF `ballsInPlay > 0` OR `ballInLift == true`: Stay in PHASE_BALL_IN_PLAY. EXIT.
    - IF `currentBall < 5`: Increment `currentBall`, transition to PHASE_BALL_READY.
-   - IF `currentBall == 5`: Transition to PHASE_GAME_OVER.
+   - IF `currentBall == 5`: Transition to PHASE_ATTRACT.
 
 #### 14.9.2 Drain Handling Flowchart
 
@@ -2672,8 +2718,8 @@ When a drain switch closes:
                                                       YES           NO
                                                        |            |
                                                        v            v
-                                      [Increment currentBall,  [PHASE_GAME_OVER]
-                                           PHASE_BALL_READY]
+                                      [Increment currentBall,  [PHASE_ATTRACT]
+                                           PHASE_BALL_READY]     (game over)
 
 
 **Decision Order Summary:**
@@ -2682,7 +2728,7 @@ When a drain switch closes:
 3. Ball Save Timer Active? -> Replace ball
 4. More balls in play or lift? -> Stay in BALL_IN_PLAY
 5. More balls remaining? -> Increment currentBall, PHASE_BALL_READY
-6. Ball 5 complete? -> PHASE_GAME_OVER
+6. Ball 5 complete? -> PHASE_ATTRACT (Game Over)
 
 ### 14.10 Game Timeout
 
@@ -2692,7 +2738,7 @@ If no playfield switch or flipper button is hit for the duration specified by EE
 Game timeout applies regardless of multiball state. If no playfield switch or flipper button is hit within the EEPROM-configured timeout:
 - End game immediately
 - All balls (in play, in lift, locked) are abandoned
-- Transition to PHASE_GAME_OVER
+- Transition to PHASE_ATTRACT
 - Kickouts eject during cleanup
 
 ### 14.11 Enhanced Style Sound Effects (Non-Mode Play)
@@ -2767,7 +2813,7 @@ Upon scoring the first point with Ball 1:
 1. Terminate the hill lift sound (`TRACK_START_LIFT_LOOP`).
 2. Play `TRACK_START_DROP` (404) - First hill screams SFX.
 3. Increase the Shaker Motor speed (`SHAKER_POWER_HILL_DROP`) for 11 seconds (to match the length of `TRACK_START_DROP`).
-4. After 11 seconds, reduce Shaker Motor speed to minumum by increments of 10 every 500ms until it reaches minimum, and then shut off the Shaker Motor.
+4. After 11 seconds, shut off the Shaker Motor.
 
 #### 14.11.10 Ball Number Announcements
 
@@ -2785,11 +2831,10 @@ When the ball drains, play a random track selected from `TRACK_GAME_OVER_FIRST` 
 
 #### 14.11.13 Shoot The Ball
 
-If a player has a ball in the ball lift and has not raised the ball within a reasonable time:
-- Play `TRACK_SHOOT_LIFT_ROD` (611) "Press the ball lift rod..."
+If the player has not scored any points within `HILL_CLIMB_TIMEOUT_MS` (15 seconds) of entering PHASE_BALL_READY, a contextual reminder plays. The reminder repeats every `HILL_CLIMB_TIMEOUT_MS` until the player scores.
 
-If the player has a ball *not* in the ball lift but has not scored any points within a reasonable time, we may assume they have a ball in the shooter lane (if not stuck on the playfield.)
-- Play a random track selected from `TRACK_SHOOT_FIRST` (612) to `TRACK_SHOOT_LAST` (620): "This ride will be a lot more fun if you shoot", "For God's sake shoot the ball", etc. (any of the tracks except the one that says to press the Ball Lift Rod).
+- If the ball is in the lift (`SWITCH_IDX_BALL_IN_LIFT` closed): Play `TRACK_SHOOT_LIFT_ROD` (611) "Press the ball lift rod..."
+- If the ball has left the lift (switch open): Play a random track selected from `TRACK_SHOOT_FIRST` (612) to `TRACK_SHOOT_LAST` (620): "This ride will be a lot more fun if you shoot", "For God's sake shoot the ball", etc.
 
 #### 14.11.14 Ball Saved - Not Urgent
 
@@ -2924,128 +2969,43 @@ The ball already in the lift becomes whatever ball was needed. Any previous purp
 
 ---
 
-## 15. Open Items and Implementation Notes
+## 15. Implementation Status
 
-- Mode state machine
-  - Clean, centralized state machine for modes/styles.
-  - Per-mode handler functions called from the 10 ms loop.
+### 15.1 Completed
 
-- Input debouncing and edge detection
-  - Ensure Start button taps are properly detected (single, double, triple).
-  - Per-switch debounce configuration (future enhancement).
+The following features are fully implemented and tested:
 
-- Enhanced style rule engine
-  - Define data structures and functions for:
-    - Ball save.
-    - Feature completion.
-    - Voice line selection and timing.
-    - Shaker motor patterns.
+- **Core game loop**: 10ms tick-based main loop with switch edge detection, device timers, coil watchdog.
+- **Game phase state machine**: ATTRACT, STARTUP, BALL_READY, BALL_IN_PLAY, TILT, DIAGNOSTIC, BALL_SEARCH.
+- **Style detection**: Single/double/triple tap Start button for Original/Enhanced/Impulse.
+- **Ball recovery and dispensing**: 5-ball trough detection with stability check, ball search with timeout.
+- **Flipper control**: Original (holdable), Impulse (both fire briefly), with tilt disable.
+- **Tilt handling**: Two-warning Enhanced, single-warning Original/Impulse, PHASE_TILT drain monitoring.
+- **Ball save**: Timer-based with instant drain handling, one save per ball number, drain suppression.
+- **Enhanced audio**: Hill climb/drop sequence, ball announcements, shoot reminders, game over, ducking.
+- **Music management**: Auto-advance through theme playlists, EEPROM persistence of last track.
+- **Score Motor startup sequence**: 4 quarter-turn timing with relay resets and score reset (Original/Impulse).
+- **Mid-game Start button**: Ends game, suppresses multi-tap carry-over.
+- **Game timeout**: EEPROM-configurable inactivity timer.
+- **Periodic score save**: EEPROM save every 10 seconds during gameplay.
+- **Diagnostics**: Volume, Lamp Tests, Switch Tests, Coil/Motor Tests, Audio Tests, Settings (all complete).
+- **All EEPROM settings**: Theme, ball save time, mode timers, game timeout, replay scores, audio gains.
 
----
+### 15.2 Not Yet Implemented
 
-## 16. Suggested Sections to Flesh Out (For Future)
+The following features are designed in this document but not yet coded:
 
-1. Enhanced Style Rule Details
-   - Exact scoring rules, feature ladders, multiball, extra ball logic.
-   - Voice line, sound effect, music, and shaker event triggers.
+- **Scoring event processing** (Section 13.4): The `updatePhaseBallInPlay()` function detects switch hits and drains but does not yet process scoring, lamp changes, bell commands, or Score Motor timing. This is the next feature to implement.
+- **Score Motor during gameplay** (Section 5.4): Master needs to run the Score Motor SSR for the correct duration during multi-increment scoring events (Original/Impulse only).
+- **EM device emulation** (Section 13.3): Selection Unit position tracking, 10K Unit position tracking, bumper lamp management, spotted number logic, and "Spots Number When Lit" lamp control.
+- **Mode state machine** (Section 14.7): BUMPER CARS, ROLL-A-BALL, and GOBBLE HOLE SHOOTING GALLERY modes with timers, lamp setup, and mode-specific scoring.
+- **Multiball** (Section 14.6): Ball locking in kickouts, multiball start/end, secondary theme music switching.
+- **Replay logic** (Section 13.2): Score thresholds, 3-in-a-row patterns, four corners, gobble completions, knocker timing.
+- **Extra Ball** (Section 14.12): WHITE matrix completion detection, matrix reset, extra ball dispensing.
+- **Kickout eject retry** (Section 10.3.10): Per-kickout retry counters for stuck balls.
+- **Enhanced drain audio** (Section 14.9): Snarky drain comments, shaker motor on drain.
+- **Audio priority system** (Section 14.3): COM track priority comparison (HIGH/MED/LOW) for preemption decisions.
 
-2. Audio Mapping Table
-   - Detailed table mapping track numbers to events.
-   - Include priorities, interrupt rules, and ducking rules.
-
-3. Configuration and Tuning Constants
-   - Central header file for all tunables.
-
-4. Safety and Fault Handling
-   - Define behavior on stuck switches, coil-on-too-long, communication timeout.
-
----
-
-## 17. Attract Mode Sub-States
-
-Attract mode uses sub-states to handle the multi-step game start process without blocking.
-
-### 17.1 Attract Sub-State Definitions
-```
-  const byte ATTRACT_IDLE             = 0;  // Waiting for Start press
-  const byte ATTRACT_WAIT_SECOND_TAP  = 1;  // Waiting 500ms for possible 2nd tap
-  const byte ATTRACT_WAIT_THIRD_TAP   = 2;  // Waiting 500ms for possible 3rd tap
-  const byte ATTRACT_CREDIT_CHECK     = 3;  // Querying Slave for credits
-  const byte ATTRACT_BALL_CHECK       = 4;  // Checking 5-balls-in-trough switch
-  const byte ATTRACT_BALL_WAIT        = 5;  // Waiting for balls to settle (stability check)
-  const byte ATTRACT_KICKOUT_WAIT     = 6;  // Extra time for kickout balls to arrive
-  const byte ATTRACT_START_GAME       = 7;  // All checks passed, starting game
-```
-### 17.2 Attract Sub-State Transitions
-```
-ATTRACT_IDLE
-    |
-    | (Start pressed)
-    v
-ATTRACT_WAIT_SECOND_TAP (50 ticks = 500ms)
-    |
-    +-- (2nd press within 500ms) --> ATTRACT_WAIT_THIRD_TAP
-    |
-    +-- (timeout, no 2nd press) --> gameStyle = ORIGINAL --> ATTRACT_CREDIT_CHECK
-    |
-ATTRACT_WAIT_THIRD_TAP (50 ticks = 500ms from 2nd press)
-    |
-    +-- (3rd press within 500ms) --> gameStyle = IMPULSE --> ATTRACT_CREDIT_CHECK
-    |
-    +-- (timeout, no 3rd press) --> gameStyle = ENHANCED --> ATTRACT_CREDIT_CHECK
-    |
-ATTRACT_CREDIT_CHECK
-    |
-    | (query Slave, blocking OK here)
-    |
-    +-- (no credits, Enhanced) --> play Aoooga + rejection --> ATTRACT_IDLE
-    |
-    +-- (no credits, Original/Impulse) --> silent --> ATTRACT_IDLE
-    |
-    +-- (credits available) --> ATTRACT_BALL_CHECK
-    |
-ATTRACT_BALL_CHECK
-    |
-    | (check 5-balls-in-trough, check ball-in-lift)
-    |
-    +-- (ball in lift, Enhanced) --> play "press lift rod" immediately
-    |
-    +-- (switch closed) --> ATTRACT_BALL_WAIT (stability check)
-    |
-    +-- (switch open) --> open tray, fire kickouts --> ATTRACT_BALL_WAIT
-    |
-ATTRACT_BALL_WAIT (100 ticks = 1 second stability, 500 ticks = 5 second max)
-    |
-    | (continuously: eject kickouts if occupied)
-    |
-    +-- (5-balls stable for 1 second) --> ATTRACT_START_GAME
-    |
-    +-- (5 seconds elapsed, not stable) --> ATTRACT_KICKOUT_WAIT
-    |
-ATTRACT_KICKOUT_WAIT (200 ticks = 2 seconds)
-    |
-    | (continuously: eject kickouts if occupied)
-    |
-    +-- (5-balls stable for 1 second) --> ATTRACT_START_GAME
-    |
-    +-- (timeout) --> PHASE_BALL_SEARCH
-    |
-ATTRACT_START_GAME
-    |
-    | (deduct credit, play audio, init game state)
-    v
-PHASE_STARTUP
-```
-### 17.3 Attract State Variables
-```
-  struct AttractState {
-    byte subState;                // Current sub-state
-    unsigned int ticksInState;    // Ticks since entering current sub-state
-    unsigned int stabilityTicks;  // Ticks that 5-balls switch has been continuously closed
-    bool ballInLiftAtStart;       // Captured when entering ATTRACT_BALL_CHECK
-  };
-  AttractState attractState;
-```
 ---
 
 ## 18. Constants Reference
@@ -3138,10 +3098,10 @@ Note: Ball Save uses a single timestamp at the start of each Ball Number. During
 
 ### 20.6 Tilt State Variables
 
-| Variable           | Type | Initial Value | Description                        |
-|--------------------|------|---------------|------------------------------------|
-| `tiltWarningCount` | byte | 0             | Warnings this ball (Enhanced: 0-1) |
-| `isTilted`         | bool | false         | Currently tilted                   |
+| Variable              | Type | Initial Value | Description                        |
+|-----------------------|------|---------------|------------------------------------|
+| `tiltWarnings`        | byte | 0             | Warnings this ball (Enhanced: 0-1) |
+| `tilted`              | bool | false         | Currently tilted                   |
 
 ### 20.7 EM Emulation Variables
 
@@ -3177,7 +3137,7 @@ These values are defined in `Pinball_Consts.h`. This section provides a quick re
 | `MODE_END_GRACE_PERIOD_MS`       | 5000   | Post-mode ball save grace                    |
 | `SCORE_MOTOR_QUARTER_REV_MS`     | 882    | Score motor timing                           |
 | `SCORE_MOTOR_SLOT_MS`            | 147    | Per-slot timing                              |
-| `EEPROM_SAVE_INTERVAL_MS`        | 60000  | Score save frequency                         |
+| `EEPROM_SAVE_INTERVAL_MS`        | 10000  | Score save frequency                         |
 | `BALL_SAVE_DEFAULT_SECONDS`      | 15     | Default ball save duration (EEPROM settable) |
 
 Note: Game Timeout (inactivity) is stored in `EEPROM at EEPROM_ADDR_GAME_TIMEOUT` in minutes (default 5). At game start, Master converts to milliseconds: `gameTimeoutMs = diagReadGameTimeoutFromEEPROM() * 60000UL`. The timeout deadline resets each time a scoring switch is hit.

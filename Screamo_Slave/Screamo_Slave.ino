@@ -1,4 +1,4 @@
-// Screamo_Slave.INO Rev: 02/20/26
+// Screamo_Slave.INO Rev: 02/23/26
 // 11/12/25: Increased Credit Down power to 150 for more reliable credit removal.
 // 12/28/25: Updated SCORE_INC_10K and SCORE_RESET to remain silent (no bells or 10K unit) in Enhanced style.
 // 01/19/26: Updated SCORE_INC_10K message to include silent parm
@@ -392,6 +392,8 @@ void processMessage(byte t_msgType) {
     if (!resetActive) {
       scoreCmdHead = scoreCmdTail = 0;
       scoreAdjustActive = false;
+      scoreCmdActiveDirection = 0;
+      targetScore = 0;  // Reset target to match where currentScore will end up (zero)
 
       int startScore = currentScore;
       int tensK      = startScore % 10;
@@ -713,6 +715,9 @@ void requestScoreAdjust(int t_delta10Ks) {
   }
   if ((t_delta10Ks > 0 && targetScore >= 999) || (t_delta10Ks < 0 && targetScore <= 0)) {
     // Already saturated at boundary considering pending work reflected in targetScore.
+    sprintf(lcdString, "SAT drop %d t=%d", t_delta10Ks, targetScore);
+    pLCD2004->println(lcdString);
+    Serial.println(lcdString);
     return;
   }
 
@@ -1178,13 +1183,16 @@ void processScoreReset() {
       int hundredK = (currentScore / 10) % 10;
       int millions = (currentScore / 100) % 10;
       int newTensK = (tensK + 1) % 10;
-      // At rollover (9->0) play the 100K bell but suppress lamp promotion of hundredK/millions during reset.
       if (tenKUnitEnabled()) {
         activateDevice(DEV_IDX_10K_UP);
       }
       if (bellsEnabled()) {
         activateDevice(DEV_IDX_10K_BELL);
-        activateDevice(DEV_IDX_100K_BELL);
+        // 100K bell rings ONLY on the final 10K step (9->0 rollover),
+        // simulating the 100K unit advancing once to return to zero.
+        if (reset10KStepsRemaining == 1) {
+          activateDevice(DEV_IDX_100K_BELL);
+        }
       }
       currentScore = millions * 100 + hundredK * 10 + newTensK;
       displayScore(currentScore);

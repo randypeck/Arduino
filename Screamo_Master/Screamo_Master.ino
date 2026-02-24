@@ -1,4 +1,4 @@
-// Screamo_Master.INO Rev: 02/16/26b
+// Screamo_Master.INO Rev: 02/23/26
 // 11/12/25: Moved Right Kickout from pin 13 to pin 44 to avoid MOSFET firing twice on power-up.  Don't use MOSFET on pin 13.
 // 12/28/25: Changed flipper inputs from direct Arduino inputs to Centipede inputs.
 // 01/07/26: Added "5 Balls in Trough" switch to Centipede inputs. All switches tested and working.
@@ -156,7 +156,7 @@ DeviceParmStruct deviceParm[NUM_DEVS_MASTER] = {
 };
 
 const int8_t COIL_REST_TICKS           =  -8;  // Coil rest period: 8 ticks * 10ms = 80ms
-const uint8_t IMPULSE_FLIPPER_UP_TICKS =  10;  // Hold impulse flippers up for 100ms (10 ticks) before releasing
+const uint8_t IMPULSE_FLIPPER_UP_TICKS =   5;  // Hold impulse flippers up for 50ms (5 ticks) before releasing
 
 const byte COIL_WATCHDOG_MARGIN_TICKS = 5;           // 50ms grace period for countdown corruption detection
 const byte COIL_WATCHDOG_SCAN_INTERVAL_TICKS = 100;  // 1 second full PWM scan
@@ -317,12 +317,21 @@ bool inMultiball = false;     // True during multiball (Enhanced style only)
 // ***** EXTRA BALL STATE *****
 bool extraBallAwarded = false;  // Extra Ball earned, waiting to be used
 
-// ***** KICKOUT RETRY *****
-// When a kickout fires, set its retry counter. Each tick, decrement. If switch still closed and counter
-// reaches zero and coil is idle, fire again. See Overview Section 10.3.10.
-const byte KICKOUT_RETRY_TICKS = 100;  // 100 ticks = 1000ms between retry attempts
-byte kickoutLeftRetryTicks = 0;
-byte kickoutRightRetryTicks = 0;
+// ***** KICKOUT TIMING *****
+// After a kickout switch closes during gameplay, scoring logic will decide when to eject.
+// Original/Impulse: eject after score motor quarter-rev (~882ms).
+// Enhanced: eject immediately unless locking for multiball.
+// Ball search / startup / attract: eject immediately via activateDevice().
+const byte KICKOUT_RETRY_TICKS = 100;  // Reserved for future stuck-ball retry if needed
+
+// ***** KICKOUT EJECT DELAY (Original/Impulse Only) *****
+// On the original game, the Score Motor runs one quarter-rev for a kickout hit,
+// scoring 5 x 100K at sub-slot intervals (147ms each). The kickout solenoid fires
+// on the 5th sub-slot, coinciding with the final 100K increment.
+// Enhanced style ejects immediately (no Score Motor involvement).
+const unsigned long KICKOUT_EJECT_DELAY_MS = 735;  // 5 sub-slots * 147ms = 735ms
+unsigned long kickoutLeftEjectMs = 0;   // millis() deadline for left kickout eject (0 = not pending)
+unsigned long kickoutRightEjectMs = 0;  // millis() deadline for right kickout eject (0 = not pending)
 
 // ***** GAME-WITHIN-A-GAME MODE STATE *****
 // ModeStateStruct is defined in Pinball_Consts.h
@@ -336,6 +345,7 @@ ModeStateStruct modeState;
 BallSaveStruct ballSave;
 bool ballSaveUsed = false;  // True once a ball save has been consumed for this ball number
 const byte BALL_SAVE_DEFAULT_SECONDS = 15;
+byte ballSaveSeconds = BALL_SAVE_DEFAULT_SECONDS;  // Loaded from EEPROM at game start
 
 // ***** START BUTTON DETECTION *****
 const unsigned long START_STYLE_DETECT_WINDOW_MS = 500;  // 500ms window for each tap stage
@@ -378,7 +388,8 @@ const byte SHAKER_POWER_HILL_CLIMB = 80;   // Low rumble during hill climb
 const byte SHAKER_POWER_HILL_DROP = 110;   // Medium intensity during first drop
 
 // ***** HILL CLIMB/DROP TIMING *****
-const unsigned long HILL_CLIMB_TIMEOUT_MS = 30000;  // 30 seconds before "shoot the ball" reminder
+const unsigned long HILL_CLIMB_TIMEOUT_MS = 15000;  // 15 seconds before "shoot the ball" reminder
+unsigned long shootReminderDeadlineMs = 0;          // millis() deadline for next shoot reminder (0 = inactive)
 
 // ***** SHAKER MOTOR TIMING CONSTANTS *****
 const unsigned long SHAKER_HILL_DROP_MS = 11000;    // Hill drop duration (matches track 404)
@@ -388,9 +399,34 @@ const unsigned long SHAKER_HAT_MS = 800;            // Roll-A-Ball hat rollover
 const unsigned long SHAKER_DRAIN_MS = 2000;         // Ball drain (non-mode)
 unsigned long shakerDropStartMs = 0;                // When hill drop shaker started (0 = not running)
 
+// ***** TILT LAMP FLASH TIMING *****
+unsigned long tiltLampFlashStartMs = 0;    // When tilt lamp flashing started (0 = not flashing)
+const unsigned long TILT_LAMP_FLASH_MS = 4000;  // Flash TILT lamp for 4 seconds
+const unsigned long TILT_LAMP_TOGGLE_MS = 250;   // Toggle every 250ms (2Hz flash)
+bool tiltLampCurrentlyOn = false;
+
+// ***** TILT BOB SETTLE TIME *****
+// After an Enhanced tilt warning, suppress further tilt bob detection for this duration
+// to let the physical tilt bob stop swinging. Without this, a single nudge causes the
+// bob to bounce and register both a warning AND a full tilt almost simultaneously.
+const unsigned long TILT_BOB_SETTLE_MS = 1000;   // 1 second settle time after warning
+unsigned long tiltBobSettleUntilMs = 0;          // millis() deadline; ignore tilt bob until this time
+
+// ***** SCORE MOTOR STARTUP SEQUENCE (Original/Impulse Only) *****
+// Per Overview Section 5.3: The Score Motor runs for 4 quarter-turns (3528ms) during
+// game start. Actions are fired at specific sub-slot offsets within the sequence.
+// This runs concurrently with ball recovery in STARTUP_RECOVER_WAIT.
+// The credit has already been deducted and the ball tray already opened before this
+// sequence starts, so those sub-slots are no-ops.
+const unsigned long SCORE_MOTOR_SUB_SLOT_MS = 147;  // One sub-slot = 882ms / 6
+unsigned long scoreMotorStartMs = 0;       // When score motor was turned on (0 = not running)
+bool scoreMotorSlotRelayReset2 = false;    // True once 2nd relay reset has fired
+bool scoreMotorSlotScoreReset = false;     // True once score reset has been sent to Slave
+
 // ***** FLIPPER STATE *****
 bool leftFlipperHeld = false;
 bool rightFlipperHeld = false;
+byte impulseFlipperTicksRemaining = 0;  // Countdown for impulse flipper release
 
 // ***** KNOCKOFF BUTTON STATE *****
 unsigned long knockoffPressStartMs = 0;
@@ -420,10 +456,18 @@ const byte BALL_DRAIN_INSULT_FREQUENCY = 50;  // 0..100 indicates percent of the
 // Running the motor longer than necessary is harmless; it just makes the motor sound for a bit extra.
 const unsigned long SCORE_MOTOR_QUARTER_REV_MS = 882;
 
+// ***** SCORE MOTOR GAMEPLAY TIMER (Original/Impulse Only) *****
+// Separate from scoreMotorStartMs which is used only for the startup sequence.
+// This timer manages the Score Motor SSR during gameplay scoring events.
+// The motor SSR has timeOn=0, so activateDevice()/updateDeviceTimers() cannot
+// manage its timing -- we handle it manually here.
+unsigned long scoreMotorGameplayEndMs = 0;  // millis() deadline; 0 = motor not running for gameplay
+
 const int EEPROM_SAVE_INTERVAL_MS             = 10000;  // Save interval for EEPROM (milliseconds)
 int lastDisplayedScore = 0;  // Score to display at power-up (loaded from EEPROM)
 unsigned long lastEepromSaveMs = 0;  // When we last saved to EEPROM
 unsigned long gameTimeoutMs = 0;
+unsigned long gameTimeoutDeadlineMs = 0;  // millis() deadline; if exceeded with no activity, game ends
 
 // ********************************************************************************************************************************
 // ********************************************************* SETUP ****************************************************************
@@ -479,11 +523,14 @@ void setup() {
   // Load music theme preference
   audioLoadThemePreference(&primaryMusicTheme, &lastCircusTrackIdx, &lastSurfTrackIdx);
 
-  // Initialize lamps and game state
+  // Initialize game state (loads persisted EM state from EEPROM)
+  initGameState();
+
+  // Initialize lamps to reflect persisted EM state (must come after initGameState
+  // loads selectionUnitPosition, whiteLitMask, gobbleCount from EEPROM)
   setGILamps(true);
   pMessage->sendMAStoSLVGILamp(true);
   setAttractLamps();
-  initGameState();
 }
 
 // ********************************************************************************************************************************
@@ -512,9 +559,16 @@ void loop() {
   // ALWAYS process (every tick, all phases)
   updateDeviceTimers();
   processAudioTick();
+  processScoreMotorStartupTick();
+  processScoreMotorGameplayTick();
+  processKickoutEjectTick();
   processFlippers();
+  processTiltBob();
   processKnockoffButton();
   processVolumeButtons();
+  processMidGameStart();
+  processGameTimeout();
+  processPeriodicScoreSave();
 
   // Process coin entry in non-diagnostic phases
   if (gamePhase != PHASE_DIAGNOSTIC) {
@@ -541,6 +595,10 @@ void loop() {
 
   case PHASE_BALL_READY:
     updatePhaseBallReady();
+    break;
+
+  case PHASE_TILT:
+    updatePhaseTilt();
     break;
 
   default:
@@ -580,8 +638,6 @@ void loop() {
   if (gamePhase == PHASE_BALL_IN_PLAY) {
     unsigned long loopDuration = micros() - loopStartMicros;
     if (loopDuration > 9000) {
-      Serial.print("SLOW LOOP: ");
-      Serial.println(loopDuration);
       snprintf(lcdString, LCD_WIDTH + 1, "SLOW: %lu us", loopDuration);
       lcdPrintRow(4, lcdString);
     }
@@ -607,6 +663,13 @@ void updateAllSwitchStates() {
     // This was the root cause of double "ball saved" audio on the gobble hole.
     if (switchDebounceCounter[i] > 0) {
       switchDebounceCounter[i]--;
+      if (switchDebounceCounter[i] == 0) {
+        // Debounce just expired: snap switchLastState to current physical state
+        // so edge detection resumes from a clean baseline. Without this, the
+        // stale value from before the suppression window could cause the first
+        // real closure (or opening) after a long suppression to be silently missed.
+        switchLastState[i] = switchClosed(i) ? 1 : 0;
+      }
       continue;  // Skip edge detection AND state update
     }
 
@@ -655,7 +718,52 @@ void processFlippers() {
     return;
   }
 
-  // Normal flipper operation
+  // ***** IMPULSE STYLE: Both flippers fire briefly on EITHER button press *****
+  // Press either button: both flippers fire once for IMPULSE_FLIPPER_UP_TICKS (100ms)
+  // then drop. No hold. Must release and press again to flip again.
+  // NOTE: We use our own tick counter rather than the coil countdown because timeOn
+  // controls the full-power-to-hold-power transition (needed for Original/Enhanced),
+  // whereas impulse needs a shorter, independently tunable up-time.
+  if (gameStyle == STYLE_IMPULSE) {
+    bool leftPressed = switchClosed(SWITCH_IDX_FLIPPER_LEFT_BUTTON);
+    bool rightPressed = switchClosed(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
+    bool eitherJustClosed = switchJustClosedFlag[SWITCH_IDX_FLIPPER_LEFT_BUTTON]
+      || switchJustClosedFlag[SWITCH_IDX_FLIPPER_RIGHT_BUTTON];
+
+    if (eitherJustClosed && !leftFlipperHeld && !rightFlipperHeld) {
+      // Fire both flippers
+      activateDevice(DEV_IDX_FLIPPER_LEFT);
+      activateDevice(DEV_IDX_FLIPPER_RIGHT);
+      leftFlipperHeld = true;
+      rightFlipperHeld = true;
+      impulseFlipperTicksRemaining = IMPULSE_FLIPPER_UP_TICKS;
+    }
+
+    // Count down and release when timer expires
+    if (leftFlipperHeld && impulseFlipperTicksRemaining > 0) {
+      impulseFlipperTicksRemaining--;
+      if (impulseFlipperTicksRemaining == 0) {
+        releaseDevice(DEV_IDX_FLIPPER_LEFT);
+        releaseDevice(DEV_IDX_FLIPPER_RIGHT);
+        leftFlipperHeld = false;
+        rightFlipperHeld = false;
+      }
+    }
+
+    // Also release if both buttons are released (so player can't hold them up)
+    if (!leftPressed && !rightPressed) {
+      if (leftFlipperHeld) {
+        releaseDevice(DEV_IDX_FLIPPER_LEFT);
+        releaseDevice(DEV_IDX_FLIPPER_RIGHT);
+        leftFlipperHeld = false;
+        rightFlipperHeld = false;
+        impulseFlipperTicksRemaining = 0;
+      }
+    }
+    return;
+  }
+
+  // ***** ORIGINAL / ENHANCED STYLE: Normal independent holdable flippers *****
   bool leftPressed = switchClosed(SWITCH_IDX_FLIPPER_LEFT_BUTTON);
   if (leftPressed && !leftFlipperHeld) {
     activateDevice(DEV_IDX_FLIPPER_LEFT);
@@ -672,6 +780,231 @@ void processFlippers() {
   } else if (!rightPressed && rightFlipperHeld) {
     releaseDevice(DEV_IDX_FLIPPER_RIGHT);
     rightFlipperHeld = false;
+  }
+}
+
+// ***** TILT BOB PROCESSING *****
+// Called every tick from loop(). Checks for tilt bob closures and handles
+// warnings (Enhanced) or full tilt (Original/Impulse/Enhanced 2nd warning).
+// Per Overview Section 4.6: tilt bob is only recognized when ballsInPlay > 0.
+void processTiltBob() {
+  // Only process during active gameplay phases
+  if (gamePhase != PHASE_BALL_IN_PLAY && gamePhase != PHASE_BALL_READY) {
+    return;
+  }
+
+  // Already tilted - nothing more to do
+  if (gameState.tilted) {
+    return;
+  }
+
+  // Only recognize tilt bob when a ball is actually on the playfield
+  if (ballsInPlay == 0) {
+    return;
+  }
+
+  // Check for tilt bob closure
+  if (!switchJustClosedFlag[SWITCH_IDX_TILT_BOB]) {
+    return;
+  }
+
+  // Enforce settle time after Enhanced warning to let tilt bob stop swinging.
+  // Without this, a single nudge causes the bob to bounce and register both
+  // a warning AND a full tilt almost simultaneously.
+  if (tiltBobSettleUntilMs != 0 && (long)(millis() - tiltBobSettleUntilMs) < 0) {
+    return;
+  }
+  tiltBobSettleUntilMs = 0;  // Clear expired deadline
+
+  // Tilt bob closed with ball(s) in play
+  gameState.tiltWarnings++;
+
+  if (gameStyle == STYLE_ENHANCED && gameState.tiltWarnings == 1) {
+    // Enhanced first warning: audio warning only, resume play
+    audioDuckMusicForVoice(true);
+    byte randomIdx = (byte)random(0, NUM_COM_TILT_WARNING);
+    unsigned int trackNum = pgmReadComTrackNum(&comTracksTiltWarning[randomIdx]);
+    byte trackLenTenths = pgmReadComLengthTenths(&comTracksTiltWarning[randomIdx]);
+    pTsunami->trackPlayPoly((int)trackNum, 0, false);
+    audioApplyTrackGain(trackNum, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+    audioCurrentComTrack = trackNum;
+    audioComEndMillis = millis() + ((unsigned long)trackLenTenths * 100UL);
+
+    // Start settle timer so the bob can stop swinging before we accept another closure
+    tiltBobSettleUntilMs = millis() + TILT_BOB_SETTLE_MS;
+
+    return;
+  }
+
+  // Full tilt: 1st tilt in Original/Impulse, or 2nd tilt in Enhanced
+  handleFullTilt();
+}
+
+// ***** FULL TILT HANDLER *****
+// Called when a full tilt is triggered. Sets tilted flag, disables scoring devices,
+// ejects locked balls, starts TILT lamp flash, and transitions to PHASE_TILT.
+void handleFullTilt() {
+  gameState.tilted = true;
+
+  // Cancel ball save (no saves after tilt)
+  ballSave.endMs = 0;
+
+  // Cancel any active mode
+  if (modeState.active) {
+    modeState.active = false;
+    modeState.currentMode = MODE_NONE;
+  }
+
+  // Cancel multiball
+  inMultiball = false;
+
+  // Stop all shakers
+  stopAllShakers();
+
+  // Flippers are disabled automatically by processFlippers() checking gameState.tilted.
+  // Release them immediately here for responsiveness.
+  if (leftFlipperHeld) {
+    releaseDevice(DEV_IDX_FLIPPER_LEFT);
+    leftFlipperHeld = false;
+  }
+  if (rightFlipperHeld) {
+    releaseDevice(DEV_IDX_FLIPPER_RIGHT);
+    rightFlipperHeld = false;
+  }
+
+  // Momentarily turn off all playfield lamps, then turn GI back on.
+  // (The brief blackout is a classic tilt visual cue.)
+  for (byte i = 0; i < NUM_LAMPS_MASTER; i++) {
+    pShiftRegister->digitalWrite(lampParm[i].pinNum, HIGH);  // All lamps off
+  }
+  setGILamps(true);  // GI back on immediately
+
+  // Eject any balls locked in side kickouts (all styles, per Overview 4.6)
+  ballsLocked = 0;
+  if (switchClosed(SWITCH_IDX_KICKOUT_LEFT)) {
+    activateDevice(DEV_IDX_KICKOUT_LEFT);
+  }
+  if (switchClosed(SWITCH_IDX_KICKOUT_RIGHT)) {
+    activateDevice(DEV_IDX_KICKOUT_RIGHT);
+  }
+
+  // Turn on TILT lamp (flashing) and start flash timer
+  pMessage->sendMAStoSLVTiltLamp(true);
+  tiltLampFlashStartMs = millis();
+  tiltLampCurrentlyOn = true;
+
+  // Enhanced style: play buzzer + random tilt announcement
+  if (gameStyle == STYLE_ENHANCED) {
+    // Stop current audio
+    if (audioCurrentComTrack != 0) {
+      pTsunami->trackStop(audioCurrentComTrack);
+      audioCurrentComTrack = 0;
+      audioComEndMillis = 0;
+    }
+    if (audioCurrentSfxTrack != 0) {
+      pTsunami->trackStop(audioCurrentSfxTrack);
+      audioCurrentSfxTrack = 0;
+    }
+    audioDuckMusicForVoice(true);
+
+    // Play buzzer SFX
+    pTsunami->trackPlayPoly(TRACK_TILT_BUZZER, 0, false);
+    audioApplyTrackGain(TRACK_TILT_BUZZER, tsunamiSfxGainDb, tsunamiGainDb, pTsunami);
+
+    // Play random tilt voice announcement after brief pause
+    delay(500);
+    byte randomIdx = (byte)random(0, NUM_COM_TILT);
+    unsigned int trackNum = pgmReadComTrackNum(&comTracksTilt[randomIdx]);
+    byte trackLenTenths = pgmReadComLengthTenths(&comTracksTilt[randomIdx]);
+    pTsunami->trackPlayPoly((int)trackNum, 0, false);
+    audioApplyTrackGain(trackNum, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+    audioCurrentComTrack = trackNum;
+    audioComEndMillis = millis() + ((unsigned long)trackLenTenths * 100UL);
+  }
+
+  // Transition to PHASE_TILT to wait for all balls to drain
+  gamePhase = PHASE_TILT;
+}
+
+// ***** TILT PHASE HANDLER *****
+// Waits for all balls to drain after a full tilt. No scoring, no flippers.
+// Monitors drain switches to decrement ballsInPlay. Also handles TILT lamp flashing
+// and kickout ejection (in case a ball lands in a kickout while draining).
+void updatePhaseTilt() {
+  // Track ball-in-lift switch so we can detect when all balls have drained.
+  // Without this, ballInLift could be stuck true from PHASE_BALL_READY entry,
+  // preventing the exit condition (ballsInPlay == 0 && !ballInLift) from ever firing.
+  bool ballInLiftNow = switchClosed(SWITCH_IDX_BALL_IN_LIFT);
+  if (!ballInLiftNow && ballInLift) {
+    ballInLift = false;
+  } else if (ballInLiftNow && !ballInLift) {
+    ballInLift = true;
+  }
+
+  // Flash TILT lamp for about 4 seconds (toggle every 250ms)
+  if (tiltLampFlashStartMs != 0) {
+    unsigned long elapsed = millis() - tiltLampFlashStartMs;
+    if (elapsed >= TILT_LAMP_FLASH_MS) {
+      // Done flashing - leave TILT lamp on solid
+      pMessage->sendMAStoSLVTiltLamp(true);
+      tiltLampFlashStartMs = 0;
+      tiltLampCurrentlyOn = true;
+    } else {
+      // Toggle based on elapsed time
+      bool shouldBeOn = ((elapsed / TILT_LAMP_TOGGLE_MS) % 2) == 0;
+      if (shouldBeOn != tiltLampCurrentlyOn) {
+        pMessage->sendMAStoSLVTiltLamp(shouldBeOn);
+        tiltLampCurrentlyOn = shouldBeOn;
+      }
+    }
+  }
+
+  // Eject any balls that land in kickouts while draining
+  if (switchClosed(SWITCH_IDX_KICKOUT_LEFT) && deviceParm[DEV_IDX_KICKOUT_LEFT].countdown == 0) {
+    activateDevice(DEV_IDX_KICKOUT_LEFT);
+  }
+  if (switchClosed(SWITCH_IDX_KICKOUT_RIGHT) && deviceParm[DEV_IDX_KICKOUT_RIGHT].countdown == 0) {
+    activateDevice(DEV_IDX_KICKOUT_RIGHT);
+  }
+
+  // Monitor drain switches for ball drains (decrement ballsInPlay)
+  if (switchJustClosedFlag[SWITCH_IDX_DRAIN_LEFT]
+    || switchJustClosedFlag[SWITCH_IDX_DRAIN_CENTER]
+    || switchJustClosedFlag[SWITCH_IDX_DRAIN_RIGHT]
+    || switchJustClosedFlag[SWITCH_IDX_GOBBLE]) {
+    if (ballsInPlay > 0) {
+      ballsInPlay--;
+    }
+  }
+
+  // Exit condition: all balls drained and no ball in lift
+  if (ballsInPlay == 0 && !ballInLift) {
+
+    // Stop TILT lamp flash if still going, and turn TILT lamp OFF
+    tiltLampFlashStartMs = 0;
+    pMessage->sendMAStoSLVTiltLamp(false);
+
+    // Enhanced: stop any remaining tilt audio, un-duck music
+    if (gameStyle == STYLE_ENHANCED) {
+      if (audioCurrentComTrack != 0) {
+        pTsunami->trackStop(audioCurrentComTrack);
+        audioCurrentComTrack = 0;
+        audioComEndMillis = 0;
+      }
+      audioDuckMusicForVoice(false);
+    }
+
+    // Advance to next ball or game over
+    if (gameState.currentBall < MAX_BALLS) {
+      gameState.currentBall++;
+      ballSaveUsed = false;
+      gamePhase = PHASE_STARTUP;
+      startupSubState = STARTUP_DISPENSE_BALL;
+      startupTickCounter = 0;
+    } else {
+      // Last ball - game over
+      processBallLost();  // Reuse game-over logic in processBallLost
+    }
   }
 }
 
@@ -791,8 +1124,8 @@ void startGameIfCredits() {
       delay(800);
 
       byte randomIdx = (byte)random(0, NUM_COM_START_REJECT);
-      unsigned int trackNum = comTracksStartReject[randomIdx].trackNum;
-      byte trackLength = comTracksStartReject[randomIdx].lengthTenths;
+      unsigned int trackNum = pgmReadComTrackNum(&comTracksStartReject[randomIdx]);
+      byte trackLength = pgmReadComLengthTenths(&comTracksStartReject[randomIdx]);
       pTsunami->trackPlayPoly((int)trackNum, 0, false);
       audioApplyTrackGain(trackNum, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
       audioCurrentComTrack = trackNum;
@@ -812,6 +1145,12 @@ void startGameIfCredits() {
   gameState.currentPlayer = 1;
   gameState.currentBall = 1;
 
+  // Load ball save duration from EEPROM (1-30 seconds, default 15 if invalid)
+  ballSaveSeconds = diagReadBallSaveTimeFromEEPROM();
+  if (ballSaveSeconds == 0) {
+    ballSaveSeconds = BALL_SAVE_DEFAULT_SECONDS;
+  }
+
   // Enhanced: play SCREAM immediately for shock value
   if (gameStyle == STYLE_ENHANCED) {
     pTsunami->stopAllTracks();
@@ -823,6 +1162,8 @@ void startGameIfCredits() {
   gamePhase = PHASE_STARTUP;
   startupSubState = STARTUP_RECOVER_INIT;
   startupTickCounter = 0;
+  resetGameTimeoutDeadline();
+  lastEepromSaveMs = millis();  // Start periodic save timer from game start
 }
 
 // ********************************************************************************************************************************
@@ -941,6 +1282,8 @@ void updateModeDiagnostic() {
 // Runs every 10ms tick. Handles ball recovery (ensuring all 5 balls are in trough),
 // then dispenses one ball to the player. No blocking delays except brief audio playback
 // during game-start fanfare which is acceptable before gameplay begins.
+// NOTE: The score motor tick processing was moved to processScoreMotorStartupTick()
+// in loop() so it continues running after PHASE_STARTUP transitions to PHASE_BALL_READY.
 void updatePhaseStartup() {
   startupTickCounter++;
 
@@ -950,214 +1293,290 @@ void updatePhaseStartup() {
     // PHASE 1: BALL RECOVERY - Get all 5 balls into the trough
     // -----------------------------------------------------------------------
 
-    case STARTUP_RECOVER_INIT:
-    {
-      // Snapshot lift switch state before we start (for ball search audio later if needed)
-      ballRecoveryBallInLiftAtStart = switchClosed(SWITCH_IDX_BALL_IN_LIFT);
+  case STARTUP_RECOVER_INIT:
+  {
+    // Snapshot lift switch state before we start (for ball search audio later if needed)
+    ballRecoveryBallInLiftAtStart = switchClosed(SWITCH_IDX_BALL_IN_LIFT);
 
-      // Open ball tray so any balls in tray drop into trough
-      activateDevice(DEV_IDX_BALL_TRAY_RELEASE);
-      gameState.ballTrayOpen = true;
+    // Open ball tray so any balls in tray drop into trough
+    activateDevice(DEV_IDX_BALL_TRAY_RELEASE);
+    gameState.ballTrayOpen = true;
 
-      // Eject any balls stuck in kickouts
-      if (switchClosed(SWITCH_IDX_KICKOUT_LEFT)) {
-        activateDevice(DEV_IDX_KICKOUT_LEFT);
+    // Eject any balls stuck in kickouts
+    if (switchClosed(SWITCH_IDX_KICKOUT_LEFT)) {
+      activateDevice(DEV_IDX_KICKOUT_LEFT);
+    }
+    if (switchClosed(SWITCH_IDX_KICKOUT_RIGHT)) {
+      activateDevice(DEV_IDX_KICKOUT_RIGHT);
+    }
+
+    // Original/Impulse: Start Score Motor startup sequence (runs concurrently with ball recovery).
+    // Per Overview Section 5.3, the 1st quarter-turn fires relay resets, deducts credit, and
+    // opens ball tray. Credit and tray are already handled, so we just need the motor sound
+    // and relay reset firings here. The score reset is sent at the 2nd quarter-turn (T+882ms)
+    // by the tick processor at the top of updatePhaseStartup().
+    if (gameStyle == STYLE_ORIGINAL || gameStyle == STYLE_IMPULSE) {
+      activateDevice(DEV_IDX_MOTOR_SCORE);
+      activateDevice(DEV_IDX_RELAY_RESET);
+      scoreMotorStartMs = millis();
+      scoreMotorSlotRelayReset2 = false;
+      scoreMotorSlotScoreReset = false;
+    }
+
+    // Enhanced style: play "Hey Gang" during ball recovery (SCREAM already played in processStartButton)
+    if (gameStyle == STYLE_ENHANCED) {
+      // Brief delay to let SCREAM sound start before overlapping with "Hey Gang"
+      delay(1500);
+      pTsunami->trackPlayPoly(TRACK_START_HEY_GANG, 0, false);
+      audioApplyTrackGain(TRACK_START_HEY_GANG, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+      audioCurrentComTrack = TRACK_START_HEY_GANG;
+      audioComEndMillis = millis() + 3500UL;
+
+      // If a ball is already at the lift base, tell the player immediately rather than
+      // waiting for the 7-second ball recovery timeout to enter PHASE_BALL_SEARCH.
+      // Play it right after "Hey Gang" so the two announcements are back-to-back.
+      if (ballRecoveryBallInLiftAtStart) {
+        delay(3500);  // Wait for "Hey Gang" to finish
+        pTsunami->trackPlayPoly(TRACK_BALL_IN_LIFT, 0, false);
+        audioApplyTrackGain(TRACK_BALL_IN_LIFT, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+        audioCurrentComTrack = TRACK_BALL_IN_LIFT;
+        audioComEndMillis = millis() + ((unsigned long)pgmReadComLengthTenths(&comTracksBallMissing[1]) * 100UL);
       }
-      if (switchClosed(SWITCH_IDX_KICKOUT_RIGHT)) {
-        activateDevice(DEV_IDX_KICKOUT_RIGHT);
-      }
 
-      // Enhanced style: play "Hey Gang" during ball recovery (SCREAM already played in processStartButton)
-      if (gameStyle == STYLE_ENHANCED) {
-        // Brief delay to let SCREAM sound start before overlapping with "Hey Gang"
-        delay(1500);
-        pTsunami->trackPlayPoly(TRACK_START_HEY_GANG, 0, false);
-        audioApplyTrackGain(TRACK_START_HEY_GANG, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
-        audioCurrentComTrack = TRACK_START_HEY_GANG;
-        audioComEndMillis = millis() + 3500UL;
+      lcdClear();
+      lcdPrintRow(1, "Starting Enhanced");
+    }
 
-        lcdClear();
-        lcdPrintRow(1, "Starting Enhanced");
-      }
+    // Start recovery timer
+    ballRecoveryStartMs = millis();
+    ballRecoveryStableStartMs = 0;
+    ballRecoverySwitchWasStable = false;
+    ballTrayOpenStartMs = millis();  // For ball search timeout if we get there
 
-      // Start recovery timer
-      ballRecoveryStartMs = millis();
-      ballRecoveryStableStartMs = 0;
-      ballRecoverySwitchWasStable = false;
-      ballTrayOpenStartMs = millis();  // For ball search timeout if we get there
+    // Check if balls are already in trough (common case - game just ended)
+    if (allBallsInTrough()) {
+      // Start stability verification immediately
+      ballRecoveryStableStartMs = millis();
+      ballRecoverySwitchWasStable = true;
+    }
 
-      // Check if balls are already in trough (common case - game just ended)
-      if (allBallsInTrough()) {
-        // Start stability verification immediately
+    startupSubState = STARTUP_RECOVER_WAIT;
+    startupTickCounter = 0;
+    break;
+  }
+
+  case STARTUP_RECOVER_WAIT:
+  {
+    // Continuously eject any balls that land in kickouts
+    if (switchClosed(SWITCH_IDX_KICKOUT_LEFT) && deviceParm[DEV_IDX_KICKOUT_LEFT].countdown == 0) {
+      activateDevice(DEV_IDX_KICKOUT_LEFT);
+    }
+    if (switchClosed(SWITCH_IDX_KICKOUT_RIGHT) && deviceParm[DEV_IDX_KICKOUT_RIGHT].countdown == 0) {
+      activateDevice(DEV_IDX_KICKOUT_RIGHT);
+    }
+
+    // Monitor the 5-balls-in-trough switch for stability
+    bool troughClosed = allBallsInTrough();
+
+    if (troughClosed) {
+      if (!ballRecoverySwitchWasStable) {
+        // Switch just closed - start stability timer
         ballRecoveryStableStartMs = millis();
         ballRecoverySwitchWasStable = true;
-      }
-
-      startupSubState = STARTUP_RECOVER_WAIT;
-      startupTickCounter = 0;
-      Serial.println("DEBUG: STARTUP_RECOVER_INIT -> RECOVER_WAIT");
-      break;
-    }
-
-    case STARTUP_RECOVER_WAIT:
-    {
-      // Continuously eject any balls that land in kickouts
-      if (switchClosed(SWITCH_IDX_KICKOUT_LEFT) && deviceParm[DEV_IDX_KICKOUT_LEFT].countdown == 0) {
-        activateDevice(DEV_IDX_KICKOUT_LEFT);
-      }
-      if (switchClosed(SWITCH_IDX_KICKOUT_RIGHT) && deviceParm[DEV_IDX_KICKOUT_RIGHT].countdown == 0) {
-        activateDevice(DEV_IDX_KICKOUT_RIGHT);
-      }
-
-      // Monitor the 5-balls-in-trough switch for stability
-      bool troughClosed = allBallsInTrough();
-
-      if (troughClosed) {
-        if (!ballRecoverySwitchWasStable) {
-          // Switch just closed - start stability timer
-          ballRecoveryStableStartMs = millis();
-          ballRecoverySwitchWasStable = true;
-        } else {
-          // Switch has been closed - check if stable long enough
-          if (millis() - ballRecoveryStableStartMs >= BALL_DETECTION_STABILITY_MS) {
-            // All 5 balls confirmed in trough!
-            startupSubState = STARTUP_RECOVER_CONFIRMED;
-            startupTickCounter = 0;
-            Serial.println("DEBUG: 5 balls confirmed in trough, RECOVER_WAIT -> RECOVER_CONFIRMED");
-            break;
-          }
-        }
       } else {
-        // Switch opened - reset stability tracking (ball was rolling over switch)
-        ballRecoverySwitchWasStable = false;
-      }
-
-      // Timeout check - if balls haven't settled, enter ball search
-      if (millis() - ballRecoveryStartMs >= BALL_RECOVERY_TIMEOUT_MS) {
-        Serial.println("DEBUG: Ball recovery timeout, entering PHASE_BALL_SEARCH");
-
-        // Leave tray open (ball search will manage it)
-        gamePhase = PHASE_BALL_SEARCH;
-        ballSearchSubState = BALL_SEARCH_INIT;
-
-        // Enhanced style: play "ball missing" audio
-        if (gameStyle == STYLE_ENHANCED) {
-          if (ballRecoveryBallInLiftAtStart) {
-            // Ball was at lift base - play lift instruction first, then "ball missing"
-            pTsunami->trackPlayPoly(TRACK_BALL_IN_LIFT, 0, false);
-            audioApplyTrackGain(TRACK_BALL_IN_LIFT, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
-            audioCurrentComTrack = TRACK_BALL_IN_LIFT;
-            audioComEndMillis = millis() + ((unsigned long)comTracksBallMissing[1].lengthTenths * 100UL);
-          } else {
-            // No ball at lift - just play "ball missing"
-            unsigned int trackNum = comTracksBallMissing[0].trackNum;
-            byte trackLength = comTracksBallMissing[0].lengthTenths;
-            pTsunami->trackPlayPoly((int)trackNum, 0, false);
-            audioApplyTrackGain(trackNum, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
-            audioCurrentComTrack = trackNum;
-            audioComEndMillis = millis() + ((unsigned long)trackLength * 100UL);
-          }
+        // Switch has been closed - check if stable long enough
+        if (millis() - ballRecoveryStableStartMs >= BALL_DETECTION_STABILITY_MS) {
+          // All 5 balls confirmed in trough!
+          startupSubState = STARTUP_RECOVER_CONFIRMED;
+          startupTickCounter = 0;
+          break;
         }
-        return;
       }
-      break;
+    } else {
+      // Switch opened - reset stability tracking (ball was rolling over switch)
+      ballRecoverySwitchWasStable = false;
     }
 
-    case STARTUP_RECOVER_CONFIRMED:
-    {
-      // Ball tray management depends on style:
-      // - Original/Impulse: Keep tray OPEN (stays open until first playfield switch hit)
-      // - Enhanced: Keep tray OPEN (stays open for entire game)
-      // In all cases, the tray is already open from STARTUP_RECOVER_INIT, so nothing to do here.
+    // Timeout check - if balls haven't settled, enter ball search
+    if (millis() - ballRecoveryStartMs >= BALL_RECOVERY_TIMEOUT_MS) {
 
-      // Enhanced style: credit already deducted in processStartButton().
-      // Audio (SCREAM + Hey Gang) already played. Just send silent score reset.
+      // Turn off Score Motor if still running (ball search will handle its own timing)
+      if (scoreMotorStartMs != 0) {
+        releaseDevice(DEV_IDX_MOTOR_SCORE);
+        scoreMotorStartMs = 0;
+      }
+
+      // Leave tray open (ball search will manage it)
+      gamePhase = PHASE_BALL_SEARCH;
+      ballSearchSubState = BALL_SEARCH_INIT;
+
+      // Enhanced style: play contextual "ball missing" audio based on LIVE switch state
       if (gameStyle == STYLE_ENHANCED) {
-        // Don't stop "Hey Gang" -- let it finish naturally.
-        // Just clear COM tracking so ducking logic doesn't interfere.
-        audioCurrentComTrack = 0;
-        audioComEndMillis = 0;
+        bool liftHasBall = switchClosed(SWITCH_IDX_BALL_IN_LIFT);
+        if (liftHasBall) {
+          // Ball is at lift base right now - tell player to push it
+          pTsunami->trackPlayPoly(TRACK_BALL_IN_LIFT, 0, false);
+          audioApplyTrackGain(TRACK_BALL_IN_LIFT, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+          audioCurrentComTrack = TRACK_BALL_IN_LIFT;
+          audioComEndMillis = millis() + ((unsigned long)pgmReadComLengthTenths(&comTracksBallMissing[1]) * 100UL);
+        } else {
+          // No ball at lift - just play "ball missing"
+          unsigned int trackNum = pgmReadComTrackNum(&comTracksBallMissing[0]);
+          byte trackLength = pgmReadComLengthTenths(&comTracksBallMissing[0]);
+          pTsunami->trackPlayPoly((int)trackNum, 0, false);
+          audioApplyTrackGain(trackNum, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+          audioCurrentComTrack = trackNum;
+          audioComEndMillis = millis() + ((unsigned long)trackLength * 100UL);
+        }
+      }
+      return;
+    }
+    break;
+  }
+
+  case STARTUP_RECOVER_CONFIRMED:
+  {
+    // Ball tray management depends on style:
+    // - Original/Impulse: Keep tray OPEN (stays open until first playfield switch hit)
+    // - Enhanced: Keep tray OPEN (stays open for entire game)
+    // In all cases, the tray is already open from STARTUP_RECOVER_INIT, so nothing to do here.
+
+    // Enhanced style: credit already deducted in processStartButton().
+    // Audio (SCREAM + Hey Gang) already played. Just send score reset.
+    if (gameStyle == STYLE_ENHANCED) {
+      // Don't stop "Hey Gang" -- let it finish naturally.
+      // Just clear COM tracking so ducking logic doesn't interfere.
+      audioCurrentComTrack = 0;
+      audioComEndMillis = 0;
+      sendScoreReset();
+    }
+
+    // Original/Impulse: The score motor tick processor (at the top of updatePhaseStartup)
+    // sends the score reset at T+882ms. If ball recovery finished before that (unlikely
+    // but possible since recovery takes 1000ms stability + whatever settling time), send
+    // the score reset now so Slave starts resetting immediately.
+    if (gameStyle == STYLE_ORIGINAL || gameStyle == STYLE_IMPULSE) {
+      if (!scoreMotorSlotScoreReset) {
         sendScoreReset();
+        scoreMotorSlotScoreReset = true;
       }
+      // Score Motor continues running in the background; the tick processor at the top
+      // of updatePhaseStartup() will turn it off at T+3528ms.
+    }
 
-      // Original/Impulse: credit already deducted in processStartButton().
-      // TODO: implement Score Motor startup sequence per Section 5.3.
-      // For now, just reset score.
-      if (gameStyle == STYLE_ORIGINAL || gameStyle == STYLE_IMPULSE) {
-        sendScoreReset();
+    // Set all gameplay lamps to reflect initial EM emulation state.
+    // initGameState() already randomized selectionUnitPosition and set bumperLitMask,
+    // whiteLitMask, etc., but setAttractLamps() turned off all non-GI/non-bumper lamps.
+    // Now that the game is officially starting, light the correct lamps.
+    setInitialGameplayLamps();
+
+    // Move to ball dispense
+    startupSubState = STARTUP_DISPENSE_BALL;
+    startupTickCounter = 0;
+    break;
+  }
+
+  // -----------------------------------------------------------------------
+  // PHASE 2: BALL DISPENSE - Release one ball to the player
+  // -----------------------------------------------------------------------
+
+  case STARTUP_DISPENSE_BALL:
+  {
+    // Initialize per-ball game state
+    gameState.tilted = false;
+    gameState.tiltWarnings = 0;
+
+    // Enhanced style: announce ball number for balls 2-5, with Ball 5 follow-up comment
+    if (gameStyle == STYLE_ENHANCED && gameState.currentBall >= 2) {
+      // Duck music so the ball number announcement is audible
+      audioDuckMusicForVoice(true);
+
+      // Play "Ball 2", "Ball 3", "Ball 4", or "Ball 5"
+      unsigned int ballTrack = TRACK_BALL_BASE + (gameState.currentBall - 1);
+      pTsunami->trackPlayPoly((int)ballTrack, 0, false);
+      audioApplyTrackGain(ballTrack, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+
+      // Look up length from comTracksBall[] array (index 0 = Ball 1, index 4 = Ball 5)
+      byte ballTrackLenTenths = pgmReadComLengthTenths(&comTracksBall[gameState.currentBall - 1]);
+      unsigned long ballTrackMs = (unsigned long)ballTrackLenTenths * 100UL;
+
+      if (gameState.currentBall == 5) {
+        // Ball 5: follow with a random "last ball" comment (tracks 531-540)
+        // Wait for "Ball 5" to finish, then play the follow-up
+        delay(ballTrackMs + 200UL);  // Brief gap between announcements
+
+        byte randomIdx = (byte)random(0, NUM_COM_BALL5_COMMENT);
+        unsigned int commentTrack = pgmReadComTrackNum(&comTracksBall5Comment[randomIdx]);
+        byte commentLenTenths = pgmReadComLengthTenths(&comTracksBall5Comment[randomIdx]);
+        pTsunami->trackPlayPoly((int)commentTrack, 0, false);
+        audioApplyTrackGain(commentTrack, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+        audioCurrentComTrack = commentTrack;
+        audioComEndMillis = millis() + ((unsigned long)commentLenTenths * 100UL);
+      } else {
+        // Balls 2-4: just track the ball number announcement as the active COM track
+        audioCurrentComTrack = ballTrack;
+        audioComEndMillis = millis() + ballTrackMs;
       }
+    }
 
-      // Move to ball dispense
-      startupSubState = STARTUP_DISPENSE_BALL;
+    // Fire ball trough release coil (230ms pulse)
+    activateDevice(DEV_IDX_BALL_TROUGH_RELEASE);
+
+    // Record when we dispensed the ball (for timeout tracking)
+    startupBallDispenseMs = millis();
+
+    // Move to wait state
+    startupSubState = STARTUP_WAIT_FOR_LIFT;
+    startupTickCounter = 0;
+    break;
+  }
+
+  case STARTUP_WAIT_FOR_LIFT:
+  {
+    // Check if ball has reached lift
+    if (switchClosed(SWITCH_IDX_BALL_IN_LIFT)) {
+      // Success! Ball is in lift
+      startupSubState = STARTUP_COMPLETE;
       startupTickCounter = 0;
-      Serial.println("DEBUG: RECOVER_CONFIRMED -> DISPENSE_BALL");
       break;
     }
 
-    // -----------------------------------------------------------------------
-    // PHASE 2: BALL DISPENSE - Release one ball to the player
-    // -----------------------------------------------------------------------
-
-    case STARTUP_DISPENSE_BALL:
-    {
-      // Initialize per-ball game state
-      gameState.tilted = false;
-      gameState.tiltWarnings = 0;
-
-      // Fire ball trough release coil (230ms pulse)
-      activateDevice(DEV_IDX_BALL_TROUGH_RELEASE);
-
-      // Record when we dispensed the ball (for timeout tracking)
-      startupBallDispenseMs = millis();
-
-      // Move to wait state
-      startupSubState = STARTUP_WAIT_FOR_LIFT;
-      startupTickCounter = 0;
-      Serial.println("DEBUG: DISPENSE_BALL -> WAIT_FOR_LIFT");
-      break;
-    }
-
-    case STARTUP_WAIT_FOR_LIFT:
-    {
-      // Check if ball has reached lift
-      if (switchClosed(SWITCH_IDX_BALL_IN_LIFT)) {
-        // Success! Ball is in lift
-        startupSubState = STARTUP_COMPLETE;
-        startupTickCounter = 0;
-        Serial.println("DEBUG: Ball in lift, WAIT_FOR_LIFT -> COMPLETE");
-        break;
+    // Check for timeout (3 seconds)
+    if (millis() - startupBallDispenseMs >= BALL_TROUGH_TO_LIFT_TIMEOUT_MS) {
+      // Timeout - ball didn't reach lift
+      if (scoreMotorStartMs != 0) {
+        releaseDevice(DEV_IDX_MOTOR_SCORE);
+        scoreMotorStartMs = 0;
       }
-
-      // Check for timeout (3 seconds)
-      if (millis() - startupBallDispenseMs >= BALL_TROUGH_TO_LIFT_TIMEOUT_MS) {
-        // Timeout - ball didn't reach lift
-        criticalError("BALL STUCK", "Ball did not reach", "lift in 3 seconds");
-        return;
-      }
-      break;
+      criticalError("BALL STUCK", "Ball did not reach", "lift in 3 seconds");
+      return;
     }
+    break;
+  }
 
-    case STARTUP_COMPLETE:
-    {
-      // Reset for potential next ball (ball 2, 3, etc. will re-enter at DISPENSE_BALL)
-      startupSubState = STARTUP_RECOVER_INIT;
-      startupTickCounter = 0;
+  case STARTUP_COMPLETE:
+  {
+    // Reset for potential next ball (ball 2, 3, etc. will re-enter at DISPENSE_BALL)
+    startupSubState = STARTUP_RECOVER_INIT;
+    startupTickCounter = 0;
 
-      // Initialize ball ready state BEFORE transitioning
-      onEnterBallReady();
+    // Initialize ball ready state BEFORE transitioning
+    onEnterBallReady();
 
-      // NOW transition to PHASE_BALL_READY
-      gamePhase = PHASE_BALL_READY;
+    // NOW transition to PHASE_BALL_READY
+    gamePhase = PHASE_BALL_READY;
 
-      // Update LCD status line
-      snprintf(lcdString, LCD_WIDTH + 1, "%s P%d Ball %d",
-        gameStyle == STYLE_ENHANCED ? "Enh" : "Org",
-        gameState.currentPlayer,
-        gameState.currentBall);
-      lcdPrintRow(4, lcdString);
-      Serial.println("DEBUG: STARTUP_COMPLETE -> PHASE_BALL_READY");
-      break;
-    }
+    // Update LCD status line
+    const char* styleStr = "Org";
+    if (gameStyle == STYLE_ENHANCED) styleStr = "Enh";
+    else if (gameStyle == STYLE_IMPULSE) styleStr = "Imp";
+    snprintf(lcdString, LCD_WIDTH + 1, "%s P%d Ball %d",
+      styleStr,
+      gameState.currentPlayer,
+      gameState.currentBall);
+    lcdPrintRow(4, lcdString);
+    break;
+  }
   }  // end switch
 }
 
@@ -1214,10 +1633,10 @@ void updatePhaseBallSearch() {
         pTsunami->trackPlayPoly(TRACK_BALL_IN_LIFT, 0, false);
         audioApplyTrackGain(TRACK_BALL_IN_LIFT, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
         audioCurrentComTrack = TRACK_BALL_IN_LIFT;
-        audioComEndMillis = millis() + ((unsigned long)comTracksBallMissing[1].lengthTenths * 100UL);
+        audioComEndMillis = millis() + ((unsigned long)pgmReadComLengthTenths(&comTracksBallMissing[1]) * 100UL);
       } else {
-        unsigned int trackNum = comTracksBallMissing[0].trackNum;
-        byte trackLength = comTracksBallMissing[0].lengthTenths;
+        unsigned int trackNum = pgmReadComTrackNum(&comTracksBallMissing[0]);
+        byte trackLength = pgmReadComLengthTenths(&comTracksBallMissing[0]);
         pTsunami->trackPlayPoly((int)trackNum, 0, false);
         audioApplyTrackGain(trackNum, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
         audioCurrentComTrack = trackNum;
@@ -1235,7 +1654,6 @@ void updatePhaseBallSearch() {
       ballRecoverySwitchWasStable = true;
     } else if (millis() - ballRecoveryStableStartMs >= BALL_DETECTION_STABILITY_MS) {
       // Confirmed! Transition back to startup to finish game start sequence
-      Serial.println("DEBUG: Ball search found all balls, -> STARTUP_RECOVER_CONFIRMED");
       pTsunami->stopAllTracks();
       audioCurrentComTrack = 0;
       audioComEndMillis = 0;
@@ -1296,7 +1714,6 @@ void updatePhaseBallReady() {
       // Detect RISING EDGE (switch just closed)
       if (ballInLiftNow && !prevBallInLift) {
         ballSettledInLift = true;
-        Serial.println("DEBUG: Ball settled in lift (rising edge), ready for player to push");
       }
 
       prevBallInLift = ballInLiftNow;
@@ -1306,14 +1723,11 @@ void updatePhaseBallReady() {
     // ***** STEP 2: Wait for ball to LEAVE (falling edge) *****
     if (ballInLiftNow && !prevBallInLift) {
       // Ball just re-arrived after being removed - NOT the launch we're looking for
-      Serial.println("DEBUG: Ball returned to lift after removal");
     }
 
     if (!ballInLiftNow && prevBallInLift) {
       // FALLING EDGE: Ball just left the lift - START HILL CLIMB
       hillClimbStarted = true;
-
-      Serial.println("DEBUG: Ball lift rod pushed, starting hill climb");
 
       // Start lift loop audio (looping)
       pTsunami->trackPlayPoly(TRACK_START_LIFT_LOOP, 0, false);
@@ -1327,6 +1741,35 @@ void updatePhaseBallReady() {
     }
 
     prevBallInLift = ballInLiftNow;
+  }
+
+  // ***** ENHANCED STYLE: "Shoot the ball" reminder after HILL_CLIMB_TIMEOUT_MS of inactivity *****
+  // If the player hasn't hit any target within the timeout, play a contextual reminder.
+  // Repeats every HILL_CLIMB_TIMEOUT_MS until the player scores (exits PHASE_BALL_READY).
+  if (gameStyle == STYLE_ENHANCED && shootReminderDeadlineMs != 0
+    && (long)(millis() - shootReminderDeadlineMs) >= 0) {
+    // Duck music so the reminder is audible
+    audioDuckMusicForVoice(true);
+
+    if (switchClosed(SWITCH_IDX_BALL_IN_LIFT)) {
+      // Ball is sitting in the lift - tell player to push the lift rod
+      pTsunami->trackPlayPoly(TRACK_SHOOT_LIFT_ROD, 0, false);
+      audioApplyTrackGain(TRACK_SHOOT_LIFT_ROD, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+      audioCurrentComTrack = TRACK_SHOOT_LIFT_ROD;
+      audioComEndMillis = millis() + ((unsigned long)pgmReadComLengthTenths(&comTracksShoot[0]) * 100UL);
+    } else {
+      // Ball has left the lift but hasn't hit anything - tell player to shoot
+      byte randomIdx = 1 + (byte)random(0, NUM_COM_SHOOT - 1);  // indices 1..9
+      unsigned int trackNum = pgmReadComTrackNum(&comTracksShoot[randomIdx]);
+      byte trackLenTenths = pgmReadComLengthTenths(&comTracksShoot[randomIdx]);
+      pTsunami->trackPlayPoly((int)trackNum, 0, false);
+      audioApplyTrackGain(trackNum, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+      audioCurrentComTrack = trackNum;
+      audioComEndMillis = millis() + ((unsigned long)trackLenTenths * 100UL);
+    }
+
+    // Reset deadline for next reminder
+    shootReminderDeadlineMs = millis() + HILL_CLIMB_TIMEOUT_MS;
   }
 
   // ***** ALL STYLES: Monitor ball-in-lift switch for rollback handling *****
@@ -1344,17 +1787,21 @@ void updatePhaseBallReady() {
   // (drain or non-drain) set hasHitSwitch and start the ball save timer.
   // Then, if the hit was a drain, the ball save check runs and saves the ball
   // because the timer just started (effectively 0ms elapsed).
+  // HOWEVER: Only process drain switches if the ball has actually left the lift.
+  // If ballInLift is true, no ball is on the playfield, so any drain closure
+  // is trough noise (balls rolling over drain switches on their way to the trough).
   bool wasDrain = false;
   byte hitSwitch = checkPlayfieldSwitchHit(&wasDrain);
   if (hitSwitch != 0xFF) {
-    Serial.print("DEBUG: First playfield switch hit (idx ");
-    Serial.print(hitSwitch);
-    Serial.print("), wasDrain=");
-    Serial.println(wasDrain);
+    // Ignore drain switches while ball is still in the lift (trough noise)
+    if (wasDrain && ballInLift) {
+      return;
+    }
 
     // Mark ball as in play and count it (whether drain or non-drain)
     gameState.hasHitSwitch = true;
     ballsInPlay++;
+    resetGameTimeoutDeadline();
 
     // Only call handleFirstPointScored() for NON-drain hits.
     // Per Overview Section 12.7: a drain is not the right trigger for the hill drop.
@@ -1364,13 +1811,49 @@ void updatePhaseBallReady() {
       handleFirstPointScored();
       // Transition to BALL_IN_PLAY
       gamePhase = PHASE_BALL_IN_PLAY;
+
+      // Dispatch the first hit to its scoring handler. handleFirstPointScored()
+      // handles ball tray, hill drop, ball save, and music -- but does NOT
+      // score the hit or fire the associated device. Without this dispatch,
+      // the edge flag is consumed and the hit is silently lost.
+      if (hitSwitch == SWITCH_IDX_SLINGSHOT_LEFT || hitSwitch == SWITCH_IDX_SLINGSHOT_RIGHT) {
+        handleSwitchSlingshot(hitSwitch);
+      } else if (hitSwitch >= SWITCH_IDX_BUMPER_S && hitSwitch <= SWITCH_IDX_BUMPER_O) {
+        handleSwitchBumper(hitSwitch);
+      } else if ((hitSwitch >= SWITCH_IDX_LEFT_SIDE_TARGET_2 && hitSwitch <= SWITCH_IDX_LEFT_SIDE_TARGET_5)
+        || (hitSwitch >= SWITCH_IDX_RIGHT_SIDE_TARGET_1 && hitSwitch <= SWITCH_IDX_RIGHT_SIDE_TARGET_5)) {
+        handleSwitchSideTarget(hitSwitch);
+      } else if (hitSwitch == SWITCH_IDX_HAT_LEFT_TOP || hitSwitch == SWITCH_IDX_HAT_LEFT_BOTTOM
+        || hitSwitch == SWITCH_IDX_HAT_RIGHT_TOP || hitSwitch == SWITCH_IDX_HAT_RIGHT_BOTTOM) {
+        handleSwitchHat(hitSwitch);
+      } else if (hitSwitch == SWITCH_IDX_KICKOUT_LEFT || hitSwitch == SWITCH_IDX_KICKOUT_RIGHT) {
+        handleSwitchKickout(hitSwitch);
+      }
     } else {
+      // Drain as first hit: score the drain BEFORE handling ball-lost logic,
+      // exactly as updatePhaseBallInPlay() does for mid-game drains.
+      if (hitSwitch == SWITCH_IDX_GOBBLE) {
+        handleGobbleHoleScoring();
+      } else {
+        handleDrainRolloverScoring(hitSwitch);
+      }
+
+      // Close ball tray for Original/Impulse (normally done by handleFirstPointScored,
+      // but that function is intentionally not called for drains since it triggers
+      // the hill drop sequence). processBallLost() also closes the tray, but doing
+      // it here mirrors the non-drain path where the tray closes on first hit.
+      if (gameStyle == STYLE_ORIGINAL || gameStyle == STYLE_IMPULSE) {
+        if (gameState.ballTrayOpen) {
+          releaseDevice(DEV_IDX_BALL_TRAY_RELEASE);
+          gameState.ballTrayOpen = false;
+        }
+      }
+
       // Drain as first hit: start ball save timer directly (same as handleFirstPointScored
       // would do, but without the hill drop sequence).
       // Only start if a save has not already been consumed for this ball number.
       if (gameStyle == STYLE_ENHANCED && !ballSaveUsed) {
-        ballSave.endMs = millis() + 10000UL;  // TODO: load from EEPROM
-        Serial.println("DEBUG: Drain as first hit, ball save timer started");
+        ballSave.endMs = millis() + ((unsigned long)ballSaveSeconds * 1000UL);
       }
       // Now process the drain. handleBallDrain() will check the timer.
       byte drainType = DRAIN_TYPE_NONE;
@@ -1390,12 +1873,14 @@ void updatePhaseBallReady() {
 void handleFirstPointScored() {
   // gameState.hasHitSwitch already set by caller (updatePhaseBallReady)
 
+  // Cancel shoot reminder (player scored, no longer needed)
+  shootReminderDeadlineMs = 0;
+
   // ***** ORIGINAL/IMPULSE: Close ball tray after first point *****
   if (gameStyle == STYLE_ORIGINAL || gameStyle == STYLE_IMPULSE) {
     if (gameState.ballTrayOpen) {
       releaseDevice(DEV_IDX_BALL_TRAY_RELEASE);
       gameState.ballTrayOpen = false;
-      Serial.println("DEBUG: Ball tray closed after first point (Original/Impulse)");
     }
   }
 
@@ -1417,20 +1902,12 @@ void handleFirstPointScored() {
       analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, SHAKER_POWER_HILL_DROP);
       shakerDropStartMs = millis();
 
-      Serial.println("DEBUG: Ball 1 first point: hill drop + shaker started");
-    } else {
-      Serial.print("DEBUG: Ball ");
-      Serial.print(gameState.currentBall);
-      Serial.println(" first point: skipping hill drop");
     }
 
     // Start ball save timer ONLY if a save has not already been consumed for this ball number.
     // Once a save is used, the replacement ball does NOT get a new timer.
     if (!ballSaveUsed) {
-      ballSave.endMs = millis() + 10000UL;  // TODO: load from EEPROM
-      Serial.println("DEBUG: Ball save timer started");
-    } else {
-      Serial.println("DEBUG: Ball save already used this ball number, no new timer");
+      ballSave.endMs = millis() + ((unsigned long)ballSaveSeconds * 1000UL);
     }
 
     // Start primary music track ONLY if not already playing (may be playing after ball save)
@@ -1440,11 +1917,9 @@ void handleFirstPointScored() {
         pTsunami, tsunamiMusicGainDb, tsunamiGainDb);
 
       const AudioMusTrackDef* trackArray = (primaryMusicTheme == 0) ? musTracksCircus : musTracksSurf;
-      audioCurrentMusicTrack = trackArray[*lastIdxPtr].trackNum;
-      audioMusicEndMillis = millis() + ((unsigned long)trackArray[*lastIdxPtr].lengthSeconds * 1000UL);
+      audioCurrentMusicTrack = pgmReadMusTrackNum(&trackArray[*lastIdxPtr]);
+      audioMusicEndMillis = millis() + ((unsigned long)pgmReadMusLengthSeconds(&trackArray[*lastIdxPtr]) * 1000UL);
     }
-
-    Serial.println("DEBUG: First point scored, music confirmed playing");
   }
 }
 
@@ -1458,7 +1933,6 @@ void updatePhaseBallInPlay() {
       // Stop shaker motor after 11 seconds
       analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, 0);
       shakerDropStartMs = 0;
-      Serial.println("DEBUG: Shaker motor stopped after 11 seconds");
     }
   }
 
@@ -1467,8 +1941,16 @@ void updatePhaseBallInPlay() {
   byte hitSwitch = checkPlayfieldSwitchHit(&wasDrain);
 
   if (hitSwitch != 0xFF) {
+    resetGameTimeoutDeadline();
     if (wasDrain) {
-      // Determine drain type from switch index
+      // Score the drain event BEFORE handling ball-lost logic
+      if (hitSwitch == SWITCH_IDX_GOBBLE) {
+        handleGobbleHoleScoring();
+      } else {
+        handleDrainRolloverScoring(hitSwitch);
+      }
+
+      // Now handle ball drain (ball save check, ball lost, etc.)
       byte drainType = DRAIN_TYPE_NONE;
       if (hitSwitch == SWITCH_IDX_DRAIN_LEFT)        drainType = DRAIN_TYPE_LEFT;
       else if (hitSwitch == SWITCH_IDX_DRAIN_CENTER) drainType = DRAIN_TYPE_CENTER;
@@ -1476,29 +1958,48 @@ void updatePhaseBallInPlay() {
       else if (hitSwitch == SWITCH_IDX_GOBBLE)       drainType = DRAIN_TYPE_GOBBLE;
       handleBallDrain(drainType);
     } else {
-      // TODO: Implement full scoring logic here based on hitSwitch
+      // ***** NON-DRAIN SCORING DISPATCH *****
+      // Slingshots
+      if (hitSwitch == SWITCH_IDX_SLINGSHOT_LEFT || hitSwitch == SWITCH_IDX_SLINGSHOT_RIGHT) {
+        handleSwitchSlingshot(hitSwitch);
+      }
+      // Bumpers (S=10, C=11, R=12, E=13, A=14, M=15, O=16)
+      else if (hitSwitch >= SWITCH_IDX_BUMPER_S && hitSwitch <= SWITCH_IDX_BUMPER_O) {
+        handleSwitchBumper(hitSwitch);
+      }
+      // Side targets (left 2-5, right 1-5)
+      else if ((hitSwitch >= SWITCH_IDX_LEFT_SIDE_TARGET_2 && hitSwitch <= SWITCH_IDX_LEFT_SIDE_TARGET_5)
+        || (hitSwitch >= SWITCH_IDX_RIGHT_SIDE_TARGET_1 && hitSwitch <= SWITCH_IDX_RIGHT_SIDE_TARGET_5)) {
+        handleSwitchSideTarget(hitSwitch);
+      }
+      // Hat rollovers
+      else if (hitSwitch == SWITCH_IDX_HAT_LEFT_TOP || hitSwitch == SWITCH_IDX_HAT_LEFT_BOTTOM
+        || hitSwitch == SWITCH_IDX_HAT_RIGHT_TOP || hitSwitch == SWITCH_IDX_HAT_RIGHT_BOTTOM) {
+        handleSwitchHat(hitSwitch);
+      }
+      // Kickouts
+      else if (hitSwitch == SWITCH_IDX_KICKOUT_LEFT || hitSwitch == SWITCH_IDX_KICKOUT_RIGHT) {
+        handleSwitchKickout(hitSwitch);
+      }
     }
   }
 }
 
 // ***** BALL DRAIN HANDLER *****
 void handleBallDrain(byte drainType) {
-  Serial.print("DEBUG: Ball drained (type ");
-  Serial.print(drainType);
-  Serial.print("), hasHitSwitch=");
-  Serial.print(gameState.hasHitSwitch);
-  Serial.print(", ballSave.endMs=");
-  Serial.print(ballSave.endMs);
-  Serial.print(", now=");
-  Serial.println(millis());
-
-  // Suppress bounce on all drain switches by extending their debounce timers.
-  // The debounce system now correctly freezes switchLastState during the debounce
-  // period, so the standard debounce is sufficient for all drain types including gobble.
-  switchDebounceCounter[SWITCH_IDX_DRAIN_LEFT] = SWITCH_DEBOUNCE_TICKS;
-  switchDebounceCounter[SWITCH_IDX_DRAIN_CENTER] = SWITCH_DEBOUNCE_TICKS;
-  switchDebounceCounter[SWITCH_IDX_DRAIN_RIGHT] = SWITCH_DEBOUNCE_TICKS;
-  switchDebounceCounter[SWITCH_IDX_GOBBLE] = SWITCH_DEBOUNCE_TICKS;
+  // Suppress bounce on ALL drain switches for an extended period.
+  // This must be long enough to cover the entire ball-save replacement transit
+  // (trough release to lift arrival, up to 3 seconds) so that a gobble hole
+  // bounce or a drain rollover re-fire cannot trigger a SECOND handleBallDrain()
+  // call while the first is still being processed. The previous 50ms debounce
+  // was insufficient: it allowed a second edge to fire after saveBall() had
+  // already cleared the ball save timer, causing simultaneous "Ball saved" and
+  // "Ball N" audio. 200 ticks = 2000ms covers the transit with margin.
+  const byte DRAIN_SUPPRESS_TICKS = 200;
+  switchDebounceCounter[SWITCH_IDX_DRAIN_LEFT] = DRAIN_SUPPRESS_TICKS;
+  switchDebounceCounter[SWITCH_IDX_DRAIN_CENTER] = DRAIN_SUPPRESS_TICKS;
+  switchDebounceCounter[SWITCH_IDX_DRAIN_RIGHT] = DRAIN_SUPPRESS_TICKS;
+  switchDebounceCounter[SWITCH_IDX_GOBBLE] = DRAIN_SUPPRESS_TICKS;
 
   // Decrement ball count (guard against underflow per Overview 10.3.1)
   if (ballsInPlay > 0) {
@@ -1506,34 +2007,26 @@ void handleBallDrain(byte drainType) {
   }
 
   if (gameStyle == STYLE_ENHANCED) {
-    // Ball save timer active? (endMs > 0 and not expired)
-    // This single check covers ALL ball save scenarios:
-    //   - Drain as first switch hit: timer was just started by updatePhaseBallReady()
-    //     with ~0ms elapsed, so it is active -> ball saved.
-    //   - Normal drain within timer window: timer was started by handleFirstPointScored()
-    //     and has not expired -> ball saved.
-    //   - Drain after timer expired: endMs is in the past -> no save.
-    //   - Drain on a ball where no timer was started: endMs is 0 -> no save.
     if (ballSave.endMs > 0 && millis() < ballSave.endMs) {
-      Serial.println("DEBUG: Ball save timer active, saving ball");
       saveBall();
       return;
     }
   }
 
   // No ball save: normal drain processing
-  Serial.println("DEBUG: Ball lost (no save)");
   processBallLost();
 }
 
 // ***** BALL SAVE HANDLER *****
 void saveBall() {
-  Serial.println("DEBUG: Ball saved");
 
   // CLEAR the ball save timer and mark save as consumed for this ball number.
   // The replacement ball will NOT get a new timer.
   ballSave.endMs = 0;
   ballSaveUsed = true;
+
+  // NOTE: Drain switch suppression (200 ticks / 2000ms) is already applied by
+  // handleBallDrain() before calling us. No need to set it again here.
 
   // Stop ALL shaker sources (hill climb AND hill drop)
   stopAllShakers();
@@ -1568,8 +2061,8 @@ void saveBall() {
       pTsunami, tsunamiMusicGainDb, tsunamiGainDb);
 
     const AudioMusTrackDef* trackArray = (primaryMusicTheme == 0) ? musTracksCircus : musTracksSurf;
-    audioCurrentMusicTrack = trackArray[*lastIdxPtr].trackNum;
-    audioMusicEndMillis = millis() + ((unsigned long)trackArray[*lastIdxPtr].lengthSeconds * 1000UL);
+    audioCurrentMusicTrack = pgmReadMusTrackNum(&trackArray[*lastIdxPtr]);
+    audioMusicEndMillis = millis() + ((unsigned long)pgmReadMusLengthSeconds(&trackArray[*lastIdxPtr]) * 1000UL);
   }
 
   // Clear all drain switch edge flags to prevent bounce from triggering again
@@ -1581,8 +2074,6 @@ void saveBall() {
   // Release new ball (if lift is clear)
   if (!switchClosed(SWITCH_IDX_BALL_IN_LIFT)) {
     activateDevice(DEV_IDX_BALL_TROUGH_RELEASE);
-  } else {
-    Serial.println("DEBUG: Ball already in lift, not releasing another");
   }
 
   // Return to PHASE_STARTUP to wait for ball in lift, then PHASE_BALL_READY
@@ -1620,7 +2111,6 @@ void processBallLost() {
   if ((gameStyle == STYLE_ORIGINAL || gameStyle == STYLE_IMPULSE) && gameState.ballTrayOpen) {
     releaseDevice(DEV_IDX_BALL_TRAY_RELEASE);
     gameState.ballTrayOpen = false;
-    Serial.println("DEBUG: Ball tray closed on ball lost (Original/Impulse)");
   }
 
   if (extraBallAwarded) {
@@ -1630,7 +2120,6 @@ void processBallLost() {
     gamePhase = PHASE_STARTUP;
     startupSubState = STARTUP_DISPENSE_BALL;
     startupTickCounter = 0;
-    Serial.println("DEBUG: Extra ball - re-entering STARTUP_DISPENSE_BALL");
     return;
   }
 
@@ -1641,39 +2130,634 @@ void processBallLost() {
     gamePhase = PHASE_STARTUP;
     startupSubState = STARTUP_DISPENSE_BALL;
     startupTickCounter = 0;
-    Serial.print("DEBUG: Ball lost, advancing to ball ");
-    Serial.println(gameState.currentBall);
     return;
   }
 
-  // Last ball - game over: NOW stop all audio
-  Serial.println("DEBUG: Last ball lost, game over");
-
+  // Last ball - game over
   if (gameStyle == STYLE_ENHANCED) {
+    // Stop all audio except we will play game over announcement
     pTsunami->stopAllTracks();
-    audioCurrentComTrack = 0;
-    audioComEndMillis = 0;
     audioCurrentSfxTrack = 0;
     audioCurrentMusicTrack = 0;
     audioMusicEndMillis = 0;
+
+    // Play a random game over announcement (tracks 551-577)
+    byte randomIdx = (byte)random(0, NUM_COM_GAME_OVER);
+    unsigned int gameOverTrack = pgmReadComTrackNum(&comTracksGameOver[randomIdx]);
+    byte gameOverLenTenths = pgmReadComLengthTenths(&comTracksGameOver[randomIdx]);
+    pTsunami->trackPlayPoly((int)gameOverTrack, 0, false);
+    audioApplyTrackGain(gameOverTrack, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+    audioCurrentComTrack = gameOverTrack;
+    audioComEndMillis = millis() + ((unsigned long)gameOverLenTenths * 100UL);
+
+    // Wait for the game over announcement to finish before resetting state.
+    // This is acceptable because the game is over -- no game logic needs to run.
+    delay((unsigned long)gameOverLenTenths * 100UL + 500UL);
+
+    pTsunami->stopAllTracks();
+    audioCurrentComTrack = 0;
+    audioComEndMillis = 0;
   }
 
   saveLastScore(gameState.score[gameState.currentPlayer - 1]);
+  saveEmState();
 
   // Close ball tray for Enhanced (it stays open the whole game until game over)
   if (gameState.ballTrayOpen) {
     releaseDevice(DEV_IDX_BALL_TRAY_RELEASE);
     gameState.ballTrayOpen = false;
-    Serial.println("DEBUG: Ball tray closed on game over");
   }
-
-  // TODO: Play game over audio, reset lamps, etc.
 
   gamePhase = PHASE_ATTRACT;
   gameStyle = STYLE_NONE;
   setAttractLamps();
   markAttractDisplayDirty();
   initGameState();
+}
+
+// ***** SCORE HELPERS *****
+
+// Adds points to the current player's score, sends the increment to Slave,
+// and runs the Score Motor if needed (Original/Impulse only).
+// t_amount is in 10K units (1 = 10,000 points, 5 = 50,000 points, etc.)
+// Clamps score to 999 (9,990,000 points max).
+void addScore(int t_amount) {
+  if (t_amount == 0) {
+    return;
+  }
+  byte p = gameState.currentPlayer - 1;
+  int newScore = (int)gameState.score[p] + t_amount;
+  if (newScore > 999) newScore = 999;
+  if (newScore < 0) newScore = 0;
+  gameState.score[p] = (unsigned int)newScore;
+
+  // Send score increment to Slave (handles bells, 10K Unit, silence flags)
+  sendScoreIncrement(t_amount);
+
+  // Original/Impulse: run Score Motor for multi-unit increments.
+  // IMPORTANT: The Score Motor SSR (DEV_IDX_MOTOR_SCORE) has timeOn=0 and powerHold=0,
+  // which means activateDevice() turns it ON but the device timer system will never turn
+  // it OFF (countdown starts at 0, so updateDeviceTimers() treats it as idle).
+  // We must manage the Score Motor's on/off timing ourselves using scoreMotorStartMs.
+  // The processScoreMotorGameplayTick() function (called every tick from loop()) handles
+  // turning it off after the calculated duration.
+  if (useMechanicalScoringDevices()) {
+    unsigned long motorMs = calculateScoreMotorRunMs(RS485_TYPE_MAS_TO_SLV_SCORE_INC_10K, t_amount);
+    if (motorMs > 0) {
+      // Only start the motor if it is not already running. If it IS already running
+      // (from a previous scoring event), extend the deadline if the new event needs
+      // more time. This prevents overlapping activateDevice() calls from queuing
+      // additional motor-on pulses.
+      unsigned long now = millis();
+      unsigned long newDeadline = now + motorMs;
+      if (scoreMotorGameplayEndMs == 0) {
+        // Motor is not running -- start it
+        analogWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, deviceParm[DEV_IDX_MOTOR_SCORE].powerInitial);
+        scoreMotorGameplayEndMs = newDeadline;
+      } else {
+        // Motor is already running -- extend deadline if needed
+        if ((long)(newDeadline - scoreMotorGameplayEndMs) > 0) {
+          scoreMotorGameplayEndMs = newDeadline;
+        }
+      }
+    }
+  }
+
+  // Update "Spots Number When Lit" lamps based on new 10K digit
+  updateSpotsNumberLamps();
+
+  // TODO: Check replay score thresholds
+}
+
+// Updates the four "Spots Number When Lit" lamps based on the current 10K digit.
+// Per Overview Section 13.3.2:
+//   10K digit 0 -> Left Kickout LIT, Right Drain LIT (SPOT_NUMBER_LEFT + SPOT_NUMBER_RIGHT not used; see lamp mapping)
+//   10K digit 5 -> Right Kickout LIT, Left Drain LIT
+//   All other digits -> All four off
+// The "10K digit" is derived from the score: (score % 10) gives us the units digit,
+// which represents the 10K position (0 = 0K, 1 = 10K, ... 9 = 90K).
+void updateSpotsNumberLamps() {
+  byte p = gameState.currentPlayer - 1;
+  byte tenKDigit = gameState.score[p] % 10;
+
+  // Left Kickout + Right Drain lit when 10K digit is 0
+  bool leftKickoutLit = (tenKDigit == 0);
+  // Right Kickout + Left Drain lit when 10K digit is 5
+  bool rightKickoutLit = (tenKDigit == 5);
+
+  pShiftRegister->digitalWrite(lampParm[LAMP_IDX_KICKOUT_LEFT].pinNum,
+    leftKickoutLit ? LOW : HIGH);
+  pShiftRegister->digitalWrite(lampParm[LAMP_IDX_SPOT_NUMBER_RIGHT].pinNum,
+    leftKickoutLit ? LOW : HIGH);
+  pShiftRegister->digitalWrite(lampParm[LAMP_IDX_KICKOUT_RIGHT].pinNum,
+    rightKickoutLit ? LOW : HIGH);
+  pShiftRegister->digitalWrite(lampParm[LAMP_IDX_SPOT_NUMBER_LEFT].pinNum,
+    rightKickoutLit ? LOW : HIGH);
+}
+
+// ***** MID-GAME START BUTTON HANDLER *****
+// Per Overview Section 4.4: after ball 1 has hit any playfield target, pressing Start
+// ends the current game and returns to attract mode. No credit check is needed here --
+// the player simply wants to stop the current game. If they want to start a new game,
+// they will press Start again in attract mode, which performs the normal credit check
+// via processStartButton() -> startGameIfCredits().
+// Before ball 1's first hit, Start is ignored (reserved for future multi-player support).
+void processMidGameStart() {
+  // Only active during gameplay phases (not startup, not ball search)
+  if (gamePhase != PHASE_BALL_IN_PLAY && gamePhase != PHASE_BALL_READY) {
+    return;
+  }
+
+  // Determine if the game is past the "add players" window.
+  // Ball 1 before first hit: Start is reserved for future multi-player add.
+  // Ball 1 after first hit, or any ball 2+: Start ends the game.
+  // We check three conditions because hasHitSwitch is reset per-ball in onEnterBallReady(),
+  // but we still need to recognize mid-game Start on a ball-save replacement ball that
+  // has not yet hit a target. ball1SequencePlayed is a game-level flag (set once ball 1
+  // hits any non-drain target, never reset until initGameState) that covers this gap.
+  bool gameCommitted = (gameState.currentBall >= 2)
+    || gameState.hasHitSwitch
+    || ball1SequencePlayed;  if (!gameCommitted) {
+    return;
+  }
+
+  // Detect Start button press
+  if (!switchJustClosedFlag[SWITCH_IDX_START_BUTTON]) {
+    return;
+  }
+
+  // CONSUME the edge so no other handler (especially processStartButton, which runs
+  // later in the same tick after we set gamePhase = PHASE_ATTRACT) can see it.
+  // Without this, the same press that ends the game also registers as the first tap
+  // of a new game's style detection, causing processStartButton() to start a 500ms
+  // timer. After the 150-tick debounce expires (1.5s), that timer has long since
+  // timed out, and processStartButton() immediately starts an Original game.
+  switchJustClosedFlag[SWITCH_IDX_START_BUTTON] = false;
+
+  // Tear down the current game and return to attract.
+  // The player's next Start press will trigger normal tap detection and credit check.
+
+  // Suppress Start button for 1.5 seconds so that any remaining taps from a
+  // double-tap or triple-tap gesture are absorbed before attract mode begins
+  // listening for style detection. Without this, the second tap of a double-tap
+  // would immediately start a new Original game (single-tap timeout), which is
+  // not what the player intended. 150 ticks * 10ms = 1500ms > 1000ms (two
+  // 500ms style detection windows).
+  switchDebounceCounter[SWITCH_IDX_START_BUTTON] = 150;
+
+  // Stop all audio
+  if (pTsunami != nullptr) {
+    pTsunami->stopAllTracks();
+  }
+  audioCurrentComTrack = 0;
+  audioComEndMillis = 0;
+  audioCurrentSfxTrack = 0;
+  audioCurrentMusicTrack = 0;
+  audioMusicEndMillis = 0;
+
+  // Stop shakers
+  stopAllShakers();
+
+  // Release flippers
+  if (leftFlipperHeld) {
+    releaseDevice(DEV_IDX_FLIPPER_LEFT);
+    leftFlipperHeld = false;
+  }
+  if (rightFlipperHeld) {
+    releaseDevice(DEV_IDX_FLIPPER_RIGHT);
+    rightFlipperHeld = false;
+  }
+
+  // Save the current score for display at power-up
+  saveLastScore(gameState.score[gameState.currentPlayer - 1]);
+
+  // Close ball tray if open
+  if (gameState.ballTrayOpen) {
+    releaseDevice(DEV_IDX_BALL_TRAY_RELEASE);
+    gameState.ballTrayOpen = false;
+  }
+
+  // Turn off score motor if running
+  if (scoreMotorStartMs != 0) {
+    releaseDevice(DEV_IDX_MOTOR_SCORE);
+    scoreMotorStartMs = 0;
+  }
+  if (scoreMotorGameplayEndMs != 0) {
+    analogWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, 0);
+    scoreMotorGameplayEndMs = 0;
+  }
+
+  // Reset to attract mode
+  gamePhase = PHASE_ATTRACT;
+  gameStyle = STYLE_NONE;
+  setAttractLamps();
+  markAttractDisplayDirty();
+  initGameState();
+  lcdClear();
+
+  // Clear any stale tap-detection state so processStartButton() starts clean.
+  // Without this, if processStartButton() had already seen a tap before the
+  // mid-game Start was pressed, it could have leftover timer state.
+  startWaitingForSecondTap = false;
+  startWaitingForThirdTap = false;
+  startFirstPressMs = 0;
+  startSecondPressMs = 0;
+}
+
+// ***** GAME TIMEOUT HELPERS *****
+// Resets the inactivity deadline to now + gameTimeoutMs.
+// Called on any playfield switch hit, flipper press, or game start.
+void resetGameTimeoutDeadline() {
+  if (gameTimeoutMs > 0) {
+    gameTimeoutDeadlineMs = millis() + gameTimeoutMs;
+  }
+}
+
+// ***** GAME TIMEOUT ENFORCEMENT *****
+// If no playfield switch or flipper button has been hit within the configured
+// timeout period, end the game automatically. See Overview Section 14.10.
+void processGameTimeout() {
+  // Only enforce during active gameplay phases
+  if (gamePhase != PHASE_BALL_IN_PLAY && gamePhase != PHASE_BALL_READY) {
+    return;
+  }
+
+  // If timeout is disabled (0 minutes in EEPROM), skip
+  if (gameTimeoutMs == 0) {
+    return;
+  }
+
+  // Check for flipper activity this tick (resets deadline without needing a scoring switch)
+  if (switchJustClosedFlag[SWITCH_IDX_FLIPPER_LEFT_BUTTON]
+    || switchJustClosedFlag[SWITCH_IDX_FLIPPER_RIGHT_BUTTON]) {
+    resetGameTimeoutDeadline();
+  }
+
+  // Check deadline
+  if ((long)(millis() - gameTimeoutDeadlineMs) < 0) {
+    return;  // Not expired yet
+  }
+
+  // TIMEOUT: End the game
+
+  // Stop all audio
+  if (pTsunami != nullptr) {
+    pTsunami->stopAllTracks();
+  }
+  audioCurrentComTrack = 0;
+  audioComEndMillis = 0;
+  audioCurrentSfxTrack = 0;
+  audioCurrentMusicTrack = 0;
+  audioMusicEndMillis = 0;
+
+  // Stop shakers
+  stopAllShakers();
+
+  // Release flippers
+  if (leftFlipperHeld) {
+    releaseDevice(DEV_IDX_FLIPPER_LEFT);
+    leftFlipperHeld = false;
+  }
+  if (rightFlipperHeld) {
+    releaseDevice(DEV_IDX_FLIPPER_RIGHT);
+    rightFlipperHeld = false;
+  }
+
+  // Save the current score
+  saveLastScore(gameState.score[gameState.currentPlayer - 1]);
+
+  // Close ball tray if open
+  if (gameState.ballTrayOpen) {
+    releaseDevice(DEV_IDX_BALL_TRAY_RELEASE);
+    gameState.ballTrayOpen = false;
+  }
+
+  // Turn off score motor if running
+  if (scoreMotorStartMs != 0) {
+    releaseDevice(DEV_IDX_MOTOR_SCORE);
+    scoreMotorStartMs = 0;
+  }
+  if (scoreMotorGameplayEndMs != 0) {
+    analogWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, 0);
+    scoreMotorGameplayEndMs = 0;
+  }
+
+  lcdClear();
+  lcdPrintRow(1, "GAME TIMEOUT");
+  lcdPrintRow(2, "No activity");
+  delay(2000);
+
+  // Reset to attract mode
+  gamePhase = PHASE_ATTRACT;
+  gameStyle = STYLE_NONE;
+  setAttractLamps();
+  markAttractDisplayDirty();
+  initGameState();
+  lcdClear();
+}
+
+// ***** PERIODIC EEPROM SCORE SAVE *****
+// Saves the current score and EM emulation state to EEPROM approximately every
+// EEPROM_SAVE_INTERVAL_MS during active gameplay. This approximates the original
+// EM behavior of retaining state across power cycles. See Overview Section 6.1.
+void processPeriodicScoreSave() {
+  // Only save during active gameplay
+  if (gamePhase != PHASE_BALL_IN_PLAY && gamePhase != PHASE_BALL_READY) {
+    return;
+  }
+
+  // Only save if a game is in progress with a valid player
+  if (gameState.numPlayers == 0 || gameState.currentPlayer == 0) {
+    return;
+  }
+
+  unsigned long now = millis();
+  if ((long)(now - lastEepromSaveMs) >= EEPROM_SAVE_INTERVAL_MS) {
+    saveLastScore(gameState.score[gameState.currentPlayer - 1]);
+    saveEmState();
+    lastEepromSaveMs = now;
+  }
+}
+
+// ********************************************************************************************************************************
+// ************************************************** SCORING SWITCH HANDLERS *****************************************************
+// ********************************************************************************************************************************
+
+// ***** SLINGSHOT HANDLER *****
+// Per Overview Section 13.4.1: 10K points, 10K Bell, fires 10K Unit.
+// Slingshots do NOT fire the Selection Unit (only side targets do).
+// The 10K Unit is on the Slave side and is controlled via sendScoreIncrement().
+void handleSwitchSlingshot(byte t_switchIdx) {
+  addScore(1);  // 10K
+
+  // Fire the slingshot coil
+  if (t_switchIdx == SWITCH_IDX_SLINGSHOT_LEFT) {
+    activateDevice(DEV_IDX_SLINGSHOT_LEFT);
+  } else {
+    activateDevice(DEV_IDX_SLINGSHOT_RIGHT);
+  }
+}
+
+// ***** BUMPER HANDLER *****
+// Per Overview Section 13.4.2:
+//   Normal hit: 10K, extinguish bumper lamp.
+//   Last-lit hit: 10K + 500K, spotted number, relight all bumpers.
+// NOTE: Only the "E" bumper has a physical pop bumper solenoid.
+// The other six bumpers (S, C, R, A, M, O) are dead bumpers --
+// they score and have lamps, but no coil to fire.
+void handleSwitchBumper(byte t_switchIdx) {
+  // Map switch index to bumper bit (0=S, 1=C, ... 6=O)
+  byte bumperBit = t_switchIdx - SWITCH_IDX_BUMPER_S;
+
+  // Fire the pop bumper coil ONLY for the "E" bumper (the only one with a solenoid)
+  if (t_switchIdx == SWITCH_IDX_BUMPER_E) {
+    activateDevice(DEV_IDX_POP_BUMPER);
+  }
+
+  // Score 10K (all bumper hits, whether lit or not, whether last or not)
+  addScore(1);
+
+  // If this bumper is lit, extinguish it
+  if (bumperLitMask & (1 << bumperBit)) {
+    bumperLitMask &= ~(1 << bumperBit);
+    byte lampIdx = LAMP_IDX_S + bumperBit;
+    pShiftRegister->digitalWrite(lampParm[lampIdx].pinNum, HIGH);  // Lamp off
+
+    // Check if this was the LAST lit bumper
+    if (bumperLitMask == 0) {
+      // Last-lit bumper: award spotted number + 500K + relight all bumpers
+      handleLastLitBumper();
+    }
+  }
+}
+
+// ***** LAST-LIT BUMPER HANDLER *****
+// Per Overview Section 13.4.2:
+//   +500K points (5 x 100K via Score Motor in Original/Impulse)
+//   Award spotted number (light WHITE insert, ring Selection Bell)
+//   Relight all 7 bumper lamps
+//   Fire Relay Reset Bank (for sound, Original/Impulse only)
+void handleLastLitBumper() {
+
+  // Award spotted number FIRST (rings Selection Bell)
+  awardSpottedNumber();
+
+  // Score 500K (5 x 100K increment; sendScoreIncrement handles batching)
+  addScore(50);  // 50 x 10K = 500K
+
+  // Fire Relay Reset Bank for sound (Original/Impulse only)
+  if (useMechanicalScoringDevices()) {
+    activateDevice(DEV_IDX_RELAY_RESET);
+  }
+
+  // Relight all 7 bumper lamps
+  bumperLitMask = 0x7F;
+  for (byte i = LAMP_IDX_S; i <= LAMP_IDX_O; i++) {
+    pShiftRegister->digitalWrite(lampParm[i].pinNum, LOW);  // Lamp on
+  }
+}
+
+// ***** AWARD SPOTTED NUMBER *****
+// Lights the WHITE insert corresponding to the current RED insert number.
+// The RED insert number is determined by the Selection Unit position.
+// Rings the Selection Bell (via RS-485 to Slave).
+void awardSpottedNumber() {
+  // Get current RED number from Selection Unit position
+  byte redNumber = SELECTION_UNIT_RED_INSERT[selectionUnitPosition % 10];
+  // redNumber is 1-9
+
+  // Light the corresponding WHITE insert (if not already lit)
+  unsigned int whiteBit = (1 << (redNumber - 1));  // bit 0 = number 1, bit 8 = number 9
+  if (!(whiteLitMask & whiteBit)) {
+    whiteLitMask |= whiteBit;
+    byte whiteLampIdx = LAMP_IDX_WHITE_1 + (redNumber - 1);
+    pShiftRegister->digitalWrite(lampParm[whiteLampIdx].pinNum, LOW);  // Lamp on
+  }
+
+  // Ring Selection Bell (Slave handles actual bell firing)
+  pMessage->sendMAStoSLVBellSelect();
+
+  // TODO: Check for WHITE matrix completion (all 9 lit -> Extra Ball)
+  // TODO: Check for replay patterns (3-in-a-row, 4 corners, 1-2-3)
+}
+
+// ***** SIDE TARGET HANDLER *****
+// Per Overview Section 13.4.3: 10K points, fires Selection Unit (which in turn fires 10K Unit).
+// The Selection Unit is the ONLY device that controls the RED insert and HAT lamps.
+// Side targets are the ONLY switches that advance the Selection Unit.
+void handleSwitchSideTarget(byte t_switchIdx) {
+  // Score 10K (Selection Unit is wired to fire the 10K Unit on every advance)
+  addScore(1);
+
+  // Advance Selection Unit position (0-49, wrapping)
+  selectionUnitPosition = (selectionUnitPosition + 1) % 50;
+
+  // Fire Selection Unit coil for sound (Original/Impulse only)
+  if (useMechanicalScoringDevices()) {
+    activateDevice(DEV_IDX_SELECTION_UNIT);
+  }
+
+  // Update RED insert lamp: turn off old, turn on new
+  // First turn off all RED lamps, then light the current one
+  for (byte i = LAMP_IDX_RED_1; i <= LAMP_IDX_RED_9; i++) {
+    pShiftRegister->digitalWrite(lampParm[i].pinNum, HIGH);  // All RED off
+  }
+  byte redNumber = SELECTION_UNIT_RED_INSERT[selectionUnitPosition % 10];
+  byte redLampIdx = LAMP_IDX_RED_1 + (redNumber - 1);
+  pShiftRegister->digitalWrite(lampParm[redLampIdx].pinNum, LOW);  // New RED on
+
+  // Update HAT lamps based on Selection Unit position
+  // Hats are lit on step 1 (index 0) of cycles 1, 3, 5 (positions 0, 20, 40)
+  byte stepInCycle = selectionUnitPosition % 10;
+  byte cycleNum = selectionUnitPosition / 10;  // 0-4
+  bool hatsLit = (stepInCycle == 0) && (cycleNum == 0 || cycleNum == 2 || cycleNum == 4);
+  byte hatState = hatsLit ? LOW : HIGH;
+  pShiftRegister->digitalWrite(lampParm[LAMP_IDX_HAT_LEFT_TOP].pinNum, hatState);
+  pShiftRegister->digitalWrite(lampParm[LAMP_IDX_HAT_LEFT_BOTTOM].pinNum, hatState);
+  pShiftRegister->digitalWrite(lampParm[LAMP_IDX_HAT_RIGHT_TOP].pinNum, hatState);
+  pShiftRegister->digitalWrite(lampParm[LAMP_IDX_HAT_RIGHT_BOTTOM].pinNum, hatState);
+
+}
+
+// ***** HAT ROLLOVER HANDLER (STUB) *****
+// Per Overview Section 13.4.4: 10K (unlit) or 100K (lit).
+void handleSwitchHat(byte t_switchIdx) {
+  // Check if hats are currently lit
+  byte stepInCycle = selectionUnitPosition % 10;
+  byte cycleNum = selectionUnitPosition / 10;
+  bool hatsLit = (stepInCycle == 0) && (cycleNum == 0 || cycleNum == 2 || cycleNum == 4);
+
+  if (hatsLit) {
+    addScore(10);  // 100K (10 x 10K)
+  } else {
+    addScore(1);   // 10K
+  }
+}
+
+// ***** KICKOUT HANDLER *****
+// Per Overview Section 13.4.5: 500K + optional spotted number.
+// Original/Impulse: Score Motor runs one quarter-rev (882ms). The 500K is scored
+// as 5 x 100K at 147ms sub-slot intervals. The kickout solenoid fires on the 5th
+// sub-slot (735ms), coinciding with the final 100K increment. The ball ejects at
+// the same moment the last 100K is added.
+// Enhanced: Score immediately and eject immediately (no Score Motor).
+void handleSwitchKickout(byte t_switchIdx) {
+  // Check if "Spots Number When Lit" is active for this kickout.
+  // IMPORTANT: Capture this BEFORE addScore(), because the 500K increment will
+  // change the 10K digit and potentially toggle the Spots Number lamps.
+  byte p = gameState.currentPlayer - 1;
+  byte tenKDigit = gameState.score[p] % 10;
+  bool leftKickoutLit = (tenKDigit == 0);
+  bool rightKickoutLit = (tenKDigit == 5);
+
+  bool spotsNumber = false;
+  if (t_switchIdx == SWITCH_IDX_KICKOUT_LEFT && leftKickoutLit) {
+    spotsNumber = true;
+  } else if (t_switchIdx == SWITCH_IDX_KICKOUT_RIGHT && rightKickoutLit) {
+    spotsNumber = true;
+  }
+
+  // Award spotted number FIRST if lit (Selection Bell rings immediately per Overview 13.4.5)
+  if (spotsNumber) {
+    awardSpottedNumber();
+  }
+
+  // Score 500K. addScore() will send the increment to Slave and start the Score Motor
+  // via calculateScoreMotorRunMs(). However, the generic motor timing includes a 2-
+  // quarter-rev safety margin that makes the motor run ~2646ms instead of 882ms.
+  // For kickouts we know exactly how long the motor needs: one quarter-rev. So we
+  // let addScore() handle the score and RS485 message, then override the motor timing.
+  addScore(50);
+
+  // Original/Impulse: override the Score Motor deadline to exactly one quarter-rev
+  // from now. addScore() already started the motor and set scoreMotorGameplayEndMs
+  // with the generic (too-long) deadline; we just shorten it.
+  if (useMechanicalScoringDevices() && scoreMotorGameplayEndMs != 0) {
+    scoreMotorGameplayEndMs = millis() + SCORE_MOTOR_QUARTER_REV_MS;
+  }
+
+  // Eject timing depends on game style
+  if (gameStyle == STYLE_ENHANCED) {
+    // Enhanced: eject immediately (no Score Motor)
+    if (t_switchIdx == SWITCH_IDX_KICKOUT_LEFT) {
+      activateDevice(DEV_IDX_KICKOUT_LEFT);
+    } else {
+      activateDevice(DEV_IDX_KICKOUT_RIGHT);
+    }
+  } else {
+    // Original/Impulse: delay eject until 5th sub-slot of the Score Motor quarter-rev.
+    // The Score Motor is already running (started by addScore -> calculateScoreMotorRunMs).
+    // We just need to schedule the solenoid firing.
+    unsigned long ejectTime = millis() + KICKOUT_EJECT_DELAY_MS;
+    if (t_switchIdx == SWITCH_IDX_KICKOUT_LEFT) {
+      kickoutLeftEjectMs = ejectTime;
+    } else {
+      kickoutRightEjectMs = ejectTime;
+    }
+  }
+}
+
+// ***** DRAIN ROLLOVER SCORING HANDLER *****
+// Per Overview Sections 13.4.6-13.4.7:
+//   Left/Right drain: 100K + optional spotted number
+//   Center drain: 500K, no spotted number
+// NOTE: This handles the SCORING portion only. The drain/ball-lost logic
+// is handled separately by handleBallDrain() which is called from the
+// drain detection code in updatePhaseBallInPlay().
+void handleDrainRolloverScoring(byte t_switchIdx) {
+  byte p = gameState.currentPlayer - 1;
+  byte tenKDigit = gameState.score[p] % 10;
+  bool leftKickoutLit = (tenKDigit == 0);
+  bool rightKickoutLit = (tenKDigit == 5);
+
+  if (t_switchIdx == SWITCH_IDX_DRAIN_CENTER) {
+    // Center drain: 500K, no spotted number
+    addScore(50);
+  } else if (t_switchIdx == SWITCH_IDX_DRAIN_LEFT) {
+    // Left drain: 100K
+    addScore(10);
+    // "Spots Number When Lit" for left drain is active when 10K digit is 5
+    if (rightKickoutLit) {
+      awardSpottedNumber();
+    }
+  } else if (t_switchIdx == SWITCH_IDX_DRAIN_RIGHT) {
+    // Right drain: 100K
+    addScore(10);
+    // "Spots Number When Lit" for right drain is active when 10K digit is 0
+    if (leftKickoutLit) {
+      awardSpottedNumber();
+    }
+  }
+}
+
+// ***** GOBBLE HOLE SCORING HANDLER *****
+// Per Overview Section 13.4.8:
+//   500K + ALWAYS awards spotted number + gobble count tracking
+// NOTE: This handles the SCORING portion only. The drain/ball-lost logic
+// is handled separately by handleBallDrain().
+void handleGobbleHoleScoring() {
+  // Score 500K
+  addScore(50);
+
+  // Gobble Hole ALWAYS awards spotted number
+  awardSpottedNumber();
+
+  // Track gobble count and update gobble lamps
+  if (gobbleCount < 5) {
+    gobbleCount++;
+    byte gobbleLampIdx = LAMP_IDX_GOBBLE_1 + (gobbleCount - 1);
+    pShiftRegister->digitalWrite(lampParm[gobbleLampIdx].pinNum, LOW);  // Lamp on
+
+    // 4th gobble: light SPECIAL WHEN LIT lamp
+    if (gobbleCount == 4) {
+      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_SPECIAL].pinNum, LOW);
+    }
+
+    // 5th gobble with SPECIAL lit: award replay
+    if (gobbleCount == 5) {
+      // TODO: Award replay (add credit + fire knocker)
+    }
+  }
 }
 
 // ********************************************************************************************************************************
@@ -1846,20 +2930,38 @@ void setAttractLamps() {
   pMessage->sendMAStoSLVGILamp(true);
 
   // Turn on all 7 bumper lamps (S-C-R-E-A-M-O)
+  // Bumpers always relight at game start (Relay Reset Bank), so they are always lit in attract.
   for (byte i = LAMP_IDX_S; i <= LAMP_IDX_O; i++) {
     pShiftRegister->digitalWrite(lampParm[i].pinNum, LOW);
   }
 
-  // Turn off everything else on Master
-  for (byte i = 0; i < NUM_LAMPS_MASTER; i++) {
-    if (lampParm[i].groupNum != LAMP_GROUP_GI &&
-      lampParm[i].groupNum != LAMP_GROUP_BUMPER) {
-      pShiftRegister->digitalWrite(lampParm[i].pinNum, HIGH);
-    }
-  }
+  // Set all persisted EM state lamps (RED, HATs, WHITEs, GOBBLEs, SPECIAL, Spots Number)
+  // This emulates the original EM behavior where these lamps retained their state between
+  // games and across power cycles because the physical hardware stayed where it was.
+  setEmStateLamps();
 
   // Turn off Tilt lamp only -- do NOT zero the score display
   pMessage->sendMAStoSLVTiltLamp(false);
+}
+
+// Sets all gameplay lamps to reflect the EM emulation state at game start.
+// Called once from STARTUP_RECOVER_CONFIRMED after initGameState() has loaded
+// persisted EM state from EEPROM and setAttractLamps() has set the attract display.
+// Now that the game is officially starting, update lamps for the starting state:
+//   - The RED insert corresponding to the persisted selectionUnitPosition
+//   - The HAT lamps if the persisted position is on an eligible step (0, 20, or 40)
+//   - The WHITE inserts from persisted whiteLitMask
+//   - The GOBBLE lamps from persisted gobbleCount
+//   - The SPECIAL lamp if gobbleCount >= 4
+//   - The "Spots Number When Lit" kickout/drain lamps (score starts at 0, so 10K digit = 0)
+void setInitialGameplayLamps() {
+  // Set all persisted EM state lamps
+  setEmStateLamps();
+
+  // Override Spots Number lamps for live score (0 at game start, so 10K digit = 0)
+  // setEmStateLamps() uses lastDisplayedScore which may differ from the current game score.
+  updateSpotsNumberLamps();
+
 }
 
 // ********************************************************************************************************************************
@@ -2083,7 +3185,8 @@ void processAudioTick() {
 
   // Only process audio events during active game phases (not attract, not diagnostic)
   if (gamePhase != PHASE_BALL_READY && gamePhase != PHASE_BALL_IN_PLAY
-    && gamePhase != PHASE_STARTUP && gamePhase != PHASE_BALL_SEARCH) {
+    && gamePhase != PHASE_STARTUP && gamePhase != PHASE_BALL_SEARCH
+    && gamePhase != PHASE_TILT) {
     return;
   }
 
@@ -2115,8 +3218,8 @@ void processAudioTick() {
       pTsunami, tsunamiMusicGainDb, tsunamiGainDb);
 
     const AudioMusTrackDef* trackArray = (primaryMusicTheme == 0) ? musTracksCircus : musTracksSurf;
-    audioCurrentMusicTrack = trackArray[*lastIdxPtr].trackNum;
-    audioMusicEndMillis = now + ((unsigned long)trackArray[*lastIdxPtr].lengthSeconds * 1000UL);
+    audioCurrentMusicTrack = pgmReadMusTrackNum(&trackArray[*lastIdxPtr]);
+    audioMusicEndMillis = now + ((unsigned long)pgmReadMusLengthSeconds(&trackArray[*lastIdxPtr]) * 1000UL);
 
     // If a COM track is currently playing, the new music track should start ducked
     if (audioCurrentComTrack != 0) {
@@ -2145,13 +3248,13 @@ void processVolumeButtons() {
 
   if (diagButtonPressed(1)) {  // LEFT (minus)
     if (gamePhase == PHASE_ATTRACT && audioCurrentMusicTrack == 0) {
-      audioStartMusicTrack(musTracksCircus[0].trackNum, musTracksCircus[0].lengthSeconds, false);
+      audioStartMusicTrack(pgmReadMusTrackNum(&musTracksCircus[0]), pgmReadMusLengthSeconds(&musTracksCircus[0]), false);
     }
     audioAdjustMasterGainQuiet(-1);
   }
   if (diagButtonPressed(2)) {  // RIGHT (plus)
     if (gamePhase == PHASE_ATTRACT && audioCurrentMusicTrack == 0) {
-      audioStartMusicTrack(musTracksCircus[0].trackNum, musTracksCircus[0].lengthSeconds, false);
+      audioStartMusicTrack(pgmReadMusTrackNum(&musTracksCircus[0]), pgmReadMusLengthSeconds(&musTracksCircus[0]), false);
     }
     audioAdjustMasterGainQuiet(+1);
   }
@@ -2284,25 +3387,43 @@ void initGameState() {
   ballSave.endMs = 0;
   ballSaveUsed = false;
 
-  // Kickout retry
-  kickoutLeftRetryTicks = 0;
-  kickoutRightRetryTicks = 0;
-
-  // EM emulation state
-  selectionUnitPosition = (byte)random(0, 50);  // Random starting position per Overview Section 13.3.3
-  gobbleCount = 0;
-  bumperLitMask = 0x7F;  // All 7 bumpers lit
-  whiteLitMask = 0;      // No WHITE inserts lit
+  // EM emulation state: load persisted values from EEPROM.
+  // The original game retained Selection Unit position across games and power cycles
+  // because the physical stepper simply stayed where it was.
+  // However, the Relay Reset Bank fires at game start, which clears the WHITE insert
+  // relay latches, the gobble count relays, and relights all bumpers.
+  // So we load selectionUnitPosition from EEPROM but reset the others.
+  loadEmState();
+  bumperLitMask = 0x7F;  // All 7 bumpers lit (Relay Reset Bank fires at game start)
+  whiteLitMask = 0;       // All WHITE inserts off (Relay Reset Bank clears latches)
+  gobbleCount = 0;        // Gobble count reset (Relay Reset Bank clears latches)
 
   // Credit tracking
   creditDeducted = false;
 
   // Ball 1 one-time sequence tracking
   ball1SequencePlayed = false;
+
+  // Shoot reminder
+  shootReminderDeadlineMs = 0;
+
+  // Score motor startup sequence
+  if (scoreMotorStartMs != 0) {
+    releaseDevice(DEV_IDX_MOTOR_SCORE);
+    scoreMotorStartMs = 0;
+  }
+  scoreMotorSlotRelayReset2 = false;
+  scoreMotorSlotScoreReset = false;
+
+  // Score motor gameplay timer
+  if (scoreMotorGameplayEndMs != 0) {
+    analogWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, 0);
+    scoreMotorGameplayEndMs = 0;
+  }
+
 }
 
 void onEnterBallReady() {
-  Serial.println("DEBUG: Entering BALL_READY phase");
 
   // Stop any running shakers
   stopAllShakers();
@@ -2337,6 +3458,13 @@ void onEnterBallReady() {
   gameState.hasHitSwitch = false;
   gameState.tiltWarnings = 0;
   gameState.tilted = false;
+
+  // Clear tilt bob settle timer for new ball
+  tiltBobSettleUntilMs = 0;
+
+  // Start shoot reminder timer (Enhanced only; checked in updatePhaseBallReady)
+  shootReminderDeadlineMs = millis() + HILL_CLIMB_TIMEOUT_MS;
+
 }
 
 bool isInMode() {
@@ -2366,7 +3494,8 @@ void sendScoreReset() {
 
   if (gameStyle == STYLE_ENHANCED) {
     silent10KUnit = true;
-    silentBells = true;  // Enhanced: ALL EM sounds silent during reset
+    // Bells ring during reset (same as normal Enhanced play).
+    // Only modes silence bells, and we are never in a mode during reset.
   }
 
   pMessage->sendMAStoSLVScoreReset(silentBells, silent10KUnit);
@@ -2438,6 +3567,68 @@ unsigned long calculateScoreMotorRunMs(byte msgType, int magnitude) {
   return 0;
 }
 
+// ***** SCORE MOTOR STARTUP SEQUENCE TICK PROCESSOR *****
+// Called every tick from loop() (not just during PHASE_STARTUP) so the score motor
+// completes its 3528ms run even after the game transitions to PHASE_BALL_READY.
+// Without this, when all 5 balls are already in the trough the startup phase completes
+// in ~1 second, but the score motor needs ~3.5 seconds to finish its 4 quarter-turns.
+void processScoreMotorStartupTick() {
+  if (scoreMotorStartMs == 0) {
+    return;
+  }
+
+  unsigned long elapsed = millis() - scoreMotorStartMs;
+
+  // Sub-slot 4 (T+441ms): Fire Relay Reset Bank (2nd firing)
+  if (!scoreMotorSlotRelayReset2 && elapsed >= SCORE_MOTOR_SUB_SLOT_MS * 3) {
+    activateDevice(DEV_IDX_RELAY_RESET);
+    scoreMotorSlotRelayReset2 = true;
+  }
+
+  // Start of 2nd quarter-turn (T+882ms): Send score reset to Slave
+  if (!scoreMotorSlotScoreReset && elapsed >= SCORE_MOTOR_QUARTER_REV_MS) {
+    sendScoreReset();
+    scoreMotorSlotScoreReset = true;
+  }
+
+  // End of 4th quarter-turn (T+3528ms): Turn off Score Motor
+  if (elapsed >= SCORE_MOTOR_QUARTER_REV_MS * 4) {
+    releaseDevice(DEV_IDX_MOTOR_SCORE);
+    scoreMotorStartMs = 0;
+  }
+}
+
+// ***** SCORE MOTOR GAMEPLAY TICK PROCESSOR *****
+// Called every tick from loop(). Turns off the Score Motor SSR when the
+// calculated run duration for a gameplay scoring event has elapsed.
+// This is separate from processScoreMotorStartupTick() which handles
+// the 4-quarter-turn startup sequence.
+void processScoreMotorGameplayTick() {
+  if (scoreMotorGameplayEndMs == 0) {
+    return;
+  }
+  if ((long)(millis() - scoreMotorGameplayEndMs) >= 0) {
+    // Time is up -- turn off the Score Motor
+    analogWrite(deviceParm[DEV_IDX_MOTOR_SCORE].pinNum, 0);
+    scoreMotorGameplayEndMs = 0;
+  }
+}
+
+// ***** KICKOUT EJECT TICK PROCESSOR *****
+// Called every tick from loop(). Fires delayed kickout ejects for Original/Impulse style.
+// The eject is timed to coincide with the 5th scoring sub-slot of the Score Motor
+// quarter-rev (735ms after the kickout switch closed).
+void processKickoutEjectTick() {
+  if (kickoutLeftEjectMs != 0 && (long)(millis() - kickoutLeftEjectMs) >= 0) {
+    activateDevice(DEV_IDX_KICKOUT_LEFT);
+    kickoutLeftEjectMs = 0;
+  }
+  if (kickoutRightEjectMs != 0 && (long)(millis() - kickoutRightEjectMs) >= 0) {
+    activateDevice(DEV_IDX_KICKOUT_RIGHT);
+    kickoutRightEjectMs = 0;
+  }
+}
+
 // ********************************************************************************************************************************
 // ************************************************** SCORE PERSISTENCE ***********************************************************
 // ********************************************************************************************************************************
@@ -2485,6 +3676,133 @@ void saveCurrentScoreAndEnterAttract() {
   gameStyle = STYLE_NONE;
   setAttractLamps();
   markAttractDisplayDirty();
+}
+
+// ********************************************************************************************************************************
+// ******************************************* PERSISTENT EM STATE (EEPROM) ********************************************************
+// ********************************************************************************************************************************
+
+// The original EM game retained Selection Unit position, WHITE inserts (relay latches),
+// and gobble count across games and power cycles because the physical hardware simply
+// stayed where it was. We emulate this by persisting these values to EEPROM.
+// Bumper lit mask is NOT persisted -- the Relay Reset Bank relights all bumpers at game start.
+// Score is persisted separately via saveLastScore().
+
+// Saves the persistent EM emulation state to EEPROM.
+// Called at game over and periodically during gameplay (same cadence as score save).
+// Only writes bytes that have actually changed to reduce EEPROM wear.
+void saveEmState() {
+  byte pos = selectionUnitPosition;
+  if (EEPROM.read(EEPROM_ADDR_SELECTION_UNIT_POS) != pos) {
+    EEPROM.write(EEPROM_ADDR_SELECTION_UNIT_POS, pos);
+  }
+
+  byte whiteLow = whiteLitMask & 0xFF;
+  byte whiteHigh = (whiteLitMask >> 8) & 0xFF;
+  if (EEPROM.read(EEPROM_ADDR_WHITE_LIT_MASK) != whiteLow) {
+    EEPROM.write(EEPROM_ADDR_WHITE_LIT_MASK, whiteLow);
+  }
+  if (EEPROM.read(EEPROM_ADDR_WHITE_LIT_MASK + 1) != whiteHigh) {
+    EEPROM.write(EEPROM_ADDR_WHITE_LIT_MASK + 1, whiteHigh);
+  }
+
+  byte gc = gobbleCount;
+  if (EEPROM.read(EEPROM_ADDR_GOBBLE_COUNT) != gc) {
+    EEPROM.write(EEPROM_ADDR_GOBBLE_COUNT, gc);
+  }
+}
+
+// Loads the persistent EM emulation state from EEPROM into global variables.
+// Called once at power-up in setup(), before the first game starts.
+// Values are validated; if out of range (e.g. first boot with uninitialized EEPROM),
+// sensible defaults are used.
+void loadEmState() {
+  byte pos = EEPROM.read(EEPROM_ADDR_SELECTION_UNIT_POS);
+  if (pos >= 50) {
+    pos = 0;  // Invalid -- default to position 0
+  }
+  selectionUnitPosition = pos;
+
+  byte whiteLow = EEPROM.read(EEPROM_ADDR_WHITE_LIT_MASK);
+  byte whiteHigh = EEPROM.read(EEPROM_ADDR_WHITE_LIT_MASK + 1);
+  unsigned int mask = (whiteHigh << 8) | whiteLow;
+  // Only bits 0-8 are valid (numbers 1-9)
+  mask &= 0x01FF;
+  whiteLitMask = mask;
+
+  byte gc = EEPROM.read(EEPROM_ADDR_GOBBLE_COUNT);
+  if (gc > 5) {
+    gc = 0;  // Invalid -- default to 0
+  }
+  gobbleCount = gc;
+}
+
+// Sets all playfield lamps to reflect the current persisted EM emulation state.
+// Called from setup() at power-up and from setAttractLamps() to show the lamp state
+// that the original EM game would have displayed between games.
+// This lights: RED insert, HAT lamps (if eligible), WHITE inserts, GOBBLE lamps,
+// SPECIAL lamp, and "Spots Number When Lit" kickout/drain lamps based on the
+// persisted score's 10K digit.
+void setEmStateLamps() {
+  // Light the RED insert for the current Selection Unit position
+  for (byte i = LAMP_IDX_RED_1; i <= LAMP_IDX_RED_9; i++) {
+    pShiftRegister->digitalWrite(lampParm[i].pinNum, HIGH);  // All RED off
+  }
+  byte redNumber = SELECTION_UNIT_RED_INSERT[selectionUnitPosition % 10];
+  byte redLampIdx = LAMP_IDX_RED_1 + (redNumber - 1);
+  pShiftRegister->digitalWrite(lampParm[redLampIdx].pinNum, LOW);  // Current RED on
+
+  // Light HAT lamps if the Selection Unit is on an eligible step
+  byte stepInCycle = selectionUnitPosition % 10;
+  byte cycleNum = selectionUnitPosition / 10;  // 0-4
+  bool hatsLit = (stepInCycle == 0) && (cycleNum == 0 || cycleNum == 2 || cycleNum == 4);
+  byte hatState = hatsLit ? LOW : HIGH;
+  pShiftRegister->digitalWrite(lampParm[LAMP_IDX_HAT_LEFT_TOP].pinNum, hatState);
+  pShiftRegister->digitalWrite(lampParm[LAMP_IDX_HAT_LEFT_BOTTOM].pinNum, hatState);
+  pShiftRegister->digitalWrite(lampParm[LAMP_IDX_HAT_RIGHT_TOP].pinNum, hatState);
+  pShiftRegister->digitalWrite(lampParm[LAMP_IDX_HAT_RIGHT_BOTTOM].pinNum, hatState);
+
+  // Light WHITE inserts from persisted bitmask
+  for (byte i = 0; i < 9; i++) {
+    byte lampIdx = LAMP_IDX_WHITE_1 + i;
+    if (whiteLitMask & (1 << i)) {
+      pShiftRegister->digitalWrite(lampParm[lampIdx].pinNum, LOW);   // Lamp on
+    } else {
+      pShiftRegister->digitalWrite(lampParm[lampIdx].pinNum, HIGH);  // Lamp off
+    }
+  }
+
+  // Light GOBBLE lamps (1 through gobbleCount)
+  for (byte i = 0; i < 5; i++) {
+    byte lampIdx = LAMP_IDX_GOBBLE_1 + i;
+    if (i < gobbleCount) {
+      pShiftRegister->digitalWrite(lampParm[lampIdx].pinNum, LOW);   // Lamp on
+    } else {
+      pShiftRegister->digitalWrite(lampParm[lampIdx].pinNum, HIGH);  // Lamp off
+    }
+  }
+
+  // SPECIAL WHEN LIT: on if 4 or more gobbles
+  if (gobbleCount >= 4) {
+    pShiftRegister->digitalWrite(lampParm[LAMP_IDX_SPECIAL].pinNum, LOW);
+  } else {
+    pShiftRegister->digitalWrite(lampParm[LAMP_IDX_SPECIAL].pinNum, HIGH);
+  }
+
+  // "Spots Number When Lit" lamps based on persisted score's 10K digit.
+  // In attract mode this uses lastDisplayedScore; during gameplay it uses the live score.
+  // At power-up and game-over, the score is in lastDisplayedScore.
+  byte tenKDigit = (unsigned int)lastDisplayedScore % 10;
+  bool leftKickoutLit = (tenKDigit == 0);
+  bool rightKickoutLit = (tenKDigit == 5);
+  pShiftRegister->digitalWrite(lampParm[LAMP_IDX_KICKOUT_LEFT].pinNum,
+    leftKickoutLit ? LOW : HIGH);
+  pShiftRegister->digitalWrite(lampParm[LAMP_IDX_SPOT_NUMBER_RIGHT].pinNum,
+    leftKickoutLit ? LOW : HIGH);
+  pShiftRegister->digitalWrite(lampParm[LAMP_IDX_KICKOUT_RIGHT].pinNum,
+    rightKickoutLit ? LOW : HIGH);
+  pShiftRegister->digitalWrite(lampParm[LAMP_IDX_SPOT_NUMBER_LEFT].pinNum,
+    rightKickoutLit ? LOW : HIGH);
 }
 
 // ********************************************************************************************************************************
@@ -2546,10 +3864,6 @@ void criticalError(const char* line1, const char* line2, const char* line3) {
   lcdPrintRow(2, line2);
   lcdPrintRow(3, line3);
   lcdPrintRow(4, "HOLD KNOCKOFF=RST");
-  Serial.println("CRITICAL ERROR:");
-  Serial.println(line1);
-  Serial.println(line2);
-  Serial.println(line3);
 
   if (pTsunami != nullptr) {
     pTsunami->trackPlayPoly(TRACK_TILT_BUZZER, 0, false);

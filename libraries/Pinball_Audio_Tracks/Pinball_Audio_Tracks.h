@@ -1,11 +1,13 @@
-// PINBALL_AUDIO_TRACKS.H Rev: 01/21/26
+// PINBALL_AUDIO_TRACKS.H Rev: 02/23/26
 // Audio track definitions for Screamo pinball
 // Defines COM (voice), SFX, and MUS (music) track arrays
+// All arrays stored in PROGMEM to save ~1KB of SRAM on AVR.
 
 #ifndef PINBALL_AUDIO_TRACKS_H
 #define PINBALL_AUDIO_TRACKS_H
 
 #include <Arduino.h>
+#include <avr/pgmspace.h>
 
 // ******************************************
 // ***** AUDIO TRACK STRUCTS AND CONSTS *****
@@ -36,11 +38,37 @@ struct AudioMusTrackDef {
   byte         lengthSeconds;  // seconds (max 255 = 4m15s)
 };
 
+// *** PROGMEM READ HELPERS ***
+// On AVR, PROGMEM struct fields cannot be accessed directly; each field must
+// be read individually using pgm_read_word/pgm_read_byte.
+
+inline unsigned int pgmReadComTrackNum(const AudioComTrackDef* p) {
+  return pgm_read_word(&p->trackNum);
+}
+inline byte pgmReadComLengthTenths(const AudioComTrackDef* p) {
+  return pgm_read_byte(&p->lengthTenths);
+}
+inline byte pgmReadComPriority(const AudioComTrackDef* p) {
+  return pgm_read_byte(&p->priority);
+}
+inline unsigned int pgmReadSfxTrackNum(const AudioSfxTrackDef* p) {
+  return pgm_read_word(&p->trackNum);
+}
+inline byte pgmReadSfxFlags(const AudioSfxTrackDef* p) {
+  return pgm_read_byte(&p->flags);
+}
+inline unsigned int pgmReadMusTrackNum(const AudioMusTrackDef* p) {
+  return pgm_read_word(&p->trackNum);
+}
+inline byte pgmReadMusLengthSeconds(const AudioMusTrackDef* p) {
+  return pgm_read_byte(&p->lengthSeconds);
+}
+
 // *** COM TRACK ARRAYS ***
 // Organized by category for easy maintenance
 
 // DIAG COM tracks (101-102, 111-117)
-const AudioComTrackDef comTracksDiag[] = {
+const AudioComTrackDef comTracksDiag[] PROGMEM = {
   { 101, 15, AUDIO_PRIORITY_MED },   // Entering diagnostics
   { 102, 17, AUDIO_PRIORITY_MED },   // Exiting diagnostics
   { 111,  6, AUDIO_PRIORITY_MED },   // Lamps
@@ -54,7 +82,7 @@ const AudioComTrackDef comTracksDiag[] = {
 const byte NUM_COM_DIAG = sizeof(comTracksDiag) / sizeof(comTracksDiag[0]);
 
 // TILT WARNING COM tracks (201-205)
-const AudioComTrackDef comTracksTiltWarning[] = {
+const AudioComTrackDef comTracksTiltWarning[] PROGMEM = {
   { 201, 26, AUDIO_PRIORITY_HIGH },  // Shake it again...
   { 202, 15, AUDIO_PRIORITY_HIGH },  // Easy there, Hercules
   { 203, 21, AUDIO_PRIORITY_HIGH },  // Whoa there, King Kong
@@ -64,7 +92,7 @@ const AudioComTrackDef comTracksTiltWarning[] = {
 const byte NUM_COM_TILT_WARNING = sizeof(comTracksTiltWarning) / sizeof(comTracksTiltWarning[0]);
 
 // TILT COM tracks (212-216)
-const AudioComTrackDef comTracksTilt[] = {
+const AudioComTrackDef comTracksTilt[] PROGMEM = {
   { 212, 28, AUDIO_PRIORITY_HIGH },  // Nice goin Hercules...
   { 213, 32, AUDIO_PRIORITY_HIGH },  // Congratulations King Kong...
   { 214, 19, AUDIO_PRIORITY_HIGH },  // Ya broke it ya big palooka
@@ -74,7 +102,7 @@ const AudioComTrackDef comTracksTilt[] = {
 const byte NUM_COM_TILT = sizeof(comTracksTilt) / sizeof(comTracksTilt[0]);
 
 // BALL MISSING COM tracks (301-304)
-const AudioComTrackDef comTracksBallMissing[] = {
+const AudioComTrackDef comTracksBallMissing[] PROGMEM = {
   { 301, 55, AUDIO_PRIORITY_MED },   // Theres a ball missing...
   { 302, 53, AUDIO_PRIORITY_MED },   // Press the ball lift rod...
   { 303, 46, AUDIO_PRIORITY_MED },   // Shoot any balls...
@@ -83,7 +111,7 @@ const AudioComTrackDef comTracksBallMissing[] = {
 const byte NUM_COM_BALL_MISSING = sizeof(comTracksBallMissing) / sizeof(comTracksBallMissing[0]);
 
 // START REJECT COM tracks (312-330)
-const AudioComTrackDef comTracksStartReject[] = {
+const AudioComTrackDef comTracksStartReject[] PROGMEM = {
   { 312, 36, AUDIO_PRIORITY_MED },   // No free admission today...
   { 313, 19, AUDIO_PRIORITY_MED },   // Go ask yer mommy...
   { 314, 19, AUDIO_PRIORITY_MED },   // I told yas ta SCRAM
@@ -107,7 +135,7 @@ const AudioComTrackDef comTracksStartReject[] = {
 const byte NUM_COM_START_REJECT = sizeof(comTracksStartReject) / sizeof(comTracksStartReject[0]);
 
 // START COM tracks (351-357, 402)
-const AudioComTrackDef comTracksStart[] = {
+const AudioComTrackDef comTracksStart[] PROGMEM = {
   { 351, 17, AUDIO_PRIORITY_MED },   // Okay kid, youre in
   { 352, 46, AUDIO_PRIORITY_MED },   // Press start again for a wilder ride...
   { 353, 36, AUDIO_PRIORITY_MED },   // Keep pressin Start...
@@ -120,7 +148,7 @@ const AudioComTrackDef comTracksStart[] = {
 const byte NUM_COM_START = sizeof(comTracksStart) / sizeof(comTracksStart[0]);
 
 // PLAYER COM tracks (451-454)
-const AudioComTrackDef comTracksPlayer[] = {
+const AudioComTrackDef comTracksPlayer[] PROGMEM = {
   { 451, 11, AUDIO_PRIORITY_MED },   // Guest 1
   { 452, 13, AUDIO_PRIORITY_MED },   // Guest 2
   { 453, 13, AUDIO_PRIORITY_MED },   // Guest 3
@@ -129,7 +157,7 @@ const AudioComTrackDef comTracksPlayer[] = {
 const byte NUM_COM_PLAYER = sizeof(comTracksPlayer) / sizeof(comTracksPlayer[0]);
 
 // BALL COM tracks (461-465)
-const AudioComTrackDef comTracksBall[] = {
+const AudioComTrackDef comTracksBall[] PROGMEM = {
   { 461, 11, AUDIO_PRIORITY_MED },   // Ball 1
   { 462, 10, AUDIO_PRIORITY_MED },   // Ball 2
   { 463, 11, AUDIO_PRIORITY_MED },   // Ball 3
@@ -139,7 +167,7 @@ const AudioComTrackDef comTracksBall[] = {
 const byte NUM_COM_BALL = sizeof(comTracksBall) / sizeof(comTracksBall[0]);
 
 // BALL 1 COMMENT COM tracks (511-519) - for P2-P4 first ball
-const AudioComTrackDef comTracksBall1Comment[] = {
+const AudioComTrackDef comTracksBall1Comment[] PROGMEM = {
   { 511, 11, AUDIO_PRIORITY_LOW },   // Climb aboard
   { 512, 14, AUDIO_PRIORITY_LOW },   // Explore the park
   { 513, 14, AUDIO_PRIORITY_LOW },   // Fire away
@@ -153,7 +181,7 @@ const AudioComTrackDef comTracksBall1Comment[] = {
 const byte NUM_COM_BALL1_COMMENT = sizeof(comTracksBall1Comment) / sizeof(comTracksBall1Comment[0]);
 
 // BALL 5 COMMENT COM tracks (531-540)
-const AudioComTrackDef comTracksBall5Comment[] = {
+const AudioComTrackDef comTracksBall5Comment[] PROGMEM = {
   { 531, 18, AUDIO_PRIORITY_LOW },   // Dont embarrass yourself
   { 532, 16, AUDIO_PRIORITY_LOW },   // Its now or never
   { 533, 17, AUDIO_PRIORITY_LOW },   // Last ride of the day
@@ -168,7 +196,7 @@ const AudioComTrackDef comTracksBall5Comment[] = {
 const byte NUM_COM_BALL5_COMMENT = sizeof(comTracksBall5Comment) / sizeof(comTracksBall5Comment[0]);
 
 // GAME OVER COM tracks (551-577)
-const AudioComTrackDef comTracksGameOver[] = {
+const AudioComTrackDef comTracksGameOver[] PROGMEM = {
   { 551, 17, AUDIO_PRIORITY_MED },   // End of the ride, thrillseeker
   { 552, 25, AUDIO_PRIORITY_MED },   // Hope you enjoyed the ride...
   { 553, 15, AUDIO_PRIORITY_MED },   // Its curtains for you, pal
@@ -200,7 +228,7 @@ const AudioComTrackDef comTracksGameOver[] = {
 const byte NUM_COM_GAME_OVER = sizeof(comTracksGameOver) / sizeof(comTracksGameOver[0]);
 
 // SHOOT COM tracks (611-620)
-const AudioComTrackDef comTracksShoot[] = {
+const AudioComTrackDef comTracksShoot[] PROGMEM = {
   { 611, 37, AUDIO_PRIORITY_LOW },   // Press the Ball Lift rod...
   { 612, 28, AUDIO_PRIORITY_LOW },   // This ride will be a lot more fun...
   { 613, 26, AUDIO_PRIORITY_LOW },   // I recommend you consider...
@@ -215,7 +243,7 @@ const AudioComTrackDef comTracksShoot[] = {
 const byte NUM_COM_SHOOT = sizeof(comTracksShoot) / sizeof(comTracksShoot[0]);
 
 // BALL SAVED COM tracks (631-636, 641)
-const AudioComTrackDef comTracksBallSaved[] = {
+const AudioComTrackDef comTracksBallSaved[] PROGMEM = {
   { 631, 25, AUDIO_PRIORITY_MED },   // Ball saved, launch again
   { 632, 24, AUDIO_PRIORITY_MED },   // Heres another ball keep shooting
   { 633, 20, AUDIO_PRIORITY_MED },   // Keep going shoot again
@@ -227,7 +255,7 @@ const AudioComTrackDef comTracksBallSaved[] = {
 const byte NUM_COM_BALL_SAVED = sizeof(comTracksBallSaved) / sizeof(comTracksBallSaved[0]);
 
 // BALL SAVED URGENT COM tracks (651-662)
-const AudioComTrackDef comTracksBallSavedUrgent[] = {
+const AudioComTrackDef comTracksBallSavedUrgent[] PROGMEM = {
   { 651, 20, AUDIO_PRIORITY_MED },   // Heres another ball; send it
   { 652, 25, AUDIO_PRIORITY_MED },   // Heres another ball; fire at will
   { 653, 22, AUDIO_PRIORITY_MED },   // Heres a new ball; fire away
@@ -244,7 +272,7 @@ const AudioComTrackDef comTracksBallSavedUrgent[] = {
 const byte NUM_COM_BALL_SAVED_URGENT = sizeof(comTracksBallSavedUrgent) / sizeof(comTracksBallSavedUrgent[0]);
 
 // MULTIBALL COM tracks (671-675)
-const AudioComTrackDef comTracksMultiball[] = {
+const AudioComTrackDef comTracksMultiball[] PROGMEM = {
   { 671, 34, AUDIO_PRIORITY_HIGH },  // First ball locked...
   { 672, 36, AUDIO_PRIORITY_HIGH },  // Second ball locked...
   { 673, 14, AUDIO_PRIORITY_HIGH },  // Multiball
@@ -254,7 +282,7 @@ const AudioComTrackDef comTracksMultiball[] = {
 const byte NUM_COM_MULTIBALL = sizeof(comTracksMultiball) / sizeof(comTracksMultiball[0]);
 
 // COMPLIMENT COM tracks (701-714)
-const AudioComTrackDef comTracksCompliment[] = {
+const AudioComTrackDef comTracksCompliment[] PROGMEM = {
   { 701,  9, AUDIO_PRIORITY_LOW },   // Good shot
   { 702, 20, AUDIO_PRIORITY_LOW },   // Awesome great work
   { 703, 10, AUDIO_PRIORITY_LOW },   // Great job
@@ -273,7 +301,7 @@ const AudioComTrackDef comTracksCompliment[] = {
 const byte NUM_COM_COMPLIMENT = sizeof(comTracksCompliment) / sizeof(comTracksCompliment[0]);
 
 // DRAIN COM tracks (721-748)
-const AudioComTrackDef comTracksDrain[] = {
+const AudioComTrackDef comTracksDrain[] PROGMEM = {
   { 721, 23, AUDIO_PRIORITY_LOW },   // Did you forget where the flipper buttons are
   { 722, 19, AUDIO_PRIORITY_LOW },   // Gravity called and you answered
   { 723, 19, AUDIO_PRIORITY_LOW },   // Have you been to an eye doctor lately
@@ -306,7 +334,7 @@ const AudioComTrackDef comTracksDrain[] = {
 const byte NUM_COM_DRAIN = sizeof(comTracksDrain) / sizeof(comTracksDrain[0]);
 
 // AWARD COM tracks (811-842)
-const AudioComTrackDef comTracksAward[] = {
+const AudioComTrackDef comTracksAward[] PROGMEM = {
   { 811, 15, AUDIO_PRIORITY_HIGH },  // Special is lit
   { 812, 19, AUDIO_PRIORITY_HIGH },  // Reeee-plaaay
   { 821, 32, AUDIO_PRIORITY_HIGH },  // You lit three in a row, replay
@@ -320,7 +348,7 @@ const AudioComTrackDef comTracksAward[] = {
 const byte NUM_COM_AWARD = sizeof(comTracksAward) / sizeof(comTracksAward[0]);
 
 // MODE COM tracks (1002-1003, 1005, 1101, 1111, 1201, 1211, 1301, 1311)
-const AudioComTrackDef comTracksMode[] = {
+const AudioComTrackDef comTracksMode[] PROGMEM = {
   { 1002,  8, AUDIO_PRIORITY_HIGH },  // Jackpot
   { 1003, 13, AUDIO_PRIORITY_HIGH },  // Ten seconds left
   { 1005,  8, AUDIO_PRIORITY_HIGH },  // Time
@@ -334,7 +362,7 @@ const AudioComTrackDef comTracksMode[] = {
 const byte NUM_COM_MODE = sizeof(comTracksMode) / sizeof(comTracksMode[0]);
 
 // *** SFX TRACK ARRAY ***
-const AudioSfxTrackDef sfxTracks[] = {
+const AudioSfxTrackDef sfxTracks[] PROGMEM = {
   // DIAG SFX
   { 103, AUDIO_FLAG_NONE },   // Critical error
   { 104, AUDIO_FLAG_NONE },   // Switch Close 1000hz
@@ -416,7 +444,7 @@ const byte NUM_SFX_TRACKS = sizeof(sfxTracks) / sizeof(sfxTracks[0]);
 
 // *** MUSIC TRACK ARRAYS ***
 // CIRCUS music (2001-2019)
-const AudioMusTrackDef musTracksCircus[] = {
+const AudioMusTrackDef musTracksCircus[] PROGMEM = {
   { 2001, 147 },  // Barnum and Baileys Favorite (2m27s)
   { 2002, 156 },  // Rensaz Race March (2m36s)
   { 2003,  77 },  // Twelfth Street Rag (1m17s)
@@ -440,7 +468,7 @@ const AudioMusTrackDef musTracksCircus[] = {
 const byte NUM_MUS_CIRCUS = sizeof(musTracksCircus) / sizeof(musTracksCircus[0]);
 
 // SURF music (2051-2068)
-const AudioMusTrackDef musTracksSurf[] = {
+const AudioMusTrackDef musTracksSurf[] PROGMEM = {
   { 2051, 131 },  // Miserlou (2m11s)
   { 2052, 185 },  // Bumble Bee Stomp (3m5s)
   { 2053, 177 },  // Wipe Out (2m57s)

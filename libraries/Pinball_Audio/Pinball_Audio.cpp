@@ -147,7 +147,7 @@ bool audioStartPrimaryMusic(byte primaryTheme, byte* lastIdx, Tsunami* tsunami, 
   // Pick next track (simple sequential for now; can randomize later)
   *lastIdx = (*lastIdx + 1) % trackCount;
 
-  unsigned int trackNum = trackArray[*lastIdx].trackNum;
+  unsigned int trackNum = pgmReadMusTrackNum(&trackArray[*lastIdx]);
 
   // Play track
   tsunami->trackPlayPoly((int)trackNum, 0, false);

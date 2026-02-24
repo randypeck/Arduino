@@ -31,7 +31,7 @@ const byte PHASE_ATTRACT      = 0;
 const byte PHASE_STARTUP      = 1;
 const byte PHASE_BALL_READY   = 2;
 const byte PHASE_BALL_IN_PLAY = 3;
-const byte PHASE_GAME_OVER    = 4;
+// const byte PHASE_GAME_OVER    = 4;  // Removed: game-over cleanup is done inline in processBallLost()
 const byte PHASE_TILT         = 5;
 const byte PHASE_DIAGNOSTIC   = 6;
 const byte PHASE_BALL_SEARCH  = 7;
@@ -73,7 +73,7 @@ const byte RS485_LEN_OFFSET     =  0;        // first byte of message is always 
 const byte RS485_FROM_OFFSET    =  1;        // second byte of message is the ID of the Arduino the message is coming from
 const byte RS485_TO_OFFSET      =  2;        // third byte of message is the ID of the Arduino the message is addressed to
 const byte RS485_TYPE_OFFSET    =  3;        // fourth byte of message is the type of message such as 'C' for Credit
-const byte RS845_PAYLOAD_OFFSET =  4;        // fifth byte of message is the first byte of the payload, i.e. the data
+const byte RS485_PAYLOAD_OFFSET =  4;        // fifth byte of message is the first byte of the payload, i.e. the data
 // Note also that the LAST byte of every message is a CRC8 checksum of all bytes except the last.
 
 // Here is a list of all RS485 message types (the 1-byte TYPE field):
@@ -192,6 +192,13 @@ const int EEPROM_ADDR_ENHANCED_REPLAY_2       = 52;  // Replay threshold 2
 const int EEPROM_ADDR_ENHANCED_REPLAY_3       = 54;  // Replay threshold 3
 const int EEPROM_ADDR_ENHANCED_REPLAY_4       = 56;  // Replay threshold 4
 const int EEPROM_ADDR_ENHANCED_REPLAY_5       = 58;  // Replay threshold 5
+
+// Persistent EM emulation state - survives across games and power cycles
+// These emulate the physical stepper/relay positions that the original EM game
+// retained because the hardware simply stayed where it was.
+const int EEPROM_ADDR_SELECTION_UNIT_POS      = 60;  // Selection Unit position (0-49), 1 byte
+const int EEPROM_ADDR_WHITE_LIT_MASK          = 61;  // WHITE insert bitmask (bits 0-8 = numbers 1-9), 2 bytes
+const int EEPROM_ADDR_GOBBLE_COUNT            = 63;  // Gobble count (0-5), 1 byte
 
 // ************************************************************************
 // ****************** HARDWARE PARAMETER STRUCTURES ***********************
