@@ -1,5 +1,5 @@
 # 1954 Williams Screamo - Modernized Control System Overview
-Rev: 02/23/26. Revised by RDP and Claude Opus 4.6.
+Rev: 03/04/26. Revised by RDP and Claude Opus 4.6.
 
 ## 1. Introduction
 
@@ -1376,47 +1376,6 @@ stateDiagram-v2
 ```
 Note: Ball Save, Extra Ball, and mode ball replacement occur within PHASE_BALL_IN_PLAY without changing phase. See Sections 14.5, 14.7, and 14.12 for details.
 
-#### 10.3.10 Kickout Eject Retry Logic
-
-When a kickout coil fires to eject a ball, the ball should leave within the coil's active period. If the kickout switch remains closed after a retry delay, the ball is assumed stuck and we retry.
-
-**Implementation:**
-- Each kickout has a `kickoutRetryTicksRemaining` counter (per-kickout, not global).
-- When kickout fires (for any reason): Set `kickoutRetryTicksRemaining = KICKOUT_RETRY_TICKS` (500ms).
-- Each tick: If `kickoutRetryTicksRemaining > 0`, decrement it.
-- Each tick: If switch is closed AND `kickoutRetryTicksRemaining == 0` AND coil is not currently active:
-  - Fire the kickout coil.
-  - Set `kickoutRetryTicksRemaining = KICKOUT_RETRY_TICKS`.
-
-This rate-limits retries to approximately 2 per second (500ms interval), which is:
-- Fast enough to clear a ball that bounced back in.
-- Slow enough to not overheat the coil if truly stuck.
-
-**Kickout State Variables:**
-```
-  byte kickoutLeftRetryTicks;   // Countdown to next retry attempt
-  byte kickoutRightRetryTicks;  // Countdown to next retry attempt
-```
-**Note:** The standard `COIL_REST_TICKS` (80ms) still applies for coil thermal protection. The `KICKOUT_RETRY_TICKS` (1000ms) is an additional, longer delay specifically for the "ball still present" retry logic. The coil will not fire if either timer is active.
-
-**Kickout Switch Monitoring (each tick during PHASE_BALL_IN_PLAY):**
-```
-  // For each kickout (left and right):
-  if (switchJustClosed[SWITCH_IDX_KICKOUT_LEFT]) {
-    // Ball entered - handle based on game state (lock or eject)
-    handleKickoutEntry(KICKOUT_LEFT);
-  }
-  if (switchCurrentlyClosed[SWITCH_IDX_KICKOUT_LEFT] && !coilIsActive(DEV_IDX_KICKOUT_LEFT)) {
-    // Ball still present and coil is idle - fire eject
-    fireCoil(DEV_IDX_KICKOUT_LEFT);
-  }
-```
-This approach:
-- Reuses existing coil timing infrastructure
-- Naturally handles stuck balls without complex retry logic
-- Prevents machine-gun firing (coil rest period enforced)
-- Works for both "eject immediately" scenarios (modes/multiball) and stuck ball recovery
-
 ### 10.4 Coil Safety Watchdog
 
 **Critical Safety Requirement:** All coils (except Ball Tray Release and Flippers at hold power) must not remain energized at full power for more than approximately 100ms. Prolonged activation at full power causes overheating, potential coil damage, and fire risk.
@@ -1812,11 +1771,31 @@ The following section describes the general behavior of original machine hardwar
 - There are a few ways to win a free game (which results in the addition of a credit via the Credit Unit step-up coil):
   - Each time the SCORE is updated, evaluate if a replay score has been achieved:
     - One replay each at 4.5M, 6M, 7M, 8M, and 9M points (or whatever is configured in EEPROM).
+    - Score-threshold replays fire **inline** -- the moment the score crosses the threshold, the knocker fires immediately (for all styles). On the original EM game, the 100K switch on the drive arm of the 100K stepper directly advanced the replay unit when the score was at a threshold. We replicate this by firing the knocker the moment Master's in-memory score crosses the threshold.
   - If all five balls drain via Gobble Hole (the SPECIAL WHEN LIT insert will be lit on the 4th ball), one replay is awarded.
   - Each time a SPOTTED NUMBER is awarded, evaluate the 1-9 Number Matrix for patterns that award replays:
-    - Making 1-3 awards 20 replays.
+    - Making 1-9 (completing all nine numbers) awards 20 replays (Original/Impulse) or an Extra Ball (Enhanced). See Section 14.12 for Enhanced behavior.
     - Four corners (1, 3, 7, 9) and center (5) awards 5 replays.
     - Any other 3-in-a-row (horizontal, vertical, or diagonal) awards 1 replay.
+
+**Pattern Replay Timing (Original/Impulse):**
+
+Per the original EM schematic, pattern replays (from number matrix completion) use a separate relay (e.g. the "1-9 relay") that does **not** trip until the Score Motor reaches its INDEX (home) position. This means the current scoring cycle must finish completely before the replay sequence begins. The sequence is:
+
+1. The scoring event runs normally (e.g. 500K for a kickout = one Score Motor quarter-rev).
+2. The kickout ejects the ball on the 5th sub-slot (735ms). The ball is back in play.
+3. The Score Motor reaches INDEX. The pattern replay relay trips.
+4. The Score Motor begins a new sequence of quarter-revs for the replays.
+5. Knocker fires once per 147ms sub-slot, 5 per quarter-rev, with a 147ms rest.
+
+For example, if a lit kickout scores 500K AND completes 1-9 (20 replays):
+- First: Score Motor runs one quarter-rev for 500K (ball ejects on 5th sub-slot).
+- Then: Score Motor runs 4 more quarter-revs for 20 replays (5 knocks each).
+- Total: 5 quarter-revs = 4.41 seconds.
+
+If a score-threshold replay also triggers during the same scoring event (e.g. the 500K pushes the score past 4.5M), that replay fires inline immediately -- it does not wait for the Score Motor. In the rare case where an inline replay and a pattern replay pulse simultaneously, one replay could theoretically be lost on the original EM game. Since we are writing software, we ensure no replays are ever lost.
+
+**Implementation:** Pattern replays are queued in `replayPendingCount` and transferred to the knocker queue (`replayQueueCount`) by `processReplayKnockerTick()` once `scoreMotorGameplayEndMs == 0` (Score Motor idle). Score-threshold replays fire immediately via `awardReplays(1)` for all styles.
 
 ### 13.2.1 Replay Knocker Timing
 
@@ -1825,18 +1804,18 @@ When multiple replays are awarded, the knocker fires in sync with Score Motor ti
 - **Original/Impulse:** Score Motor runs; knocker fires once per 147ms slot
 - **Enhanced:** No Score Motor sound, but knocker timing matches (147ms intervals)
 
-**Timing Pattern (example: 20 replays for 1-2-3 pattern):**
+**Timing Pattern (example: 20 replays for 1-9 completion):**
 
-| Quarter-Rev | Slots 1-5 | Slot 6 |
-|-------------|-----------|--------|
-| 1st | 5 knocks (147ms each) | Rest (147ms) |
-| 2nd | 5 knocks (147ms each) | Rest (147ms) |
-| 3rd | 5 knocks (147ms each) | Rest (147ms) |
-| 4th | 5 knocks (147ms each) | Rest (147ms) |
+| Quarter-Rev | Slots 1-5             | Slot 6       |
+|-------------|-----------------------|--------------|
+| 1st         | 5 knocks (147ms each) | Rest (147ms) |
+| 2nd         | 5 knocks (147ms each) | Rest (147ms) |
+| 3rd         | 5 knocks (147ms each) | Rest (147ms) |
+| 4th         | 5 knocks (147ms each) | Rest (147ms) |
 
-Total duration: 4 × 882ms = 3.528 seconds
+Total duration: 4 x 882ms = 3.528 seconds
 
-**Implementation:** Use the same timing mechanism as score increments. Queue 20 credit additions and 20 knocker fires; process them at Score Motor slot intervals.
+**Implementation:** Use the same timing mechanism as score increments. Queue replay credit additions and knocker fires; process them at Score Motor slot intervals.
 
 ### 13.3 EM Device Emulation Logic
 
@@ -2877,8 +2856,8 @@ Ball 5 drain always plays a Game Over comment instead (`TRACK_GAME_OVER_FIRST` t
 | Special lit                   | 811 "Special is lit"           | -                       |
 | Replay earned                 | 812 "Reeee-plaaay"             | Knocker fires           |
 | 3-in-a-row replay             | 821 "You lit three in a row"   | Knocker fires           |
-| Four corners + center (5x)    | 822 "You lit all four corners" | Knocker fires 5x        |
-| 1-2-3 pattern (20x)           | 823 "You lit one, two, three"  | Knocker fires 20x       |
+| Four corners + center (5x)    | 822 "You lit 1,3,5,7,9"        | Knocker fires 5x        |
+| 1-2-3 pattern (20x)           | 823 "You lit all 9 numbers  "  | Knocker fires 20x       |
 | 5 gobbles replay              | 824 "Five balls in Gobble"     | Knocker fires           |
 | SCREAMO spelled               | 831 "You spelled SCREAMO"      | Selection Bell rings 3x |
 | Extra Ball awarded (earned)   | 841 "EXTRA BALL!"              | Selection Bell rings 3x |

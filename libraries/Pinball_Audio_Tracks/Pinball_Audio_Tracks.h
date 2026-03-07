@@ -1,4 +1,4 @@
-// PINBALL_AUDIO_TRACKS.H Rev: 02/23/26
+// PINBALL_AUDIO_TRACKS.H Rev: 03/04/26
 // Audio track definitions for Screamo pinball
 // Defines COM (voice), SFX, and MUS (music) track arrays
 // All arrays stored in PROGMEM to save ~1KB of SRAM on AVR.
@@ -338,8 +338,8 @@ const AudioComTrackDef comTracksAward[] PROGMEM = {
   { 811, 15, AUDIO_PRIORITY_HIGH },  // Special is lit
   { 812, 19, AUDIO_PRIORITY_HIGH },  // Reeee-plaaay
   { 821, 32, AUDIO_PRIORITY_HIGH },  // You lit three in a row, replay
-  { 822, 44, AUDIO_PRIORITY_HIGH },  // You lit all four corners, five replays
-  { 823, 46, AUDIO_PRIORITY_HIGH },  // You lit one, two and three, twenty replays
+  { 822, 43, AUDIO_PRIORITY_HIGH },  // You lit 1,3,5,7,9, five replays
+  { 823, 42, AUDIO_PRIORITY_HIGH },  // You lit 1 through 9, twenty replays
   { 824, 40, AUDIO_PRIORITY_HIGH },  // Five balls in the Gobble Hole - replay
   { 831, 18, AUDIO_PRIORITY_HIGH },  // You spelled SCREAMO
   { 841, 19, AUDIO_PRIORITY_HIGH },  // EXTRA BALL

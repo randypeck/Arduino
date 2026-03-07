@@ -1017,7 +1017,7 @@ void diagRunSettings(Pinball_LCD* pLCD, Pinball_Centipede* pShift,
         } else {
           bool enhanced = (categoryIdx == SETTINGS_CAT_ENH_REPLAY);
           unsigned int score = diagReadReplayScoreFromEEPROM(enhanced, paramIdx + 1);
-          if (score > 0) score--;
+          if (score >= 10) score -= 10;
           diagWriteReplayScoreToEEPROM(enhanced, paramIdx + 1, score);
         }
         needsRedraw = true;
@@ -1056,7 +1056,7 @@ void diagRunSettings(Pinball_LCD* pLCD, Pinball_Centipede* pShift,
         } else {
           bool enhanced = (categoryIdx == SETTINGS_CAT_ENH_REPLAY);
           unsigned int score = diagReadReplayScoreFromEEPROM(enhanced, paramIdx + 1);
-          if (score < 999) score++;
+          if (score <= 989) score += 10;
           diagWriteReplayScoreToEEPROM(enhanced, paramIdx + 1, score);
         }
         needsRedraw = true;

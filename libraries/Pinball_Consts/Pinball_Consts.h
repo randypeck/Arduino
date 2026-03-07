@@ -1,4 +1,4 @@
-// PINBALL_CONSTS.H Rev: 02/15/26.
+// PINBALL_CONSTS.H Rev: 03/04/26.
 
 #ifndef PINBALL_CONSTS_H
 #define PINBALL_CONSTS_H
@@ -326,8 +326,8 @@ const unsigned int TRACK_BUMPERS_DOUBLE         =  675;  // Every bumper worth d
 const unsigned int TRACK_SPECIAL_LIT            =  811;  // Special is lit! (above Gobble Hole)
 const unsigned int TRACK_REPLAY                 =  812;  // Replay!
 const unsigned int TRACK_3_IN_A_ROW             =  821;  // You lit up 3 in a row! Replay!
-const unsigned int TRACK_4_CORNERS              =  822;  // You hit all 4 corners! Five replays!
-const unsigned int TRACK_1_2_3                  =  823;  // You hit 1, 2, and 3! Twenty replays!
+const unsigned int TRACK_1_3_5_7_9              =  822;  // You hit all 1,3,5,7,9! Five replays!
+const unsigned int TRACK_1_THRU_9               =  823;  // You lit numbers 1 through 9! Twenty replays!
 const unsigned int TRACK_5_BALLS_IN_GOBBLE      =  824;  // All 5 balls in the Gobble Hole! Replay!
 const unsigned int TRACK_SPELLED_SCREAMO        =  831;  // You spelled S-C-R-E-A-M-O!
 const unsigned int TRACK_EXTRA_BALL_AWARDED     =  841;  // "EXTRA BALL!" Used when Extra Ball is earned, not collected

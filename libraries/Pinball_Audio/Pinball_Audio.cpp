@@ -22,8 +22,10 @@ void audioApplyTrackGain(unsigned int trackNum, int8_t categoryOffset, int8_t ma
   if (pTsunami == nullptr || trackNum == 0) {
     return;
   }
-  // Calculate total gain: master + category offset
-  int totalGain = (int)masterGain + (int)categoryOffset;
+  // Only apply category offset as per-track gain.
+  // Master gain is already applied at the Tsunami output level by audioApplyMasterGain(),
+  // so including it here would double-apply it (once on the track, once on the output).
+  int totalGain = (int)categoryOffset;
   // Clamp to valid range
   if (totalGain < -70) totalGain = -70;
   if (totalGain > 10) totalGain = 10;
