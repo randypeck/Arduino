@@ -334,6 +334,7 @@ const AudioComTrackDef comTracksDrain[] PROGMEM = {
 const byte NUM_COM_DRAIN = sizeof(comTracksDrain) / sizeof(comTracksDrain[0]);
 
 // AWARD COM tracks (811-842)
+// AWARD COM tracks (811-843)
 const AudioComTrackDef comTracksAward[] PROGMEM = {
   { 811, 15, AUDIO_PRIORITY_HIGH },  // Special is lit
   { 812, 19, AUDIO_PRIORITY_HIGH },  // Reeee-plaaay
@@ -343,10 +344,10 @@ const AudioComTrackDef comTracksAward[] PROGMEM = {
   { 824, 40, AUDIO_PRIORITY_HIGH },  // Five balls in the Gobble Hole - replay
   { 831, 18, AUDIO_PRIORITY_HIGH },  // You spelled SCREAMO
   { 841, 19, AUDIO_PRIORITY_HIGH },  // EXTRA BALL
-  { 842, 20, AUDIO_PRIORITY_HIGH }   // Heres another ball; send it
+  { 842, 27, AUDIO_PRIORITY_HIGH },  // Here's your extra ball
+  { 843, 45, AUDIO_PRIORITY_HIGH }   // Fanfare horns (Extra Ball earned)
 };
 const byte NUM_COM_AWARD = sizeof(comTracksAward) / sizeof(comTracksAward[0]);
-
 // MODE COM tracks (1002-1003, 1005, 1101, 1111, 1201, 1211, 1301, 1311)
 const AudioComTrackDef comTracksMode[] PROGMEM = {
   { 1002,  8, AUDIO_PRIORITY_HIGH },  // Jackpot

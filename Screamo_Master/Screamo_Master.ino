@@ -1,4 +1,4 @@
-// Screamo_Master.INO Rev: 03/04/26
+// Screamo_Master.INO Rev: 03/07/26
 // 11/12/25: Moved Right Kickout from pin 13 to pin 44 to avoid MOSFET firing twice on power-up.  Don't use MOSFET on pin 13.
 // 12/28/25: Changed flipper inputs from direct Arduino inputs to Centipede inputs.
 // 01/07/26: Added "5 Balls in Trough" switch to Centipede inputs. All switches tested and working.
@@ -16,7 +16,7 @@
 #include <Pinball_Audio_Tracks.h>  // Audio track definitions (COM, SFX, MUS)
 
 const byte THIS_MODULE = ARDUINO_MAS;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "MASTER 03/04/26";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "MASTER 03/07/26";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which makes it a global.
 // And no need to pass lcdString[] to any functions that use it!
 
@@ -222,6 +222,15 @@ int8_t tsunamiVoiceGainDb = 0;  // Per-category relative gain (COM/Voice)
 int8_t tsunamiSfxGainDb   = 0;  // Per-category relative gain (SFX)
 int8_t tsunamiMusicGainDb = 0;  // Per-category relative gain (Music)
 int8_t tsunamiDuckingDb   = -20;  // Ducking gain offset (default -20dB)
+
+// ***** DEFERRED COM ANNOUNCEMENT *****
+// When a verbal award (Extra Ball, replay, SCREAMO, Special lit, etc.) coincides with
+// bells ringing on Slave, the announcement is deferred until the bells and knocker finish.
+// processAudioTick() checks pendingComFireMs each tick and plays the track when ready.
+unsigned int pendingComTrack = 0;           // Track number to play (0 = nothing pending)
+byte pendingComLenTenths = 0;              // Track length in 0.1s units
+unsigned long pendingComFireMs = 0;        // millis() when the track should start playing
+bool pendingComDuckMusic = false;          // Whether to duck music when the track plays
 
 // ********************************************************************************************************************************
 // ***************************************************** DIAGNOSTICS **************************************************************
@@ -913,6 +922,7 @@ void handleFullTilt() {
 
   // Stop all shakers
   stopAllShakers();
+  cancelPendingComTrack();
 
   // Flippers are disabled automatically by processFlippers() checking gameState.tilted.
   // Release them immediately here for responsiveness.
@@ -1584,6 +1594,28 @@ void updatePhaseStartup() {
     gameState.tilted = false;
     gameState.tiltWarnings = 0;
 
+    // Wait for any pending deferred COM track (e.g. snarky drain comment from previous ball)
+    // to fire and finish before playing the "Ball N" announcement. Without this, "Ball N"
+    // would overwrite the snarky comment before the player hears it.
+    if (gameStyle == STYLE_ENHANCED) {
+      // If a deferred track has not fired yet, fire it now (its delay has likely elapsed
+      // by the time we reach DISPENSE_BALL, but if not, fire it immediately).
+      if (pendingComTrack != 0) {
+        firePendingComTrack();
+      }
+      // If a COM track is playing (either the just-fired deferred track or one that
+      // was already playing), wait for it to finish.
+      if (audioCurrentComTrack != 0 && audioComEndMillis > 0) {
+        long remaining = (long)(audioComEndMillis - millis());
+        if (remaining > 0) {
+          delay((unsigned long)remaining + 200UL);
+        }
+        audioCurrentComTrack = 0;
+        audioComEndMillis = 0;
+        audioDuckMusicForVoice(false);
+      }
+    }
+
     // Enhanced style: announce ball number for balls 2-5, with Ball 5 follow-up comment
     if (gameStyle == STYLE_ENHANCED && gameState.currentBall >= 2) {
       // Duck music so the ball number announcement is audible
@@ -1974,6 +2006,11 @@ void updatePhaseBallReady() {
       if (ballSaveUsed && savedBallFirstSwitchMs == 0) {
         savedBallFirstSwitchMs = millis();
       }
+
+      // CLEAR the triggering drain's edge flag BEFORE calling handleBallDrain().
+      // See the same fix in updatePhaseBallInPlay() for the full explanation.
+      switchJustClosedFlag[hitSwitch] = false;
+
       // Now process the drain. handleBallDrain() will check the timer.
       byte drainType = DRAIN_TYPE_NONE;
       if (hitSwitch == SWITCH_IDX_DRAIN_LEFT)        drainType = DRAIN_TYPE_LEFT;
@@ -2165,6 +2202,17 @@ void updatePhaseBallInPlay() {
         handleDrainRolloverScoring(hitSwitch);
       }
 
+      // CLEAR the triggering drain's edge flag BEFORE calling handleBallDrain().
+      // checkPlayfieldSwitchHit() does NOT consume the flag -- it only reads it.
+      // handleBallDrain()'s extraDrains scan checks ALL drain switchJustClosedFlags
+      // to catch same-tick multi-drains during multiball. If we do not clear the
+      // triggering switch's flag here, the extraDrains scan will find it still set
+      // and count it as a SECOND drain, double-decrementing ballsInPlay and
+      // double-scoring the drain. This was the root cause of multiball ending
+      // prematurely: ballsInPlay dropped from 3 to 1 instead of 3 to 2 on a
+      // single drain, because the same drain was counted twice.
+      switchJustClosedFlag[hitSwitch] = false;
+
       // Now handle ball drain (ball save check, ball lost, etc.)
       byte drainType = DRAIN_TYPE_NONE;
       if (hitSwitch == SWITCH_IDX_DRAIN_LEFT)        drainType = DRAIN_TYPE_LEFT;
@@ -2291,16 +2339,13 @@ void handleBallDrain(byte drainType) {
       multiballSavesRemaining += totalDrains;
       multiballSaveDispensePending = true;
 
-      // Play an urgent "ball saved" announcement so the player knows
-      audioDuckMusicForVoice(true);
-      audioPreemptComTrack();
+      // Schedule an urgent "ball saved" announcement AFTER drain scoring bells finish.
+      // The drain was just scored (500K or 100K), so bells ring for up to 1764ms.
+      cancelPendingComTrack();
       byte randomIdx = (byte)random(0, NUM_COM_BALL_SAVED_URGENT);
       unsigned int trackNum = pgmReadComTrackNum(&comTracksBallSavedUrgent[randomIdx]);
       byte trackLenTenths = pgmReadComLengthTenths(&comTracksBallSavedUrgent[randomIdx]);
-      pTsunami->trackPlayPoly((int)trackNum, 0, false);
-      audioApplyTrackGain(trackNum, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
-      audioCurrentComTrack = trackNum;
-      audioComEndMillis = millis() + ((unsigned long)trackLenTenths * 100UL);
+      scheduleComTrack(trackNum, trackLenTenths, 1800, true);
 
       snprintf(lcdString, LCD_WIDTH + 1, "MB SAVE balls=%u", ballsInPlay);
       lcdPrintRow(3, lcdString);
@@ -2310,8 +2355,14 @@ void handleBallDrain(byte drainType) {
     // No ball save -- normal multiball drain (just lost ball(s))
     snprintf(lcdString, LCD_WIDTH + 1, "MB balls=%u", ballsInPlay);
     lcdPrintRow(3, lcdString);
-    if (ballsInPlay == 1) {
-      // Multiball is over; one ball survives. Continue normal single-ball play.
+    if (ballsInPlay <= 1) {
+      // Multiball is over; at most one ball survives on the playfield.
+      // NOTE: We previously also checked (ballInLift ? 1 : 0) here to account for
+      // a ball sitting at the lift base. However, ballInLift is only actively tracked
+      // during PHASE_BALL_READY (not PHASE_BALL_IN_PLAY), so it can be stale and
+      // incorrectly prevent this transition. This was the most likely cause of Surf
+      // Rock music persisting after the second multiball ended. ballsInPlay already
+      // accurately reflects reality, so the ballInLift term was redundant.
       inMultiball = false;
       multiballSaveEndMs = 0;  // Clear multiball save timer
       multiballSavesRemaining = 0;
@@ -2333,38 +2384,19 @@ void handleBallDrain(byte drainType) {
       if (audioCurrentComTrack != 0) {
         audioDuckMusicForVoice(true);
       }
-      return;
-    }
 
-    if (ballsInPlay == 0) {
-      // All balls drained simultaneously (e.g. 3 balls drained on the same tick,
-      // or 2 drained with only 2 in play). Multiball is over AND no balls survive.
-      inMultiball = false;
-      multiballSaveEndMs = 0;
-      multiballSavesRemaining = 0;
-      multiballSaveDispensePending = false;
-      multiballSaveWaitingForLift = false;
+      // If one ball survives, continue single-ball play
+      if (ballsInPlay >= 1) {
+        return;
+      }
 
-      // Apply extended drain suppression
-      const byte DRAIN_SUPPRESS_TICKS = 200;
-      switchDebounceCounter[SWITCH_IDX_DRAIN_LEFT] = DRAIN_SUPPRESS_TICKS;
-      switchDebounceCounter[SWITCH_IDX_DRAIN_CENTER] = DRAIN_SUPPRESS_TICKS;
-      switchDebounceCounter[SWITCH_IDX_DRAIN_RIGHT] = DRAIN_SUPPRESS_TICKS;
-      switchDebounceCounter[SWITCH_IDX_GOBBLE] = DRAIN_SUPPRESS_TICKS;
-
-      // Stop multiball music and switch to primary theme before falling through
-      // to processBallLost(). processBallLost() keeps music playing through ball
-      // changes, so we must switch themes here.
-      audioStopMusic();
-      ensureMusicPlaying();
-
+      // ballsInPlay == 0: all balls drained simultaneously. Fall through to
+      // single-ball drain handling below (ball save check or processBallLost).
       snprintf(lcdString, LCD_WIDTH + 1, "MB all drain!");
       lcdPrintRow(3, lcdString);
-
-      // Fall through to single-ball drain handling below (ball save or processBallLost)
     }
 
-    // ballsInPlay >= 2: still in multiball, just return
+    // ballsInPlay >= 2 (or multiball was not ended above): still in multiball
     if (inMultiball) {
       return;
     }
@@ -2436,14 +2468,20 @@ void saveBall() {
   // ball save announcement is not buried under it.
   audioPreemptComTrack();
 
-  // Duck music before playing voice line
-  audioDuckMusicForVoice(true);
-
-  // Play ball save audio
-  pTsunami->trackPlayPoly(TRACK_BALL_SAVED_FIRST, 0, false);
-  audioApplyTrackGain(TRACK_BALL_SAVED_FIRST, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
-  audioCurrentComTrack = TRACK_BALL_SAVED_FIRST;
-  audioComEndMillis = millis() + 3000UL;
+  // If a high-priority award announcement is pending (e.g. "Special is lit!",
+  // "5 balls in the Gobble Hole! Replay!"), preserve it instead of replacing
+  // with a generic "Ball saved!" line. The award is more important to the player.
+  // This happens when the gobble hole is both a scoring event (4th/5th gobble)
+  // AND a drain -- the award was scheduled by handleGobbleHoleScoring() but would
+  // be wiped by cancelPendingComTrack() before it ever fires.
+  if (pendingComTrack == 0) {
+    // No award pending -- schedule the normal ball save announcement.
+    byte savedRandomIdx = (byte)random(0, NUM_COM_BALL_SAVED);
+    unsigned int savedTrack = pgmReadComTrackNum(&comTracksBallSaved[savedRandomIdx]);
+    byte savedLenTenths = pgmReadComLengthTenths(&comTracksBallSaved[savedRandomIdx]);
+    scheduleComTrack(savedTrack, savedLenTenths, 1800, true);
+  }
+  // else: keep the existing pending award track; it will fire on its own schedule.
 
   // Start music ONLY if not already playing (prevents double music)
   ensureMusicPlaying();
@@ -2478,20 +2516,38 @@ void processBallLost() {
   // Stop all shakers and hill climb state
   stopAllShakers();
 
+  // If a high-priority award announcement is pending (e.g. "Special is lit!",
+  // "5 balls in the Gobble Hole! Replay!", or a score-threshold "Replay!"),
+  // preserve it. Otherwise cancel any stale pending track so the drain/game-over
+  // audio can take its slot.
+  bool preservePendingAward = (pendingComTrack != 0);
+  if (!preservePendingAward) {
+    cancelPendingComTrack();
+  }
+
   // Enhanced: stop SFX and COM tracks, but keep music playing through ball changes.
   // Music only stops on game over (last ball).
+  // EXCEPTION: If extraBallAwarded is true AND the "EXTRA BALL!" announcement
+  // (track 841) is currently playing, do NOT stop it -- the player needs to hear
+  // the announcement. It will finish on its own or be preempted by the "Here's
+  // another ball!" announcement in the extra ball handler below.
   if (gameStyle == STYLE_ENHANCED) {
     if (audioCurrentSfxTrack != 0) {
       pTsunami->trackStop(audioCurrentSfxTrack);
       audioCurrentSfxTrack = 0;
     }
-    if (audioCurrentComTrack != 0) {
+    bool keepComTrack = extraBallAwarded
+      && (audioCurrentComTrack == TRACK_EXTRA_BALL_AWARDED
+        || pendingComTrack == TRACK_EXTRA_BALL_AWARDED);
+    if (audioCurrentComTrack != 0 && !keepComTrack) {
       pTsunami->trackStop(audioCurrentComTrack);
       audioCurrentComTrack = 0;
       audioComEndMillis = 0;
     }
-    // Un-duck music in case it was ducked for a voice line
-    audioDuckMusicForVoice(false);
+    // Un-duck music in case it was ducked for a voice line (unless keeping Extra Ball announcement)
+    if (!keepComTrack) {
+      audioDuckMusicForVoice(false);
+    }
 
     // Shaker motor feedback on drain (non-game-over only; game over has its own teardown)
     if (gameState.currentBall < MAX_BALLS || extraBallAwarded) {
@@ -2508,7 +2564,12 @@ void processBallLost() {
     // STARTUP_DISPENSE_BALL plays the "Ball N" announcement. Without this, the
     // "Ball N" audio immediately overwrites audioCurrentComTrack and the player
     // never hears the snarky comment.
-    if (gameState.currentBall < MAX_BALLS || extraBallAwarded) {
+    // Skip snarky comments when extra ball is awarded -- the "EXTRA BALL!" announcement
+    // takes priority, and the "Here's another ball!" announcement follows it below.
+    // Also skip if a high-priority award is pending -- the award announcement is more
+    // important than a snarky drain comment.
+    if ((gameState.currentBall < MAX_BALLS || extraBallAwarded)
+      && !extraBallAwarded && !preservePendingAward) {
       bool playSnarky = false;
 
       // Case 1: Post-save quick drain. The player just got saved and wasted it.
@@ -2531,26 +2592,16 @@ void processBallLost() {
       }
 
       if (playSnarky) {
-        audioDuckMusicForVoice(true);
+        // Schedule the snarky comment to play AFTER the drain scoring bells finish.
+        // Center drain / gobble = 500K = 882ms of 100K bells.
+        // Left/right drain = 100K = 1764ms of 10K bells.
+        // Use 1800ms to cover the worst case (L/R drain) with margin.
+        // If a replay threshold was also crossed, knocker fires add up to ~735ms,
+        // but those overlap with bells so the 1800ms covers both.
         byte randomIdx = (byte)random(0, NUM_COM_DRAIN);
         unsigned int trackNum = pgmReadComTrackNum(&comTracksDrain[randomIdx]);
         byte trackLenTenths = pgmReadComLengthTenths(&comTracksDrain[randomIdx]);
-        pTsunami->trackPlayPoly((int)trackNum, 0, false);
-        audioApplyTrackGain(trackNum, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
-        audioCurrentComTrack = trackNum;
-        unsigned long trackMs = (unsigned long)trackLenTenths * 100UL;
-        audioComEndMillis = millis() + trackMs;
-
-        // Block until the snarky comment finishes. This is acceptable because the
-        // ball just drained -- no game logic needs to run until the next ball is
-        // dispensed. Without this delay, STARTUP_DISPENSE_BALL immediately plays
-        // "Ball N" which overwrites the snarky comment before the player hears it.
-        delay(trackMs + 200UL);
-
-        // Clear COM tracking so STARTUP_DISPENSE_BALL can play "Ball N" cleanly
-        audioCurrentComTrack = 0;
-        audioComEndMillis = 0;
-        audioDuckMusicForVoice(false);
+        scheduleComTrack(trackNum, trackLenTenths, 1800, true);
       }
     }
   }
@@ -2569,12 +2620,25 @@ void processBallLost() {
     ballSaveConsumedMs = 0;
     savedBallFirstSwitchMs = 0;
 
-    // Enhanced: play "Here's another ball! Send it!" before dispensing.
-    // Duck music so the announcement is audible. The processAudioTick() will
-    // un-duck when the COM track ends, which happens during STARTUP_DISPENSE_BALL
-    // or PHASE_BALL_READY.
+    // Enhanced: fire any pending "EXTRA BALL!" announcement, wait for it, then play
+    // "Here's another ball! Send it!" before dispensing.
     if (gameStyle == STYLE_ENHANCED) {
+      // If the deferred "EXTRA BALL!" announcement has not fired yet, fire it now.
+      if (pendingComTrack == TRACK_EXTRA_BALL_AWARDED) {
+        firePendingComTrack();
+      }
+
+      // Wait for the "EXTRA BALL!" announcement to finish playing.
+      if (audioCurrentComTrack == TRACK_EXTRA_BALL_AWARDED && audioComEndMillis > 0) {
+        long remaining = (long)(audioComEndMillis - millis());
+        if (remaining > 0) {
+          delay((unsigned long)remaining + 200UL);
+        }
+      }
+
+      // Now play "Here's another ball! Send it!"
       audioDuckMusicForVoice(true);
+      audioPreemptComTrack();
       pTsunami->trackPlayPoly(TRACK_EXTRA_BALL_COLLECTED, 0, false);
       audioApplyTrackGain(TRACK_EXTRA_BALL_COLLECTED, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
       audioCurrentComTrack = TRACK_EXTRA_BALL_COLLECTED;
@@ -2582,10 +2646,7 @@ void processBallLost() {
       unsigned long trackMs = (unsigned long)trackLenTenths * 100UL;
       audioComEndMillis = millis() + trackMs;
 
-      // Block until announcement finishes so "Ball N" does not overwrite it.
-      // (STARTUP_DISPENSE_BALL does not play "Ball N" for extra balls since
-      // currentBall does not change, but blocking here ensures the announcement
-      // is heard even if the ball dispenses quickly.)
+      // Block until announcement finishes.
       delay(trackMs + 200UL);
       audioCurrentComTrack = 0;
       audioComEndMillis = 0;
@@ -2612,6 +2673,20 @@ void processBallLost() {
 
   // Last ball - game over
   if (gameStyle == STYLE_ENHANCED) {
+    // If a pending award track is still waiting to fire, fire it now and wait for it
+    // before the game over announcement overwrites it.
+    if (pendingComTrack != 0) {
+      firePendingComTrack();
+      if (audioCurrentComTrack != 0 && audioComEndMillis > 0) {
+        long remaining = (long)(audioComEndMillis - millis());
+        if (remaining > 0) {
+          delay((unsigned long)remaining + 200UL);
+        }
+        audioCurrentComTrack = 0;
+        audioComEndMillis = 0;
+      }
+    }
+
     // Stop all audio except we will play game over announcement
     pTsunami->stopAllTracks();
     audioCurrentSfxTrack = 0;
@@ -2918,13 +2993,21 @@ void handleLastLitBumper() {
   addScore(50);  // 50 x 10K = 500K
 
   // Original/Impulse: override Score Motor deadline to one quarter-rev.
-  // addScore(50) sets a generic 2646ms deadline, but Slave only needs 882ms
-  // for 5 x 100K steps. The excess delays replay knocker transfers unnecessarily.
   overrideScoreMotorDeadline(1);
 
   // Fire Relay Reset Bank for sound (Original/Impulse only)
   if (useMechanicalScoringDevices()) {
     activateDevice(DEV_IDX_RELAY_RESET);
+  }
+
+  // Enhanced: announce "You spelled SCREAMO!" after the scoring bells finish.
+  // 500K = 5 x 100K bells over 882ms. Use 1000ms delay for margin.
+  // Only schedule if awardSpottedNumber() did not already schedule a higher-priority
+  // announcement (Extra Ball, four-corners, three-in-a-row). Those are rarer and
+  // take priority; scheduleComTrack() overwrites any existing pending track.
+  if (gameStyle == STYLE_ENHANCED && pendingComTrack == 0) {
+    byte trackLenTenths = pgmReadComLengthTenths(&comTracksAward[6]);  // Index 6 = track 831
+    scheduleComTrack(TRACK_SPELLED_SCREAMO, trackLenTenths, 1000, true);
   }
 
   // Relight all 7 bumper lamps
@@ -3014,75 +3097,79 @@ void checkWhiteMatrixPatterns() {
         pShiftRegister->digitalWrite(lampParm[i].pinNum, HIGH);  // All WHITE off
       }
 
-      // Play "EXTRA BALL!" announcement and ring Selection Bell 3 times.
-      // This is a HIGH priority award announcement. Duck music so it is audible.
-      // The blocking delays are acceptable because the ball is mid-play hitting a
-      // target (bumper last-lit or gobble hole) -- a brief pause for fanfare is fine.
+      // Play Fanfare WAV, then schedule "EXTRA BALL!" after it finishes.
+      byte bellLenTenths = pgmReadComLengthTenths(&comTracksAward[9]);  // Index 9 = track 843
       audioDuckMusicForVoice(true);
-      pTsunami->trackPlayPoly(TRACK_EXTRA_BALL_AWARDED, 0, false);
-      audioApplyTrackGain(TRACK_EXTRA_BALL_AWARDED, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
-      audioCurrentComTrack = TRACK_EXTRA_BALL_AWARDED;
-      byte trackLenTenths = pgmReadComLengthTenths(&comTracksAward[7]);  // Index 7 = track 841
-      audioComEndMillis = millis() + ((unsigned long)trackLenTenths * 100UL);
+      audioPreemptComTrack();
+      pTsunami->trackPlayPoly(TRACK_EXTRA_BALL_HORNS, 0, false);
+      audioApplyTrackGain(TRACK_EXTRA_BALL_HORNS, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+      audioCurrentComTrack = TRACK_EXTRA_BALL_HORNS;
+      unsigned long bellMs = (unsigned long)bellLenTenths * 100UL;
+      audioComEndMillis = millis() + bellMs;
 
-      // Ring Selection Bell 3 times with spacing for dramatic effect
-      pMessage->sendMAStoSLVBellSelect();
-      delay(300);
-      pMessage->sendMAStoSLVBellSelect();
-      delay(300);
-      pMessage->sendMAStoSLVBellSelect();
+      // Schedule "EXTRA BALL!" announcement AFTER bell chime finishes.
+      // The caller's scoring event also rings bells for up to 882ms; the bell chime
+      // WAV replaces those visual bells, so we schedule based on whichever is longer.
+      unsigned long delayMs = bellMs + 200UL;  // Bell chime length + small gap
+      if (delayMs < 1000) delayMs = 1000;      // At least 1000ms to cover scoring bells
+      byte trackLenTenths = pgmReadComLengthTenths(&comTracksAward[7]);  // Index 7 = track 841
+      scheduleComTrack(TRACK_EXTRA_BALL_AWARDED, trackLenTenths, delayMs, true);
+
     } else {
-      // Original/Impulse: award 20 replays. Queue them so they fire AFTER the
-      // current Score Motor cycle finishes (per the 1-9 relay INDEX behavior).
+      // Original/Impulse: award 20 replays.
       replayPendingCount += 20;
 
-      // Reset all WHITE insert lamps (the original EM game reset the relay latches
-      // after the 1-9 replay sequence, allowing the player to earn 20 replays again).
+      // Reset all WHITE insert lamps.
       whiteLitMask = 0;
       for (byte i = LAMP_IDX_WHITE_1; i <= LAMP_IDX_WHITE_9; i++) {
         pShiftRegister->digitalWrite(lampParm[i].pinNum, HIGH);  // All WHITE off
       }
     }
     // Reset pattern tracking since the matrix was cleared.
-    // The player can earn all patterns again in the next matrix cycle.
     whiteRowsAwarded = 0;
     whiteFourCornersAwarded = false;
 
-    // After awarding 1-9, skip the other pattern checks. The matrix has been reset,
-    // so no 3-in-a-row or 4-corners patterns remain. Return early.
+    // After awarding 1-9, skip the other pattern checks. The matrix has been reset.
     return;
   }
 
   // Check for four corners (1,3,7,9) + center (5)
-  // Bits: 0 (1), 2 (3), 4 (5), 6 (7), 8 (9) = 0x155
   static const unsigned int fourCornersCenter = 0x0155;
   if (!whiteFourCornersAwarded
     && (whiteLitMask & fourCornersCenter) == fourCornersCenter) {
     whiteFourCornersAwarded = true;
     if (gameStyle == STYLE_ENHANCED) {
-      awardReplays(5);  // Enhanced: fire immediately (no Score Motor)
+      awardReplays(5);
+      // Schedule "You hit 1,3,5,7,9! Five replays!" after bells + knocker finish.
+      // 5 knocker fires at 147ms intervals = 735ms, plus scoring bells.
+      byte trackLenTenths = pgmReadComLengthTenths(&comTracksAward[3]);  // Index 3 = track 822
+      scheduleComTrack(TRACK_1_3_5_7_9, trackLenTenths, 1500, true);
     } else {
-      replayPendingCount += 5;  // Original/Impulse: queue for after Score Motor
+      replayPendingCount += 5;
     }
-    // TODO: Play TRACK_1_3_5_7_9 (Enhanced only)
   }
 
   // Check for any 3-in-a-row
+  bool anyNewRow = false;
   for (byte i = 0; i < 8; i++) {
-    // Skip if this line was already awarded this matrix cycle
     if (whiteRowsAwarded & (1 << i)) {
       continue;
     }
     if ((whiteLitMask & threeInARow[i]) == threeInARow[i]) {
-      // This line is complete and has not been awarded yet. Award 1 replay.
       whiteRowsAwarded |= (1 << i);
       if (gameStyle == STYLE_ENHANCED) {
         awardReplays(1);
+        anyNewRow = true;
       } else {
         replayPendingCount += 1;
       }
-      // TODO: Play TRACK_3_IN_A_ROW (Enhanced only, but only once even if multiple lines)
     }
+  }
+  // Schedule "Three in a row! Replay!" once (even if multiple lines completed).
+  // Only schedule if no higher-priority announcement (four-corners, Extra Ball) is pending.
+  if (anyNewRow && gameStyle == STYLE_ENHANCED && pendingComTrack == 0) {
+    byte trackLenTenths = pgmReadComLengthTenths(&comTracksAward[2]);  // Index 2 = track 821
+    scheduleComTrack(TRACK_3_IN_A_ROW, trackLenTenths, 1200, true);
   }
 }
 
@@ -3207,16 +3294,16 @@ void handleSwitchKickout(byte t_switchIdx) {
     ballsLocked++;
     kickoutLockedMask |= lockBit;
 
-    // Play lock announcement (duck music so it is audible)
-    audioPreemptComTrack();
-    audioDuckMusicForVoice(true);
-    unsigned int lockTrack = (ballsLocked == 1) ? TRACK_LOCK_1 : TRACK_LOCK_2;
-    byte lockIdx = ballsLocked - 1;  // 0 = first lock, 1 = second lock
-    byte lockLenTenths = pgmReadComLengthTenths(&comTracksMultiball[lockIdx]);
-    pTsunami->trackPlayPoly((int)lockTrack, 0, false);
-    audioApplyTrackGain(lockTrack, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
-    audioCurrentComTrack = lockTrack;
-    audioComEndMillis = millis() + ((unsigned long)lockLenTenths * 100UL);
+    // Schedule lock announcement AFTER bells finish (500K = 882ms of 100K bells).
+    // If awardSpottedNumber() already scheduled an Extra Ball announcement, it has
+    // higher importance and overwrites are fine -- but we skip scheduling here to
+    // preserve it. The kickout lamp provides visual lock feedback either way.
+    if (pendingComTrack == 0) {
+      unsigned int lockTrack = (ballsLocked == 1) ? TRACK_LOCK_1 : TRACK_LOCK_2;
+      byte lockIdx = ballsLocked - 1;  // 0 = first lock, 1 = second lock
+      byte lockLenTenths = pgmReadComLengthTenths(&comTracksMultiball[lockIdx]);
+      scheduleComTrack(lockTrack, lockLenTenths, 1000, true);
+    }
 
     // Flash the kickout lamp to indicate a locked ball (turn it on solid)
     if (t_switchIdx == SWITCH_IDX_KICKOUT_LEFT) {
@@ -3316,8 +3403,6 @@ void handleGobbleHoleScoring() {
   addScore(50);
 
   // Original/Impulse: override Score Motor deadline to one quarter-rev.
-  // addScore(50) sets a generic 2646ms deadline, but Slave only needs 882ms
-  // for 5 x 100K steps. The excess delays replay knocker transfers unnecessarily.
   overrideScoreMotorDeadline(1);
 
   // Gobble Hole ALWAYS awards spotted number
@@ -3329,14 +3414,26 @@ void handleGobbleHoleScoring() {
     byte gobbleLampIdx = LAMP_IDX_GOBBLE_1 + (gobbleCount - 1);
     pShiftRegister->digitalWrite(lampParm[gobbleLampIdx].pinNum, LOW);  // Lamp on
 
-    // 4th gobble: light SPECIAL WHEN LIT lamp
+    // 4th gobble: light SPECIAL WHEN LIT lamp and announce it
     if (gobbleCount == 4) {
       pShiftRegister->digitalWrite(lampParm[LAMP_IDX_SPECIAL].pinNum, LOW);
+
+      // Enhanced: announce "Special is lit!" after bells finish.
+      if (gameStyle == STYLE_ENHANCED && pendingComTrack == 0) {
+        byte trackLenTenths = pgmReadComLengthTenths(&comTracksAward[0]);  // Index 0 = track 811
+        scheduleComTrack(TRACK_SPECIAL_LIT, trackLenTenths, 1000, true);
+      }
     }
 
-    // 5th gobble with SPECIAL lit: award replay
+    // 5th gobble with SPECIAL lit: award replay and announce it
     if (gobbleCount == 5) {
       awardReplays(1);
+
+      // Enhanced: announce "Five balls in the Gobble Hole! Replay!" after bells + knocker.
+      if (gameStyle == STYLE_ENHANCED && pendingComTrack == 0) {
+        byte trackLenTenths = pgmReadComLengthTenths(&comTracksAward[5]);  // Index 5 = track 824
+        scheduleComTrack(TRACK_5_BALLS_IN_GOBBLE, trackLenTenths, 1200, true);
+      }
     }
   }
 }
@@ -3817,6 +3914,44 @@ void renderDiagnosticsMenuIfNeeded() {
 // ************************************************** AUDIO TICK PROCESSOR ********************************************************
 // ********************************************************************************************************************************
 
+// Schedules a COM track to play after a delay (typically after bells and knocker finish).
+// If a track is already pending, the new request overwrites it -- award announcements are
+// rare enough that two never realistically overlap in the same bell window.
+void scheduleComTrack(unsigned int trackNum, byte lenTenths, unsigned long delayMs, bool duckMusic) {
+  pendingComTrack = trackNum;
+  pendingComLenTenths = lenTenths;
+  pendingComFireMs = millis() + delayMs;
+  pendingComDuckMusic = duckMusic;
+}
+
+// Fires the pending COM track. Called from processAudioTick() when the delay expires.
+void firePendingComTrack() {
+  if (pendingComTrack == 0) {
+    return;
+  }
+  audioPreemptComTrack();
+  if (pendingComDuckMusic) {
+    audioDuckMusicForVoice(true);
+  }
+  pTsunami->trackPlayPoly((int)pendingComTrack, 0, false);
+  audioApplyTrackGain(pendingComTrack, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+  audioCurrentComTrack = pendingComTrack;
+  audioComEndMillis = millis() + ((unsigned long)pendingComLenTenths * 100UL);
+
+  pendingComTrack = 0;
+  pendingComLenTenths = 0;
+  pendingComFireMs = 0;
+  pendingComDuckMusic = false;
+}
+
+// Cancels any pending deferred COM track. Called on tilt, game over, mid-game start.
+void cancelPendingComTrack() {
+  pendingComTrack = 0;
+  pendingComLenTenths = 0;
+  pendingComFireMs = 0;
+  pendingComDuckMusic = false;
+}
+
 // Called every 10ms tick from loop(), regardless of game phase.
 // Handles all time-based audio state transitions:
 //   1. COM track end detection -> un-duck music
@@ -3850,6 +3985,18 @@ void processAudioTick() {
     audioCurrentComTrack = 0;
     audioComEndMillis = 0;
     audioDuckMusicForVoice(false);
+  }
+
+  // --- DEFERRED COM TRACK FIRE ---
+  // If a verbal announcement was scheduled to play after bells/knocker finish, fire it now.
+  if (pendingComTrack != 0 && (long)(now - pendingComFireMs) >= 0) {
+    if (audioCurrentComTrack == 0) {
+      firePendingComTrack();
+    } else {
+      // A COM track started playing in the meantime (e.g. tilt warning).
+      // Award announcements are high priority -- preempt and play.
+      firePendingComTrack();
+    }
   }
 
   // --- MUSIC TRACK END DETECTION ---
@@ -4604,6 +4751,8 @@ void checkReplayScoreThresholds() {
   bool enhanced = (gameStyle == STYLE_ENHANCED);
   unsigned int currentScore = gameState.score[gameState.currentPlayer - 1];
 
+  bool anyThresholdCrossed = false;
+
   for (byte i = 0; i < NUM_REPLAY_THRESHOLDS; i++) {
     // Skip if already awarded
     if (replayScoreAwarded & (1 << i)) {
@@ -4617,7 +4766,23 @@ void checkReplayScoreThresholds() {
       // replays pulsed the replay unit directly from the score stepper, not via the
       // Score Motor. The knocker fires at the moment the threshold is crossed.
       awardReplays(1);
+      anyThresholdCrossed = true;
     }
+  }
+
+  // Enhanced: announce "Replay!" for score-threshold replays, but only if no
+  // higher-priority award announcement is already pending. Pattern completions
+  // (3-in-a-row, four-corners, all 9, gobble awards) schedule their own more
+  // descriptive announcements and take priority over this generic "Replay!" call.
+  // checkReplayScoreThresholds() is called from addScore(), which runs BEFORE
+  // pattern checks in the scoring handler, so pendingComTrack == 0 here means
+  // nothing higher-priority has been scheduled yet by the current scoring event.
+  // If the caller later schedules a higher-priority track (e.g. "Three in a row!
+  // Replay!"), scheduleComTrack() will overwrite this one -- which is the desired
+  // behavior since the descriptive announcement already includes "Replay!".
+  if (anyThresholdCrossed && enhanced && pendingComTrack == 0) {
+    byte trackLenTenths = pgmReadComLengthTenths(&comTracksAward[1]);  // Index 1 = track 812
+    scheduleComTrack(TRACK_REPLAY, trackLenTenths, 1200, true);
   }
 }
 
@@ -4825,6 +4990,7 @@ void teardownGame(bool t_saveScore) {
   audioCurrentSfxTrack = 0;
   audioCurrentMusicTrack = 0;
   audioMusicEndMillis = 0;
+  cancelPendingComTrack();
 
   // Stop shakers
   stopAllShakers();

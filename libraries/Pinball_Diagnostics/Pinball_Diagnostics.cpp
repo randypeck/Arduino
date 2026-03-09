@@ -324,17 +324,21 @@ void diagRunVolume(Pinball_LCD* pLCD, Pinball_Centipede* pShift, Tsunami* pTsuna
           break;
         case 4:
           *pDuckingDb = constrain(*pDuckingDb - 1, -40, 0);
-          audioSaveDucking(*pDuckingDb);  // CHANGED: Use Pinball_Audio
+          audioSaveDucking(*pDuckingDb);
           if (pTsunami != nullptr) {
             pTsunami->stopAllTracks();
             delay(20);
-            audioPlayTrackWithCategory(2001, AUDIO_CATEGORY_MUSIC, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);  // CHANGED
+            audioPlayTrackWithCategory(2001, AUDIO_CATEGORY_MUSIC, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);
             delay(100);
-            int duckGain = (int)(*pTsunamiGainDb) + (int)(*pMusicGainDb) + (int)(*pDuckingDb);
+            // Apply ducked gain to music track. Only use musicOffset + duckingOffset
+            // as the per-track gain; master gain is already applied at the Tsunami
+            // output level by audioApplyMasterGain(), so including it here would
+            // double-apply it and make the music inaudible.
+            int duckGain = (int)(*pMusicGainDb) + (int)(*pDuckingDb);
             if (duckGain < -70) duckGain = -70;
             pTsunami->trackGain(2001, duckGain);
             delay(100);
-            audioPlayTrackWithCategory(351, AUDIO_CATEGORY_VOICE, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);  // CHANGED
+            audioPlayTrackWithCategory(351, AUDIO_CATEGORY_VOICE, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);
           }
           break;
         }
@@ -389,13 +393,19 @@ void diagRunVolume(Pinball_LCD* pLCD, Pinball_Centipede* pShift, Tsunami* pTsuna
           break;
         case 4:
           *pDuckingDb = constrain(*pDuckingDb + 1, -40, 0);
-          audioSaveDucking(*pDuckingDb);  // CHANGED: Use Pinball_Audio
+          audioSaveDucking(*pDuckingDb);
           if (pTsunami != nullptr) {
             pTsunami->stopAllTracks();
             delay(20);
-            audioPlayTrackWithCategory(2001, AUDIO_CATEGORY_MUSIC, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);  // CHANGED
+            audioPlayTrackWithCategory(2001, AUDIO_CATEGORY_MUSIC, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);
             delay(100);
-            audioPlayTrackWithCategory(351, AUDIO_CATEGORY_VOICE, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);  // CHANGED
+            // Apply ducked gain to music track so the preview demonstrates the
+            // actual ducking level. Same formula as the MINUS path.
+            int duckGain = (int)(*pMusicGainDb) + (int)(*pDuckingDb);
+            if (duckGain < -70) duckGain = -70;
+            pTsunami->trackGain(2001, duckGain);
+            delay(100);
+            audioPlayTrackWithCategory(351, AUDIO_CATEGORY_VOICE, *pTsunamiGainDb, *pVoiceGainDb, *pSfxGainDb, *pMusicGainDb, pTsunami);
           }
           break;
         }

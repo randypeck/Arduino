@@ -331,7 +331,8 @@ const unsigned int TRACK_1_THRU_9               =  823;  // You lit numbers 1 th
 const unsigned int TRACK_5_BALLS_IN_GOBBLE      =  824;  // All 5 balls in the Gobble Hole! Replay!
 const unsigned int TRACK_SPELLED_SCREAMO        =  831;  // You spelled S-C-R-E-A-M-O!
 const unsigned int TRACK_EXTRA_BALL_AWARDED     =  841;  // "EXTRA BALL!" Used when Extra Ball is earned, not collected
-const unsigned int TRACK_EXTRA_BALL_COLLECTED   =  842;  // "Here's another ball! Send it!" Used when Extra Ball is collected
+const unsigned int TRACK_EXTRA_BALL_COLLECTED   =  842;  // "Here's your extra ball!" Used when Extra Ball is collected
+const unsigned int TRACK_EXTRA_BALL_HORNS       =  843;  // Fanfare horns played when Extra Ball is earned
 
 // Mode common
 const unsigned int TRACK_MODE_STINGER_START     = 1001;  // School bell ringing

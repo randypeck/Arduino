@@ -1280,9 +1280,9 @@ This section covers the ball tracking mechanics for multiball. See Section 14.6 
 3. Result: `ballsInPlay = 3`
 
 **Ball Save During Multiball:**
-- Ball Save is NOT active during multiball
-- Drained balls simply decrement `ballsInPlay` (no replacements)
-- This keeps multiball intense and skill-based
+- A timed ball save runs for `ballSaveSeconds` starting when multiball begins
+- Drained balls within the save window are replaced from the trough (dispensed in background)
+- After the timer expires, drained balls simply decrement `ballsInPlay` (no replacements)
 
 **Multiball End Condition:**
 - Multiball ends when: `ballsInPlay + (ballInLift ? 1 : 0) <= 1`
@@ -1333,6 +1333,8 @@ This section covers the ball tracking mechanics for multiball. See Section 14.6 
 | Drain detected, Ball Save active, lift occupied               | `ballsInPlay--` (cannot dispense)          | No change     | No change     |
 | Drain detected, Ball Save expired                             | `ballsInPlay--`                            | No change     | No change     |
 | Drain detected during mode                                    | `ballsInPlay--`, then dispense replacement | Set true      | No change     |
+| Drain detected during multiball, save active                  | No change (replacement dispensed in bkgnd) | No change     | No change     |
+| Drain detected during multiball, save expired                 | `ballsInPlay--`                            | No change     | No change     |
 | Transition to next ball or Game Over                          | Must be 0                                  | Must be false | (any value)   |
 | Game Over (cleanup)                                           | 0                                          | false         | Set to 0      |
 
@@ -2144,7 +2146,7 @@ Ball Save provides a grace period after hitting any playfield switch. If the bal
 |------------------|--------------------------------------------------------------------------------|
 | Normal Play      | Timer-based: if drain occurs within N seconds of last target hit, replace ball |
 | During Mode      | Always replace ball (mode timer continues running)                             |
-| During Multiball | NO ball save - drained balls are lost                                          |
+| During Multiball | Timer-based: drained balls replaced for first N seconds, then lost             |
 
 **Ball Save State (simplified):**
 ```
@@ -2254,10 +2256,13 @@ Future enhancement: Consider 2x scoring during multiball.
 
 #### 14.6.4 Ball Save During Multiball
 
-- Ball Save is NOT active during multiball
-- Drained balls simply decrement `ballsInPlay` and are not replaced
-- This makes multiball more challenging and skill-based
-- Multiball ends naturally as balls drain
+- A timed ball save is active for the first N seconds of multiball (same duration as the normal ball save timer, loaded from EEPROM)
+- The timer starts when `startMultiball()` fires
+- Any ball that drains while the timer is active is replaced from the trough without interrupting gameplay
+- Replacement balls are dispensed in the background by `processMultiballSaveDispenseTick()`, which monitors ball-in-lift and tracks `ballsInPlay` so the surviving balls continue scoring normally
+- Multiple replacements can be queued if two balls drain within the save window before the first replacement arrives
+- After the timer expires, drained balls simply decrement `ballsInPlay` and are not replaced
+- Multiball ends naturally as balls drain after the save window closes
 
 #### 14.6.5 Multiball End
 
@@ -2861,7 +2866,7 @@ Ball 5 drain always plays a Game Over comment instead (`TRACK_GAME_OVER_FIRST` t
 | 5 gobbles replay              | 824 "Five balls in Gobble"     | Knocker fires           |
 | SCREAMO spelled               | 831 "You spelled SCREAMO"      | Selection Bell rings 3x |
 | Extra Ball awarded (earned)   | 841 "EXTRA BALL!"              | Selection Bell rings 3x |
-| Extra Ball collected (used)   | 842 "Here's another ball!"     | Selection Bell rings 3x |
+| Extra Ball collected (used)   | 842 "Here's your extra ball!"  | Selection Bell rings 3x |
 | Extra Ball shoot again        | 660 "Shoot again"              | -                       |
 
 ### 14.12 Extra Ball
@@ -2879,20 +2884,35 @@ Extra Ball is awarded when the player lights all nine numbers in the 3x3 WHITE i
 
 When the player lights the 9th WHITE insert (completing the matrix):
 
-1. Play `TRACK_EXTRA_BALL_AWARDED` (841) - "EXTRA BALL!"
-2. Ring Selection Bell 3x
-3. Reset all WHITE insert lamps (matrix cleared for potential second Extra Ball)
-4. **Immediately** fire `DEV_IDX_BALL_TROUGH_RELEASE` (if lift is empty)
-5. Continue normal play
+1. Preempt any currently playing COM track
+2. Play `TRACK_EXTRA_BALL_AWARDED` (841) - "EXTRA BALL!"
+3. Ring Selection Bell 3x (non-blocking: three rapid sends to Slave)
+4. Reset all WHITE insert lamps (matrix cleared for potential second Extra Ball)
+5. Set `extraBallAwarded = true`
+6. Continue normal play -- do NOT dispense a ball yet
 
-**If lift is already occupied:** Do not dispense (player already has a queued ball). The Extra Ball is effectively "banked" as the ball currently in the lift.
+**Extra Ball is NOT dispensed immediately.** The flag is set and play continues on the current ball(s). The extra ball is redeemed later when all current balls have drained and `processBallLost()` runs:
+1. Detect `extraBallAwarded == true`
+2. Wait for "EXTRA BALL!" announcement to finish (if still playing)
+3. Play `TRACK_EXTRA_BALL_COLLECTED` (842) - "Here's your extra ball! Send it!"
+4. Ring Selection Bell 3x
+5. Clear `extraBallAwarded`
+6. Replay the same Ball Number (do NOT increment `currentBall`)
+7. Reset `hasHitSwitch = false` and ball save state for the new ball attempt
+
+**If lift is already occupied when redeemed:** Do not dispense (use existing ball per Section 14.13).
+
+**Rationale for deferred dispensing:** Immediately dispensing a ball when Extra Ball is earned would create a 4-ball scenario (during multiball) or a 2-ball scenario (during single-ball play) that complicates ball tracking and drain handling. Deferring until all current balls drain keeps the logic simple and avoids edge cases with ball counts exceeding 3.
 
 #### 14.12.3 Extra Ball During Multiball
 
 If the player completes the WHITE matrix during multiball:
-- Immediately dispense another ball (if lift is empty)
-- Player now has 4 balls in play (3 on playfield + 1 in lift, or 4 on playfield)
-- This is intentional and rewarding - completing the matrix during multiball is difficult
+- Play the "EXTRA BALL!" announcement immediately (so the player knows they earned it)
+- Do NOT dispense another ball -- multiball continues with the current balls in play
+- Set `extraBallAwarded = true`
+- When multiball ends and the last ball eventually drains, `processBallLost()` detects the flag and replays the same Ball Number
+
+This means the Extra Ball effectively gives the player a "free replay" of the current Ball Number after multiball ends. The player does not get a 4th ball during multiball.
 
 #### 14.12.4 Extra Ball and Ball Number
 
