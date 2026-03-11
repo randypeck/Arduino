@@ -1,5 +1,5 @@
 # 1954 Williams Screamo - Modernized Control System Overview
-Rev: 03/04/26. Revised by RDP and Claude Opus 4.6.
+Rev: 03/08/26. Revised by RDP and Claude Opus 4.6.
 
 ## 1. Introduction
 
