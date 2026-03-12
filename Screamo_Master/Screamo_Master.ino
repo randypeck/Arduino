@@ -1,4 +1,4 @@
-// Screamo_Master.INO Rev: 03/08/26
+// Screamo_Master.INO Rev: 03/11/26
 // 11/12/25: Moved Right Kickout from pin 13 to pin 44 to avoid MOSFET firing twice on power-up.  Don't use MOSFET on pin 13.
 // 12/28/25: Changed flipper inputs from direct Arduino inputs to Centipede inputs.
 // 01/07/26: Added "5 Balls in Trough" switch to Centipede inputs. All switches tested and working.
@@ -14,6 +14,7 @@
 #include <Pinball_Diagnostics.h>
 #include <Pinball_Audio.h>
 #include <Pinball_Audio_Tracks.h>  // Audio track definitions (COM, SFX, MUS)
+#include <Pinball_Lamp_Effects.h>   // Position-based lamp effect engine
 
 const byte THIS_MODULE = ARDUINO_MAS;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
 char lcdString[LCD_WIDTH + 1] = "MASTER 03/08/26";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
@@ -627,6 +628,7 @@ void loop() {
 
   // ALWAYS process (every tick, all phases)
   updateDeviceTimers();
+  processLampEffectTick(pShiftRegister, lampParm);
   processAudioTick();
   processScoreMotorStartupTick();
   processScoreMotorGameplayTick();
@@ -928,6 +930,12 @@ void handleFullTilt() {
   // Release them immediately here for responsiveness.
   releaseAllFlippers();
 
+  // Cancel any running lamp effect before writing lamp state directly.
+  // This restores the pre-effect lamp state so the tilt blackout starts from
+  // a clean baseline, and prevents the effect engine from overwriting the
+  // tilt blackout on its next tick.
+  cancelLampEffect(pShiftRegister);
+
   // Momentarily turn off all playfield lamps, then turn GI back on.
   // (The brief blackout is a classic tilt visual cue.)
   for (byte i = 0; i < NUM_LAMPS_MASTER; i++) {
@@ -1073,6 +1081,27 @@ void processCoinEntry() {
   if (switchJustClosedFlag[SWITCH_IDX_COIN_MECH]) {
     pMessage->sendMAStoSLVCreditInc(1);
     activateDevice(DEV_IDX_KNOCKER);
+
+    // TEST: Cycle through the four sweep effects on each coin insert.
+    // sweepMs=3000 (3 seconds for the wave to cross the playfield),
+    // holdMs=500 (half second with all lamps on before restoring).
+    static byte testEffectIdx = 0;
+    const byte testEffects[] = {
+      LAMP_EFFECT_FILL_UP_DRAIN_DOWN,
+      LAMP_EFFECT_FILL_DOWN_DRAIN_UP,
+      LAMP_EFFECT_FILL_LR_DRAIN_RL,
+      LAMP_EFFECT_FILL_RL_DRAIN_LR,
+      LAMP_EFFECT_SWEEP_DOWN_UP,
+      LAMP_EFFECT_SWEEP_UP_DOWN,
+      LAMP_EFFECT_SWEEP_LR_RL,
+      LAMP_EFFECT_SWEEP_RL_LR,
+      LAMP_EFFECT_SWEEP_TOP_DOWN,
+      LAMP_EFFECT_SWEEP_BOT_UP,
+      LAMP_EFFECT_SWEEP_LEFT,
+      LAMP_EFFECT_SWEEP_RIGHT
+    };
+    startLampEffect(testEffects[testEffectIdx], 1000, 500);
+    testEffectIdx = (testEffectIdx + 1) % 5;
   }
 }
 
@@ -4981,6 +5010,11 @@ bool queryCreditStatus(bool* creditsAvailable) {
 // calling this function.
 // If t_saveScore is true, saves the current player's score to EEPROM for power-up display.
 void teardownGame(bool t_saveScore) {
+  // ***** SAFETY: Cancel any running lamp effect before resetting lamps *****
+  // Without this, the effect engine would overwrite attract-mode lamps on the
+  // next tick, then restore the pre-game lamp state when the effect finishes.
+  cancelLampEffect(pShiftRegister);
+
   // Stop all audio
   if (pTsunami != nullptr) {
     pTsunami->stopAllTracks();
