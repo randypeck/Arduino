@@ -1,4 +1,4 @@
-// Screamo_Master.INO Rev: 03/11/26
+// Screamo_Master.INO Rev: 03/13/26
 // 11/12/25: Moved Right Kickout from pin 13 to pin 44 to avoid MOSFET firing twice on power-up.  Don't use MOSFET on pin 13.
 // 12/28/25: Changed flipper inputs from direct Arduino inputs to Centipede inputs.
 // 01/07/26: Added "5 Balls in Trough" switch to Centipede inputs. All switches tested and working.
@@ -17,7 +17,7 @@
 #include <Pinball_Lamp_Effects.h>   // Position-based lamp effect engine
 
 const byte THIS_MODULE = ARDUINO_MAS;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "MASTER 03/08/26";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "MASTER 03/13/26";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which makes it a global.
 // And no need to pass lcdString[] to any functions that use it!
 
@@ -879,7 +879,7 @@ void processTiltBob() {
   gameState.tiltWarnings++;
 
   if (gameStyle == STYLE_ENHANCED && gameState.tiltWarnings == 1) {
-    // Enhanced first warning: audio warning only, resume play
+    // Enhanced first warning: audio warning + visual flash, resume play
     audioDuckMusicForVoice(true);
     byte randomIdx = (byte)random(0, NUM_COM_TILT_WARNING);
     unsigned int trackNum = pgmReadComTrackNum(&comTracksTiltWarning[randomIdx]);
@@ -888,6 +888,14 @@ void processTiltBob() {
     audioApplyTrackGain(trackNum, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
     audioCurrentComTrack = trackNum;
     audioComEndMillis = millis() + ((unsigned long)trackLenTenths * 100UL);
+
+    // Flash all playfield lamps as a visual tilt warning.
+    // Per Section 14.7.1: cancel any running effect before starting a new one.
+    // The flash is non-blocking (~600ms total) so gameplay continues normally.
+    // If the player triggers a full tilt during the flash, handleFullTilt()
+    // calls cancelLampEffect() which safely restores lamps before the blackout.
+    cancelLampEffect(pShiftRegister);
+    startLampEffect(LAMP_EFFECT_FLASH_ALL, 120, 0);
 
     // Start settle timer so the bob can stop swinging before we accept another closure
     tiltBobSettleUntilMs = millis() + TILT_BOB_SETTLE_MS;
@@ -936,14 +944,20 @@ void handleFullTilt() {
   // tilt blackout on its next tick.
   cancelLampEffect(pShiftRegister);
 
-  // Momentarily turn off all playfield lamps, then turn GI back on.
-  // (The brief blackout is a classic tilt visual cue.)
+  // Turn off ALL playfield lamps INCLUDING GI for a dramatic total blackout.
+  // GI stays off throughout PHASE_TILT while the ball(s) drain in the dark.
+  // GI is restored when the tilt phase exits (next ball or game over).
   for (byte i = 0; i < NUM_LAMPS_MASTER; i++) {
     pShiftRegister->digitalWrite(lampParm[i].pinNum, HIGH);  // All lamps off
   }
-  setGILamps(true);  // GI back on immediately
 
-  // Eject any balls locked in side kickouts (all styles, per Overview 4.6)
+  // Eject any balls locked in side kickouts (all styles, per Overview 4.6).
+  // IMPORTANT: Add the locked balls back to ballsInPlay BEFORE zeroing ballsLocked.
+  // When a ball was locked by handleSwitchKickout(), ballsInPlay was decremented.
+  // Those balls are now being ejected back onto the playfield and must drain before
+  // updatePhaseTilt() can exit. Without this, the exit condition (ballsInPlay == 0)
+  // fires too early, advancing to the next ball while ejected balls are still draining.
+  ballsInPlay += ballsLocked;
   ballsLocked = 0;
   kickoutLockedMask = 0;  // All kickouts are now empty
   if (switchClosed(SWITCH_IDX_KICKOUT_LEFT)) {
@@ -1067,11 +1081,20 @@ void updatePhaseTilt() {
     if (gameState.currentBall < MAX_BALLS) {
       gameState.currentBall++;
       ballSaveUsed = false;
+
+      // Restore ALL playfield lamps that were blanked by handleFullTilt(),
+      // including GI which was left off for the dramatic tilt blackout.
+      // setInitialGameplayLamps() restores bumpers, RED, HATs, WHITEs,
+      // GOBBLEs, SPECIAL, and Spots Number lamps but does not touch GI.
+      setGILamps(true);
+      setInitialGameplayLamps();
+
       gamePhase = PHASE_STARTUP;
       startupSubState = STARTUP_DISPENSE_BALL;
       startupTickCounter = 0;
     } else {
       // Last ball - game over
+      // processBallLost() -> teardownGame() -> setAttractLamps() restores GI.
       processBallLost();  // Reuse game-over logic in processBallLost
     }
   }
@@ -1081,27 +1104,6 @@ void processCoinEntry() {
   if (switchJustClosedFlag[SWITCH_IDX_COIN_MECH]) {
     pMessage->sendMAStoSLVCreditInc(1);
     activateDevice(DEV_IDX_KNOCKER);
-
-    // TEST: Cycle through the four sweep effects on each coin insert.
-    // sweepMs=3000 (3 seconds for the wave to cross the playfield),
-    // holdMs=500 (half second with all lamps on before restoring).
-    static byte testEffectIdx = 0;
-    const byte testEffects[] = {
-      LAMP_EFFECT_FILL_UP_DRAIN_DOWN,
-      LAMP_EFFECT_FILL_DOWN_DRAIN_UP,
-      LAMP_EFFECT_FILL_LR_DRAIN_RL,
-      LAMP_EFFECT_FILL_RL_DRAIN_LR,
-      LAMP_EFFECT_SWEEP_DOWN_UP,
-      LAMP_EFFECT_SWEEP_UP_DOWN,
-      LAMP_EFFECT_SWEEP_LR_RL,
-      LAMP_EFFECT_SWEEP_RL_LR,
-      LAMP_EFFECT_SWEEP_TOP_DOWN,
-      LAMP_EFFECT_SWEEP_BOT_UP,
-      LAMP_EFFECT_SWEEP_LEFT,
-      LAMP_EFFECT_SWEEP_RIGHT
-    };
-    startLampEffect(testEffects[testEffectIdx], 1000, 500);
-    testEffectIdx = (testEffectIdx + 1) % 5;
   }
 }
 
@@ -2165,6 +2167,14 @@ void startMultiball() {
   // Turn off kickout lock lamps (balls are no longer locked)
   // updateSpotsNumberLamps() will set them back to the correct Spots Number state
   updateSpotsNumberLamps();
+
+  // Multiball celebration light show: a wave fills up from the drain end (where the
+  // kickout balls are ejecting from) to the top, holds with all lamps blazing, then
+  // drains back down -- restoring the real gameplay lamp state when complete.
+  // Total duration ~2.1s (800ms fill + 240ms pause + 800ms drain + 300ms hold).
+  // Per Section 14.7.1: cancel any running effect before starting a new one.
+  cancelLampEffect(pShiftRegister);
+  startLampEffect(LAMP_EFFECT_FILL_UP_DRAIN_DOWN, 800, 300);
 
   snprintf(lcdString, LCD_WIDTH + 1, "MULTIBALL!");
   lcdPrintRow(3, lcdString);
@@ -3696,15 +3706,30 @@ void setAttractLamps() {
 // Sets all gameplay lamps to reflect the EM emulation state at game start.
 // Called once from STARTUP_RECOVER_CONFIRMED after initGameState() has loaded
 // persisted EM state from EEPROM and setAttractLamps() has set the attract display.
-// Now that the game is officially starting, update lamps for the starting state:
+// Also called from updatePhaseTilt() when restoring lamps after a tilt.
+// Now that the game is officially starting (or resuming after tilt), update lamps
+// for the current state:
+//   - The 7 bumper lamps based on bumperLitMask
 //   - The RED insert corresponding to the persisted selectionUnitPosition
 //   - The HAT lamps if the persisted position is on an eligible step (0, 20, or 40)
 //   - The WHITE inserts from persisted whiteLitMask
 //   - The GOBBLE lamps from persisted gobbleCount
 //   - The SPECIAL lamp if gobbleCount >= 4
-//   - The "Spots Number When Lit" kickout/drain lamps (score starts at 0, so 10K digit = 0)
+//   - The "Spots Number When Lit" kickout/drain lamps based on the live score
 void setInitialGameplayLamps() {
-  // Set all persisted EM state lamps
+  // Light bumper lamps based on current bumperLitMask.
+  // At game start all 7 are lit (bumperLitMask = 0x7F from Relay Reset Bank).
+  // After tilt, some bumpers may have been extinguished during gameplay.
+  for (byte i = 0; i < 7; i++) {
+    byte lampIdx = LAMP_IDX_S + i;
+    if (bumperLitMask & (1 << i)) {
+      pShiftRegister->digitalWrite(lampParm[lampIdx].pinNum, LOW);   // Lamp on
+    } else {
+      pShiftRegister->digitalWrite(lampParm[lampIdx].pinNum, HIGH);  // Lamp off
+    }
+  }
+
+  // Set all persisted EM state lamps (RED, HATs, WHITEs, GOBBLEs, SPECIAL, Spots Number)
   setEmStateLamps();
 
   // Override Spots Number lamps for live score (0 at game start, so 10K digit = 0)

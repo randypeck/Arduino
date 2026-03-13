@@ -1,4 +1,4 @@
-// PINBALL_LAMP_EFFECTS.CPP Rev: 03/11/26.
+// PINBALL_LAMP_EFFECTS.CPP Rev: 03/13/26.
 // Position-based lamp effect engine for Screamo playfield lamps.
 // See Pinball_Lamp_Effects.h for API documentation.
 
@@ -16,6 +16,10 @@
 // then the fill sweep, then 900ms fully lit, then the drain sweep.
 // Set to 0 to disable both pauses entirely.
 const byte FILL_DRAIN_PAUSE_PERCENT = 30;
+
+// Number of half-cycles for the flash-all effect: off, on, off, on, off = 5.
+// Each half-cycle lasts sweepMs milliseconds.
+const byte FLASH_ALL_HALF_CYCLES = 5;
 
 // ************************************************************************
 // ******************** LAMP POSITION TABLE (PROGMEM) *********************
@@ -76,6 +80,68 @@ const LampPositionDef lampPositions[NUM_LAMPS_MASTER] PROGMEM = {
 };
 
 // ************************************************************************
+// ********** GOBBLE HOLE RADIAL DISTANCE TABLE (PROGMEM) *****************
+// ************************************************************************
+// Pre-computed Euclidean distance in mm from the Gobble Hole center (236, 494)
+// to each lamp. Used by LAMP_EFFECT_STARBURST_GOBBLE for smooth proportional
+// activation timing, avoiding runtime sqrt() on AVR.
+//
+// Formula: round(sqrt((x - 236)^2 + (y - 494)^2))
+// Gobble Hole coordinates: x=236mm (horizontally centered between Ball 1 and
+// Ball 5 lamps), y=494mm (vertically centered, aligned with the Ball 3 lamp).
+
+const unsigned int gobbleRadialDist[NUM_LAMPS_MASTER] PROGMEM = {
+  //  dist
+    349,  //  0  GI_LEFT_TOP       (63,183)   dx=-173 dy=-311
+    190,  //  1  GI_LEFT_CENTER_1  (47,476)   dx=-189 dy=-18
+    222,  //  2  GI_LEFT_CENTER_2  (43,616)   dx=-193 dy=122
+    381,  //  3  GI_LEFT_BOTTOM    (103,848)  dx=-133 dy=354
+    355,  //  4  GI_RIGHT_TOP      (416,183)  dx=180  dy=-311
+    189,  //  5  GI_RIGHT_CENTER_1 (424,476)  dx=188  dy=-18
+    222,  //  6  GI_RIGHT_CENTER_2 (428,616)  dx=192  dy=122
+    382,  //  7  GI_RIGHT_BOTTOM   (365,848)  dx=129  dy=354
+    310,  //  8  BUMPER_S          (173,194)  dx=-63  dy=-300
+    311,  //  9  BUMPER_C          (300,194)  dx=64   dy=-300
+    224,  // 10  BUMPER_R          (110,306)  dx=-126 dy=-188
+    188,  // 11  BUMPER_E          (236,306)  dx=0    dy=-188
+    224,  // 12  BUMPER_A          (363,306)  dx=127  dy=-188
+    101,  // 13  BUMPER_M          (172,417)  dx=-64  dy=-77
+    100,  // 14  BUMPER_O          (298,417)  dx=62   dy=-77
+     93,  // 15  WHITE_1           (165,558)  dx=-71  dy=64
+     64,  // 16  WHITE_2           (234,558)  dx=-2   dy=64
+     92,  // 17  WHITE_3           (304,558)  dx=68   dy=64
+    150,  // 18  WHITE_4           (165,629)  dx=-71  dy=135
+    135,  // 19  WHITE_5           (234,629)  dx=-2   dy=135
+    150,  // 20  WHITE_6           (304,629)  dx=68   dy=135
+    216,  // 21  WHITE_7           (165,698)  dx=-71  dy=204
+    204,  // 22  WHITE_8           (234,698)  dx=-2   dy=204
+    215,  // 23  WHITE_9           (304,698)  dx=68   dy=204
+    125,  // 24  RED_1             (143,581)  dx=-93  dy=87
+     90,  // 25  RED_2             (212,581)  dx=-24  dy=87
+     98,  // 26  RED_3             (281,581)  dx=45   dy=87
+    179,  // 27  RED_4             (143,651)  dx=-93  dy=157
+    159,  // 28  RED_5             (212,651)  dx=-24  dy=157
+    163,  // 29  RED_6             (281,651)  dx=45   dy=157
+    244,  // 30  RED_7             (143,721)  dx=-93  dy=227
+    228,  // 31  RED_8             (212,721)  dx=-24  dy=227
+    231,  // 32  RED_9             (281,721)  dx=45   dy=227
+    107,  // 33  HAT_LEFT_TOP      (129,493)  dx=-107 dy=-1
+    176,  // 34  HAT_LEFT_BOTTOM   (109,629)  dx=-127 dy=135
+    105,  // 35  HAT_RIGHT_TOP     (341,493)  dx=105  dy=-1
+    175,  // 36  HAT_RIGHT_BOTTOM  (359,629)  dx=123  dy=135
+    201,  // 37  KICKOUT_LEFT      (39,545)   dx=-197 dy=51
+    200,  // 38  KICKOUT_RIGHT     (432,545)  dx=196  dy=51
+     85,  // 39  SPECIAL           (236,409)  dx=0    dy=-85
+     48,  // 40  GOBBLE_1          (188,494)  dx=-48  dy=0
+     46,  // 41  GOBBLE_2          (202,461)  dx=-34  dy=-33
+     47,  // 42  GOBBLE_3          (236,447)  dx=0    dy=-47
+     46,  // 43  GOBBLE_4          (269,461)  dx=33   dy=-33
+     47,  // 44  GOBBLE_5          (283,494)  dx=47   dy=0
+    318,  // 45  SPOT_NUMBER_LEFT  (44,747)   dx=-192 dy=253
+    314   // 46  SPOT_NUMBER_RIGHT (425,747)  dx=189  dy=253
+};
+
+// ************************************************************************
 // ********************* EFFECT ENGINE STATE ******************************
 // ************************************************************************
 
@@ -121,6 +187,14 @@ static unsigned int lampActivateMs[NUM_LAMPS_MASTER];
 // 47 lamps = 6 bytes.
 static byte lampsProcessedBits[6];
 
+// Flash-all cycle counter: counts remaining half-cycles (off/on transitions).
+// Starts at FLASH_ALL_HALF_CYCLES and decrements each time a half-cycle completes.
+// When it reaches 0, the effect waits holdMs then restores.
+static byte flashCyclesRemaining = 0;
+
+// Flash-all current state: true = lamps are currently ON, false = lamps are OFF.
+static bool flashLampsOn = false;
+
 // ************************************************************************
 // ****************** HELPER: READ PROGMEM POSITION ***********************
 // ************************************************************************
@@ -131,6 +205,11 @@ static unsigned int readLampX(byte lampIdx) {
 
 static unsigned int readLampY(byte lampIdx) {
   return pgm_read_word(&lampPositions[lampIdx].y_mm);
+}
+
+// Read pre-computed radial distance from Gobble Hole center.
+static unsigned int readGobbleRadial(byte lampIdx) {
+  return pgm_read_word(&gobbleRadialDist[lampIdx]);
 }
 
 // ************************************************************************
@@ -165,7 +244,8 @@ static bool isTwoPhaseEffect(byte effect) {
 }
 
 static bool isFillDrainEffect(byte effect) {
-  return (effect >= LAMP_EFFECT_FILL_UP_DRAIN_DOWN && effect <= LAMP_EFFECT_FILL_RL_DRAIN_LR);
+  return (effect >= LAMP_EFFECT_FILL_UP_DRAIN_DOWN && effect <= LAMP_EFFECT_FILL_RL_DRAIN_LR)
+    || (effect == LAMP_EFFECT_STARBURST_GOBBLE);
 }
 
 // ************************************************************************
@@ -230,6 +310,13 @@ static void getFillDrainPhaseTypes(byte effect, byte* phase1, byte* phase2) {
     *phase1 = LAMP_EFFECT_SWEEP_RIGHT;      // Fill: right to left
     *phase2 = LAMP_EFFECT_SWEEP_LEFT;       // Drain: left to right
     break;
+  case LAMP_EFFECT_STARBURST_GOBBLE:
+    // Both phases use the same radial effect constant; phase 1 fills outward
+    // (lamps ON), phase 2 drains inward (lamps OFF). The direction (outward vs
+    // inward) is handled by computeActivationTimes using the reverse flag.
+    *phase1 = LAMP_EFFECT_STARBURST_GOBBLE;
+    *phase2 = LAMP_EFFECT_STARBURST_GOBBLE;
+    break;
   default:
     *phase1 = LAMP_EFFECT_SWEEP_BOT_UP;
     *phase2 = LAMP_EFFECT_SWEEP_TOP_DOWN;
@@ -247,8 +334,44 @@ static void getFillDrainPhaseTypes(byte effect, byte* phase1, byte* phase2) {
 //
 // For "forward" effects (top-down, left-right): min position = time 0, max = sweepMs.
 // For "reverse" effects (bottom-up, right-left): max position = time 0, min = sweepMs.
+//
+// For starburst (radial) effects: distance from Gobble Hole center determines timing.
+// Phase 1 (fill outward): nearest lamp = time 0, farthest = sweepMs.
+// Phase 2 (drain inward): farthest lamp = time 0, nearest = sweepMs.
+// The drain direction is determined by effectPhaseDrain: when true, the activation
+// times are reversed so the farthest lamps turn off first, sweeping back to center.
 
 static void computeActivationTimes(byte simpleEffect, unsigned long sweepMs) {
+
+  if (simpleEffect == LAMP_EFFECT_STARBURST_GOBBLE) {
+    // Radial effect: use pre-computed distances from Gobble Hole center.
+    unsigned int minDist = 0xFFFF;
+    unsigned int maxDist = 0;
+    for (byte i = 0; i < NUM_LAMPS_MASTER; i++) {
+      unsigned int d = readGobbleRadial(i);
+      if (d < minDist) minDist = d;
+      if (d > maxDist) maxDist = d;
+    }
+    unsigned int range = maxDist - minDist;
+    if (range == 0) range = 1;
+
+    // Phase 1 (fill outward): nearest = time 0, farthest = sweepMs.
+    // Phase 2 (drain inward): farthest = time 0, nearest = sweepMs.
+    // effectPhaseDrain is already set by the caller before phase 2.
+    bool reverse = effectPhaseDrain;
+
+    for (byte i = 0; i < NUM_LAMPS_MASTER; i++) {
+      unsigned int d = readGobbleRadial(i);
+      unsigned long timeMs = ((unsigned long)(d - minDist) * sweepMs) / range;
+      if (reverse) {
+        timeMs = sweepMs - timeMs;
+      }
+      lampActivateMs[i] = (unsigned int)(timeMs > 65535UL ? 65535U : timeMs);
+    }
+    return;
+  }
+
+  // Linear axis effects (existing behavior)
   // Find min and max axis coordinates across all 47 lamps
   unsigned int minPos = 0xFFFF;
   unsigned int maxPos = 0;
@@ -290,6 +413,7 @@ void startLampEffect(byte effect, unsigned long sweepMs, unsigned long holdMs) {
     effectPhaseDrain = false;
     effectBlackoutEndMs = 0;
     effectPauseEndMs = 0;
+    flashCyclesRemaining = 0;
     return;
   }
 
@@ -300,10 +424,21 @@ void startLampEffect(byte effect, unsigned long sweepMs, unsigned long holdMs) {
   effectPhaseDrain = false;
   effectBlackoutEndMs = 0;
   effectPauseEndMs = 0;
+  flashCyclesRemaining = 0;
   memset(lampsProcessedBits, 0, sizeof(lampsProcessedBits));
 
   // Determine phase structure
-  if (isFillDrainEffect(effect)) {
+  if (effect == LAMP_EFFECT_FLASH_ALL) {
+    // Flash effect: no position-based activation times needed.
+    // All lamps toggle simultaneously. The tick handler uses flashCyclesRemaining
+    // to count off/on transitions. Phase 1 starts with lamps OFF (from the
+    // save/all-off block on the first tick).
+    effectPhase = 1;
+    effectPhase1Type = LAMP_EFFECT_FLASH_ALL;
+    effectPhase2Type = LAMP_EFFECT_NONE;
+    flashCyclesRemaining = FLASH_ALL_HALF_CYCLES;
+    flashLampsOn = false;  // Start with lamps off (first half-cycle is "off")
+  } else if (isFillDrainEffect(effect)) {
     getFillDrainPhaseTypes(effect, &effectPhase1Type, &effectPhase2Type);
     effectPhase = 1;
     effectPhaseDrain = false;  // Phase 1 is always fill (turn lamps on)
@@ -344,6 +479,7 @@ void cancelLampEffect(Pinball_Centipede* pShift) {
   effectPhaseDrain = false;
   effectBlackoutEndMs = 0;
   effectPauseEndMs = 0;
+  flashCyclesRemaining = 0;
 }
 
 bool isLampEffectActive() {
@@ -376,8 +512,8 @@ void processLampEffectTick(Pinball_Centipede* pShift, LampParmStruct* pLampParm)
     effectPauseEndMs = 0;
     effectPhase = 2;
     memset(lampsProcessedBits, 0, sizeof(lampsProcessedBits));
-    computeActivationTimes(effectPhase2Type, effectSweepMs);
     effectPhaseDrain = true;
+    computeActivationTimes(effectPhase2Type, effectSweepMs);
     effectStartMs = millis();
     return;
   }
@@ -400,10 +536,10 @@ void processLampEffectTick(Pinball_Centipede* pShift, LampParmStruct* pLampParm)
     }
     effectSaveComplete = true;
 
-    // For fill-drain effects, start a leading blackout pause so the player sees
-    // all lamps go dark before the fill sweep begins. Without this, lamps that
-    // were already on (e.g. GI at the bottom) appear to stay on when the fill
-    // starts from their direction -- the transition is invisible.
+    // For fill-drain effects (including starburst), start a leading blackout pause
+    // so the player sees all lamps go dark before the fill sweep begins. Without
+    // this, lamps that were already on appear to stay on when the fill starts from
+    // their direction -- the transition is invisible.
     if (isFillDrainEffect(effectType)) {
       unsigned long pauseMs = fillDrainPauseMs();
       if (pauseMs > 0) {
@@ -411,8 +547,60 @@ void processLampEffectTick(Pinball_Centipede* pShift, LampParmStruct* pLampParm)
         return;  // Hold all lamps off; fill begins when blackout expires
       }
     }
+
+    // For flash-all, the first half-cycle is "off" -- lamps are already off from the
+    // save/all-off above. Reset the clock so the first sweepMs counts as the off time.
+    if (effectType == LAMP_EFFECT_FLASH_ALL) {
+      effectStartMs = millis();
+      return;
+    }
   }
 
+  // *** FLASH-ALL EFFECT: toggle all lamps every sweepMs ***
+  if (effectType == LAMP_EFFECT_FLASH_ALL) {
+    if (flashCyclesRemaining > 0) {
+      // Wait for current half-cycle to elapse
+      if (elapsed >= effectSweepMs) {
+        flashCyclesRemaining--;
+        flashLampsOn = !flashLampsOn;
+
+        if (flashCyclesRemaining > 0) {
+          // Toggle all lamps using fast portWrite
+          if (flashLampsOn) {
+            // Turn all lamps ON: restore the saved state so the player sees
+            // the real gameplay lamps (not just a flat white-out). This makes
+            // the flash feel like the playfield is "pulsing" rather than a
+            // generic all-on/all-off blink.
+            for (byte p = 0; p < 4; p++) {
+              pShift->portWrite(p, savedPortState[p]);
+            }
+          } else {
+            // Turn all lamps OFF
+            for (byte p = 0; p < 4; p++) {
+              pShift->portWrite(p, 0xFFFF);
+            }
+          }
+          effectStartMs = millis();
+        } else {
+          // All cycles complete. Restore saved lamp state immediately.
+          // The pattern ends on "off" (odd number of half-cycles), so the player
+          // has already seen the final dark flash for a full sweepMs. Waiting an
+          // additional holdMs here would make the last dark phase noticeably longer
+          // than the others, breaking the rhythm.
+          for (byte p = 0; p < 4; p++) {
+            pShift->portWrite(p, savedPortState[p]);
+          }
+          effectType = LAMP_EFFECT_NONE;
+          effectSaveComplete = false;
+          effectPhase = 0;
+          effectPhaseDrain = false;
+        }
+      }
+    }
+    return;
+  }
+
+  // *** POSITION-BASED EFFECTS (sweeps, fill-drain, starburst) ***
   // Process lamps whose activation time has been reached.
   // The bitfield prevents redundant I2C writes on subsequent ticks.
   // In fill mode (effectPhaseDrain == false): turn lamps ON.
@@ -446,8 +634,8 @@ void processLampEffectTick(Pinball_Centipede* pShift, LampParmStruct* pLampParm)
         // Zero pause: transition immediately (same as before)
         effectPhase = 2;
         memset(lampsProcessedBits, 0, sizeof(lampsProcessedBits));
-        computeActivationTimes(effectPhase2Type, effectSweepMs);
         effectPhaseDrain = true;
+        computeActivationTimes(effectPhase2Type, effectSweepMs);
       } else {
         // Two-phase sweep: phase 2 is another fill. Turn all lamps off first.
         effectPhase = 2;

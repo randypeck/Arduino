@@ -1,4 +1,4 @@
-// PINBALL_LAMP_EFFECTS.H Rev: 03/11/26.
+// PINBALL_LAMP_EFFECTS.H Rev: 03/13/26.
 // All 47 lamps have X/Y coordinates (mm from left edge and top edge).
 // Effects are non-blocking: call processLampEffectTick() once per 10ms loop tick.
 // The engine saves/restores real lamp state so gameplay lamps are not corrupted.
@@ -29,6 +29,13 @@ const byte LAMP_EFFECT_FILL_UP_DRAIN_DOWN  =  9;  // Fill bottom-to-top, drain t
 const byte LAMP_EFFECT_FILL_DOWN_DRAIN_UP  = 10;  // Fill top-to-bottom, drain bottom-to-top
 const byte LAMP_EFFECT_FILL_LR_DRAIN_RL    = 11;  // Fill left-to-right, drain right-to-left
 const byte LAMP_EFFECT_FILL_RL_DRAIN_LR    = 12;  // Fill right-to-left, drain left-to-right
+// Flash all lamps: off/on/off/on/off then restore. sweepMs = time per half-cycle.
+// Total duration = sweepMs * 5 (off, on, off, on, off) + holdMs before restore.
+const byte LAMP_EFFECT_FLASH_ALL           = 13;
+// Starburst from Gobble Hole: radiates outward from center (236, 494) then drains back in.
+// Uses pre-computed radial distance lookup table for smooth proportional timing.
+// sweepMs = time for wave to reach farthest lamp (per phase). Two phases: out then in.
+const byte LAMP_EFFECT_STARBURST_GOBBLE    = 14;
 
 // *** LAMP POSITION STRUCTURE (stored in PROGMEM) ***
 // Coordinates in millimeters from playfield edges:
@@ -42,6 +49,11 @@ struct LampPositionDef {
 // PROGMEM position table (indexed by lamp index 0..46)
 extern const LampPositionDef lampPositions[NUM_LAMPS_MASTER] PROGMEM;
 
+// PROGMEM radial distance table: Euclidean distance in mm from Gobble Hole center
+// (236, 494) to each lamp. Used by LAMP_EFFECT_STARBURST_GOBBLE for smooth
+// proportional timing. Pre-computed to avoid runtime sqrt() on AVR.
+extern const unsigned int gobbleRadialDist[NUM_LAMPS_MASTER] PROGMEM;
+
 // *** EFFECT ENGINE API ***
 
 // Start a lamp effect. All playfield lamps are saved and turned off, then each
@@ -52,6 +64,8 @@ extern const LampPositionDef lampPositions[NUM_LAMPS_MASTER] PROGMEM;
 //   For two-phase sweep effects (DOWN_UP, etc.): holdMs applies after phase 2.
 //   For fill-then-drain effects (FILL_UP_DRAIN_DOWN, etc.): holdMs applies
 //     after phase 2 finishes (all lamps off), before restoring original state.
+//   For FLASH_ALL: holdMs is the pause after the last flash-off before restoring.
+//   For STARBURST_GOBBLE: holdMs applies after the inward drain completes.
 // sweepMs applies to EACH phase independently.
 // If an effect is already running, it is replaced by the new one.
 void startLampEffect(byte effectType, unsigned long sweepMs, unsigned long holdMs);

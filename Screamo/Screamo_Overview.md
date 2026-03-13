@@ -504,19 +504,20 @@ Tilting always affects only the CURRENT BALL; it never ends the game prematurely
 - When the game is tilted in Enhanced Style:
   - On first tilt: WARNING ONLY, not a full tilt.
     - Play tilt warning voice announcement (randomly chosen from a set).
+    - Flash all playfield lamps (LAMP_EFFECT_FLASH_ALL) as a visual warning.
     - Return to play
   - On second tilt, same ball: FULL TILT.
     - Play TRACK_TILT_BUZZER buzzer sound effect.
     - Play full tilt voice announcement (randomly chosen from a set).
 - When the game is fully tilted in any playing style (1st tilt in Original/Impulse, 2nd tilt in Enhanced):
   - Flippers are disabled.
-  - All playfield lights momentarily turn off.
+  - ALL playfield lamps turn off, INCLUDING GI, for a dramatic total blackout. GI remains off throughout PHASE_TILT while balls drain in the dark. GI and gameplay lamps are restored when the tilt phase exits (next ball or game over via teardownGame/setAttractLamps).
   - Any balls locked in side kickouts are **ejected immediately** (`ballsLocked` set to 0, both kickouts fired).
   - TILT lamp is turned on and flashes for about 4 seconds.
   - Game waits for all in-play balls to drain.
 - After all balls have drained:
-  - If more balls remain: Continue with the next ball.
-  - If this was the last ball: Game transitions to Game Over / Attract mode.
+  - If more balls remain: Restore GI and gameplay lamps, continue with the next ball.
+  - If this was the last ball: Game transitions to Game Over / Attract mode (GI restored by setAttractLamps).
 
 **Tilt warning count resets at the start of each ball** (not cumulative across balls). See Section 14.1 for Enhanced Style two-warning tilt behavior.
 
@@ -2229,20 +2230,13 @@ You can NEVER be in a Mode and Multiball simultaneously. See Section 14.8 for de
 - NOT already in multiball
 
 **Multiball Start Sequence:**
-1. Play "Multiball! All rides are running!" (TRACK_MULTIBALL_START = 674)
-2. Eject both locked balls simultaneously
-3. `ballsInPlay += ballsLocked`, `ballsLocked = 0`
+1. Eject both locked balls simultaneously
+2. `ballsInPlay = 3`, `ballsLocked = 0`
+3. Start multiball ball save timer
 4. Switch to secondary/opposite theme music
-
-**Special Case - Multiball Trigger on Same Hit as SCREAMO Completion:**
-If the player has 2 balls locked and completes SCREAMO with the same scoring switch hit:
-1. **Multiball takes priority** (harder to achieve than modes)
-2. Award spotted number (normal SCREAMO completion reward)
-3. Award 510K points
-4. Re-light all bumper lamps
-5. Start multiball sequence
-6. Mode does NOT start
-7. `modeCount` is NOT incremented (mode opportunity not "used up")
+5. Play "Multiball! All rides are running!" (TRACK_MULTIBALL_START = 674)
+6. Update kickout/Spots Number lamps
+7. Play celebration lamp effect (`LAMP_EFFECT_FILL_UP_DRAIN_DOWN`, 800ms per phase, 300ms hold) - a wave fills from the drain end upward, holds with all lamps blazing, then drains back down, restoring gameplay lamps when complete
 
 #### 14.6.3 Scoring During Multiball
 
@@ -2318,6 +2312,21 @@ Modes rotate in sequence: BUMPER CARS -> ROLL-A-BALL -> GOBBLE HOLE -> (repeat)
 - Pre-existing locked balls remain locked throughout the mode (not ejected when mode starts)
 - After mode ends, if `ballsLocked == 2`, next scoring switch triggers multiball
 
+**IMPORTANT - Lamp Effect Engine Interaction:**
+Any function that directly writes lamp state must call `cancelLampEffect(pShiftRegister)` as its FIRST lamp-related action. This cancels any running lamp sweep/fill effect and restores the pre-effect lamp state, giving the caller a clean baseline before writing new lamp state. Without this, the effect engine would overwrite the caller's lamp changes on its next tick, or the caller would save the effect's intermediate state instead of the real gameplay lamps.
+
+This rule applies to: mode start (before saving pre-mode lamp state), mode end (before restoring pre-mode lamp state), multiball start (if a celebratory effect is added), tilt (`handleFullTilt`), game over (`teardownGame`), and mid-game Start (`teardownGame`). The tilt and teardown paths already follow this rule. Mode and multiball code must do the same when implemented.
+
+The lamp effect engine (`Pinball_Lamp_Effects`) saves and restores all 47 lamp states internally using Centipede portRead/portWrite. It operates on a 10ms tick via `processLampEffectTick()` called from the main loop. See `Pinball_Lamp_Effects.h` for the full API.
+
+**Mode Start Lamp Effect:**
+When a mode starts, play a lamp effect (e.g. `LAMP_EFFECT_FLASH_ALL`) to visually signal the transition. The effect runs during the mode intro announcement. Since the effect engine saves/restores lamp state, the sequence is:
+1. `cancelLampEffect()` - ensure clean baseline
+2. Save all lamp states into `preModePortState[]` via Centipede `portRead()`
+3. Start the mode-start lamp effect (it saves all current lamps, runs the effect, then restores)
+4. When effect completes, `processLampEffectTick()` restores the saved state - but we immediately overwrite with mode-specific lamps once the effect finishes
+5. Set mode-specific lamps (all off except mode targets)
+
 **Mode Audio Sequence:**
 1. Stop regular play music
 2. Play mode-start stinger: school bell sound effect (TRACK_MODE_STINGER_START = 1001)
@@ -2332,6 +2341,7 @@ Modes rotate in sequence: BUMPER CARS -> ROLL-A-BALL -> GOBBLE HOLE -> (repeat)
 - This adds urgency - player must quickly shoot replacement balls
 - At 10 seconds remaining: Play "Ten seconds!" announcement (TRACK_MODE_HURRY = 1003)
 - At 10 seconds remaining: Start countdown sound effect (TRACK_MODE_COUNTDOWN = 1004)
+- At 10 seconds remaining: Start an urgency lamp effect (e.g. `LAMP_EFFECT_FLASH_ALL` with fast timing) to visually reinforce that time is almost up
 
 **Processing Order (each tick during mode):**
 1. Check for mode completion (jackpot achieved) - if complete, end mode immediately
@@ -2342,17 +2352,19 @@ This order ensures that if a player achieves the jackpot on the exact tick the t
 
 **Mode End Sequence:**
 1. Stop mode music
-2. Play "Time!" announcement (TRACK_MODE_TIME_UP = 1005)
-3. Play mode-end stinger: factory whistle sound effect (TRACK_MODE_STINGER_END = 1006)
-4. Restore pre-mode lamp states
-5. Start next regular play music track (primary theme)
-6. If `ballsLocked == 2`: Next scoring switch triggers multiball
+2. If completed: play "Mission accomplished!" (706) or "Jackpot!" (TRACK_MODE_JACKPOT = 1002) per mode rules
+3. If time expired: play "Time!" announcement (TRACK_MODE_TIME_UP = 1005)
+4. Play achievement SFX (mode-specific)
+5. Play mode-end stinger: factory whistle sound effect (TRACK_MODE_STINGER_END = 1006)
+6. Restore pre-mode lamp states from `preModePortState[]` via Centipede `portWrite()`
+7. Start next regular play music track (primary theme)
+8. If `ballsLocked == 2`: set `multiballPending = true` so next scoring switch triggers multiball
 
 **Ball Drain During Mode:**
 - Drained balls are ALWAYS replaced during modes (no ball is lost to drain)
 - Timer does NOT pause - it continues running during ball replacement
+- Ball replacement uses the background dispense mechanism (same as multiball save), staying in PHASE_BALL_IN_PLAY so the mode timer keeps running and the replacement ball reaches the player as quickly as possible
 - Play urgent ball-saved announcement (TRACK_BALL_SAVED_URG_FIRST to TRACK_BALL_SAVED_URG_LAST)
-- Dispense replacement ball
 - This creates urgency - player loses mode time while waiting for replacement
 - Mode ball replacement is independent of the normal Ball Save timer
 
@@ -2361,19 +2373,21 @@ When a ball enters a side kickout during a mode:
 1. **Eject immediately** (no locking during modes)
 2. **No points awarded** (kickouts are not mode-specific targets)
 3. **No spotted number awarded** (even if lamp was lit before mode started)
-4. Play mode-appropriate "miss" sound effect (car crash / glass break / ricochet)
+4. **No miss SFX** (kickouts are not near the mode targets)
 5. Balls that were already locked before the mode started will remain locked for the duration of the mode.
 
 **Scoring During Modes:**
 - ONLY the mode-specific targets count toward the mode objective and score points
-- Other targets sometimes play "miss" sound effects but do NOT score points
+- Near-miss targets (specific to each mode) play "miss" SFX but do NOT score points
+- Other targets (slingshots, non-near-miss targets, kickouts) are silent and do NOT score points
 - Side targets do NOT advance the Selection Unit during modes
-- Mode completion awards a jackpot (1,000,000 points) plus "Jackpot!" announcement
+- Mode completion awards depend on the mode (see individual mode sections)
 
 **Tilt During Mode:**
 When the player tilts during a mode:
 - Mode ends immediately
-- Pre-mode lamp states are restored after ball drains
+- Pre-mode lamp states are NOT restored (tilt blacks out all lamps anyway)
+- `modeState.active` is cleared so `processModeTick()` stops
 - Pre-existing locked balls carry over to next Ball Number
 - Flippers, pop bumper, and slingshots disabled
 - Kickouts remain active (to eject any balls that land in them during drain; previously locked balls are not ejected)
@@ -2395,30 +2409,31 @@ When the player tilts during a mode:
 
 **Gameplay:**
 - Player must hit bumpers in exact S-C-R-E-A-M-O order
-- **Correct bumper hit (next in sequence):**
+- **Correct bumper hit (next in sequence, lamp is LIT):**
   - Extinguish that bumper's lamp
-  - Award points (100K per correct hit) (We may eliminate this award if scores become too inflated)
-  - Play random car honk SFX (TRACK_MODE_BUMPER_HIT_FIRST to TRACK_MODE_BUMPER_HIT_LAST: 1121-1133)
-  - Occasionally play random compliment (TRACK_COMPLIMENT_FIRST to TRACK_COMPLIMENT_LAST: 701-714)
-- **Wrong bumper hit (out of sequence):**
+  - Award 100K points
+  - Play achievement SFX: ding-ding-ding (TRACK_MODE_BUMPER_ACHIEVED = 1197)
+  - Advance `modeProgress` (0->1->2->...->6)
+- **Wrong bumper hit (already extinguished, or lit but out of sequence):**
   - Bumper lamp stays as-is (no change)
-  - No sound
+  - Play random car honk SFX (TRACK_MODE_BUMPER_HIT_FIRST to TRACK_MODE_BUMPER_HIT_LAST: 1121-1133)
   - No points awarded
-- **Side target hit:**
+- **Near-miss side target hit** (targets near the bumpers):
+  - LEFT_SIDE_TARGET_2, LEFT_SIDE_TARGET_3, RIGHT_SIDE_TARGET_1, RIGHT_SIDE_TARGET_2, RIGHT_SIDE_TARGET_3
   - Play random car crash SFX (TRACK_MODE_BUMPER_MISS_FIRST to TRACK_MODE_BUMPER_MISS_LAST: 1141-1148)
   - No points, no Selection Unit advance
 - **Kickout hit:**
   - Eject immediately
   - No points, no sound, no spotted number
-- **All other targets:** No points, no sound
+- **All other targets** (slingshots, hats, other side targets, gobble hole drain rollovers): No points, no sound
 
 **Reminder:** After 10 seconds of mode play, play TRACK_MODE_BUMPER_REMIND (1111): "Keep smashing the bumpers!"
 
 **Completion:**
-- When "O" is hit (completing sequence):
+- When the 7th correct bumper ("O") is hit (completing sequence):
   - Award 1,000,000 point jackpot
-  - Play "Jackpot!" (TRACK_MODE_JACKPOT = 1002)
-  - Play achievement SFX: bell ding-ding-ding (TRACK_MODE_BUMPER_ACHIEVED = 1197)
+  - Play "Mission accomplished!" (TRACK_MISSION_ACCOMPLISHED = 706)
+  - Play achievement SFX: ding-ding-ding (TRACK_MODE_BUMPER_ACHIEVED = 1197)
   - Mode ends immediately (can only win one jackpot)
 
 **Mode End:** Standard mode end sequence (see 14.7.1)
@@ -2441,13 +2456,14 @@ When the player tilts during a mode:
   - Award 100K points
   - Play random bowling strike SFX (TRACK_MODE_RAB_HIT_FIRST to TRACK_MODE_RAB_HIT_LAST: 1221-1225)
   - Occasionally play random compliment (TRACK_COMPLIMENT_FIRST to TRACK_COMPLIMENT_LAST)
-- **Side target hit:**
+- **Near-miss side target/bumper hit** (targets near the hats):
+  - LEFT_SIDE_TARGET_4, LEFT_SIDE_TARGET_5, RIGHT_SIDE_TARGET_4, RIGHT_SIDE_TARGET_5, BUMPER_M, BUMPER_O
   - Play random glass break SFX (TRACK_MODE_RAB_MISS_FIRST to TRACK_MODE_RAB_MISS_LAST: 1241-1254)
   - No points, no Selection Unit advance
 - **Kickout hit:**
   - Eject immediately
   - No points, no sound, no spotted number
-- **All other targets:** No points, no sound
+- **All other targets** (slingshots, other side targets, other bumpers, gobble hole, drain rollovers): No points, no sound
 
 **Reminder:** After 10 seconds of mode play, play TRACK_MODE_RAB_REMIND (1211): "Keep rolling over those hats!"
 
@@ -2466,8 +2482,8 @@ When the player tilts during a mode:
 - Track duration: ~7.1 seconds
 
 **Lamp Setup:**
-- All playfield lamps OFF except SPECIAL lamp and all five 1..5 lamps around the Gobble Hole.
-- SPECIAL lamp flashes to draw attention to Gobble Hole
+- All playfield lamps OFF except SPECIAL lamp and all five 1..5 lamps around the Gobble Hole
+- SPECIAL lamp flashes on/off (simple timed toggle, ~250ms per half-cycle) to draw attention to the Gobble Hole area
 
 **Gameplay:**
 - Each Gobble Hole hit awards 100,000 points and extinguishes a 1..5 lamp, in order.
@@ -2475,20 +2491,21 @@ When the player tilts during a mode:
   - Award 100K points
   - Extinguish next 1..5 lamp (mode-specific counter, NOT `gobbleCount`)
   - Play slide whistle down SFX (TRACK_MODE_GOBBLE_HIT = 1321)
-  - Always play random compliment (this is a more difficult target than the other mode targets)
+  - Always play random compliment (TRACK_COMPLIMENT_FIRST to TRACK_COMPLIMENT_LAST) - the Gobble Hole is a difficult target and the player deserves praise every time
   - Turn on Shaker Motor briefly (SHAKER_GOBBLE_MS = 1000ms)
   - `gobbleCount` is NOT incremented (mode hits don't count toward 5-gobble goal)
   - Ball goes to trough; replacement ball dispensed automatically (mode behavior)
-- **Side target hit:**
+- **Near-miss side target/bumper hit** (targets near the Gobble Hole):
+  - LEFT_SIDE_TARGET_4, LEFT_SIDE_TARGET_5, RIGHT_SIDE_TARGET_4, RIGHT_SIDE_TARGET_5, BUMPER_M, BUMPER_O
   - Play random ricochet SFX (TRACK_MODE_GOBBLE_MISS_FIRST to TRACK_MODE_GOBBLE_MISS_LAST: 1341-1348)
   - No points, no Selection Unit advance
 - **Kickout hit:**
   - Eject immediately
   - No points, no sound, no spotted number
-- **All other targets:** No points, no sound
+- **All other targets** (slingshots, hats, other side targets, other bumpers, drain rollovers): No points, no sound
 
 **Mode-Specific Gobble Counter:**
-The mode tracks its own `modeGobbleCount` (0-5) for jackpot progress, separate from the game's `gobbleCount`. The 1..5 lamps around the Gobble Hole show mode progress, not lifetime gobble count.
+The mode tracks its own gobble count via `modeState.modeProgress` (0-5) for jackpot progress, separate from the game's `gobbleCount`. The 1..5 lamps around the Gobble Hole show mode progress, not lifetime gobble count.
 
 **Reminder:** After 10 seconds of mode play, play TRACK_MODE_GOBBLE_REMIND (1311): "Keep shooting at the Gobble Hole!"
 
@@ -2506,17 +2523,30 @@ The mode tracks its own `modeGobbleCount` (0-5) for jackpot progress, separate f
 | Event                        | BUMPER CARS              | ROLL-A-BALL            | GOBBLE HOLE            |
 |------------------------------|--------------------------|------------------------|------------------------|
 | Mode stinger start           | 1001 (school bell)       | 1001 (school bell)     | 1001 (school bell)     |
+| Mode start lamp effect       | FLASH_ALL                | FLASH_ALL              | FLASH_ALL              |
 | Mode intro                   | 1101 (bumper cars intro) | 1201 (roll-a-ball)     | 1301 (shooting gallery)|
-| Target HIT (correct)         | 1121-1133 (car honks)    | 1221-1225 (bowling)    | 1321 (slide whistle)   |
-| Target MISS (wrong/other)    | 1141-1148 (car crashes)  | 1241-1254 (glass break)| 1341-1348 (ricochets)  |
-| Side target hit              | 1141-1148 (car crashes)  | 1241-1254 (glass break)| 1341-1348 (ricochets)  |
-| Kickout hit                  | 1141-1148 (car crashes)  | 1241-1254 (glass break)| 1341-1348 (ricochets)  |
+| Correct target HIT           | 1197 (ding ding ding)    | 1221-1225 (bowling)    | 1321 (slide whistle)   |
+| Wrong bumper HIT             | 1121-1133 (car honks)    | N/A                    | N/A                    |
+| Near-miss target             | 1141-1148 (car crashes)  | 1241-1254 (glass break)| 1341-1348 (ricochets)  |
+| Kickout hit                  | (silent, eject)          | (silent, eject)        | (silent, eject)        |
+| Compliment (on correct hit)  | N/A                      | Occasional (701-714)   | Always (701-714)       |
 | Reminder (after 10s play)    | 1111 (Keep smashing)     | 1211 (Keep rolling)    | 1311 (Keep shooting)   |
 | Hurry up (10s remaining)     | 1003 (Ten seconds!)      | 1003 (Ten seconds!)    | 1003 (Ten seconds!)    |
 | Timer SFX (10s remaining)    | 1004 (countdown)         | 1004 (countdown)       | 1004 (countdown)       |
-| Completion/Achievement       | 1197 (ding ding ding)    | 1297 (ta-da)           | 1397 (applause)        |
-| Jackpot (completion)         | 1002 ("Jackpot!")        | N/A                    | 1002 ("Jackpot!")      |
+| Hurry lamp effect            | FLASH_ALL (fast)         | FLASH_ALL (fast)       | FLASH_ALL (fast)       |
+| Completion announcement      | 706 (Mission accomp.)    | N/A (time-based)       | 1002 (Jackpot!)        |
+| Completion/Achievement SFX   | 1197 (ding ding ding)    | 1297 (ta-da)           | 1397 (applause)        |
 | Mode end stinger             | 1006 (factory whistle)   | 1006 (factory whistle) | 1006 (factory whistle) |
+
+#### 14.7.6 Near-Miss Target Definitions
+
+"Near-miss" targets are playfield targets that are physically close to the mode's objective targets. Hitting these plays a mode-specific "miss" SFX to give the player audio feedback that they almost hit the right thing. Other non-objective targets (slingshots, non-adjacent targets, kickouts) are silent.
+
+| Mode             | Near-Miss Targets                                                                                     |
+|------------------|-------------------------------------------------------------------------------------------------------|
+| BUMPER CARS      | LEFT_SIDE_TARGET_2, LEFT_SIDE_TARGET_3, RIGHT_SIDE_TARGET_1, RIGHT_SIDE_TARGET_2, RIGHT_SIDE_TARGET_3 |
+| ROLL-A-BALL      | LEFT_SIDE_TARGET_4, LEFT_SIDE_TARGET_5, RIGHT_SIDE_TARGET_4, RIGHT_SIDE_TARGET_5, BUMPER_M, BUMPER_O  |
+| GOBBLE HOLE S.G. | LEFT_SIDE_TARGET_4, LEFT_SIDE_TARGET_5, RIGHT_SIDE_TARGET_4, RIGHT_SIDE_TARGET_5, BUMPER_M, BUMPER_O  |
 
 ### 14.8 Mode/Multiball Mutual Exclusivity
 
@@ -2750,13 +2780,14 @@ HOWEVER, unlike Original Style, we will NOT be firing the 10K Unit, the Selectio
 
 #### 14.11.2 Tilt Warnings
 
-On first trigger of tilt bob per ball, play a random tilt warning message selected from `TRACK_TILT_WARNING_FIRST` (201) to `TRACK_TILT_WARNING_LAST` (205).
+On first trigger of tilt bob per ball, play a random tilt warning message selected from `TRACK_TILT_WARNING_FIRST` (201) to `TRACK_TILT_WARNING_LAST` (205). Simultaneously flash all playfield lamps (`LAMP_EFFECT_FLASH_ALL`, 120ms per half-cycle, ~600ms total) as a visual warning. The flash is non-blocking and restores all gameplay lamps when complete. If the player triggers a full tilt during the flash, `handleFullTilt()` calls `cancelLampEffect()` which safely restores lamps before the tilt blackout.
 
 #### 14.11.3 Game Tilted
 
 On second trigger of tilt bob per ball (full tilt):
 1. Play `TRACK_TILT_BUZZER` (211) - Tilt buzzer SFX.
 2. Play a random game tilted message selected from `TRACK_TILT_COM_FIRST` (212) to `TRACK_TILT_COM_LAST` (216).
+3. All playfield lamps turn off INCLUDING GI for a total blackout that persists until balls drain and the next ball starts (or game over). See Section 4.6 for full tilt behavior.
 
 #### 14.11.4 Ball Missing
 
@@ -2979,7 +3010,7 @@ The following features are fully implemented and tested:
 - **Style detection**: Single/double/triple tap Start button for Original/Enhanced/Impulse.
 - **Ball recovery and dispensing**: 5-ball trough detection with stability check, ball search with timeout.
 - **Flipper control**: Original (holdable), Impulse (both fire briefly), with tilt disable.
-- **Tilt handling**: Two-warning Enhanced, single-warning Original/Impulse, PHASE_TILT drain monitoring.
+- **Tilt handling**: Two-warning Enhanced, single-warning Original/Impulse, PHASE_TILT drain monitoring with total playfield blackout (including GI), locked ball ejection with correct ballsInPlay accounting, and lamp restoration on next ball.
 - **Ball save**: Timer-based with instant drain handling, one save per ball number, drain suppression.
 - **Enhanced audio**: Hill climb/drop sequence, ball announcements, shoot reminders, game over, ducking.
 - **Music management**: Auto-advance through theme playlists, EEPROM persistence of last track.
@@ -2989,20 +3020,20 @@ The following features are fully implemented and tested:
 - **Periodic score save**: EEPROM save every 10 seconds during gameplay.
 - **Diagnostics**: Volume, Lamp Tests, Switch Tests, Coil/Motor Tests, Audio Tests, Settings (all complete).
 - **All EEPROM settings**: Theme, ball save time, mode timers, game timeout, replay scores, audio gains.
+- **Lamp effect engine** (`Pinball_Lamp_Effects`): Sweep, fill-drain, flash-all, and starburst effects with automatic save/restore of all 47 lamp states. Runs on 10ms tick via `processLampEffectTick()`. Currently used for: tilt warning flash (`LAMP_EFFECT_FLASH_ALL`), multiball start celebration (`LAMP_EFFECT_FILL_UP_DRAIN_DOWN`). Starburst from Gobble Hole (`LAMP_EFFECT_STARBURST_GOBBLE`) is available for mode use. Any code that directly writes lamp state must call `cancelLampEffect(pShiftRegister)` first -- see Section 14.7.1 "Lamp Effect Engine Interaction" for details.
+- **Scoring event processing** (Section 13.4): All playfield switch scoring, Selection Unit tracking, bumper lamp management, spotted number logic, "Spots Number When Lit" lamps, WHITE matrix patterns, gobble count tracking, replay score thresholds.
+- **Score Motor during gameplay** (Section 5.4): Score Motor SSR timing for multi-increment events (Original/Impulse).
+- **EM device emulation** (Section 13.3): Selection Unit, bumper lamps, RED/HAT/WHITE/GOBBLE/SPECIAL lamp control, Spots Number lamps.
+- **Multiball** (Section 14.6): Ball locking in kickouts, multiball start/end, secondary theme music switching, multiball ball save.
+- **Replay logic** (Section 13.2): Score thresholds, 3-in-a-row patterns, four corners, 1-9 completion, gobble completions, knocker timing with Score Motor cadence.
+- **Extra Ball** (Section 14.12): WHITE matrix completion, deferred dispensing, extra ball redemption on drain.
+- **Enhanced drain audio** (Section 14.9): Snarky drain comments, quick-drain-after-save detection, shaker motor on drain.
 
 ### 15.2 Not Yet Implemented
 
 The following features are designed in this document but not yet coded:
 
-- **Scoring event processing** (Section 13.4): The `updatePhaseBallInPlay()` function detects switch hits and drains but does not yet process scoring, lamp changes, bell commands, or Score Motor timing. This is the next feature to implement.
-- **Score Motor during gameplay** (Section 5.4): Master needs to run the Score Motor SSR for the correct duration during multi-increment scoring events (Original/Impulse only).
-- **EM device emulation** (Section 13.3): Selection Unit position tracking, 10K Unit position tracking, bumper lamp management, spotted number logic, and "Spots Number When Lit" lamp control.
-- **Mode state machine** (Section 14.7): BUMPER CARS, ROLL-A-BALL, and GOBBLE HOLE SHOOTING GALLERY modes with timers, lamp setup, and mode-specific scoring.
-- **Multiball** (Section 14.6): Ball locking in kickouts, multiball start/end, secondary theme music switching.
-- **Replay logic** (Section 13.2): Score thresholds, 3-in-a-row patterns, four corners, gobble completions, knocker timing.
-- **Extra Ball** (Section 14.12): WHITE matrix completion detection, matrix reset, extra ball dispensing.
-- **Kickout eject retry** (Section 10.3.10): Per-kickout retry counters for stuck balls.
-- **Enhanced drain audio** (Section 14.9): Snarky drain comments, shaker motor on drain.
+- **Mode state machine** (Section 14.7): BUMPER CARS, ROLL-A-BALL, and GOBBLE HOLE SHOOTING GALLERY modes with timers, lamp setup, and mode-specific scoring. **NOTE:** Mode start must call `cancelLampEffect(pShiftRegister)` before saving pre-mode lamp state -- see Section 14.7.1 "Lamp Effect Engine Interaction."
 - **Audio priority system** (Section 14.3): COM track priority comparison (HIGH/MED/LOW) for preemption decisions.
 
 ---
