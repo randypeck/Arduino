@@ -669,6 +669,7 @@ void loop() {
   processScoreMotorGameplayTick();
   processKickoutEjectTick();
   processMultiballSaveDispenseTick();
+  processModeSaveDispenseTick();
   processModeTick();
   processFlippers();
   processTiltBob();
@@ -1219,23 +1220,23 @@ void processStartButton() {
     }
   }
 
-  // *** STAGE 2 TIMEOUT: No second tap within 500ms -> Original ***
+  // *** STAGE 2 TIMEOUT: No second tap within 500ms -> Enhanced ***
   if (startWaitingForSecondTap) {
     unsigned long elapsed = millis() - startFirstPressMs;
     if (elapsed >= START_STYLE_DETECT_WINDOW_MS) {
       startWaitingForSecondTap = false;
-      gameStyle = STYLE_ORIGINAL;
+      gameStyle = STYLE_ENHANCED;
       startGameIfCredits();
       return;
     }
   }
 
-  // *** STAGE 3 TIMEOUT: No third tap within 500ms -> Enhanced ***
+  // *** STAGE 3 TIMEOUT: No third tap within 500ms -> Original ***
   if (startWaitingForThirdTap) {
     unsigned long elapsed = millis() - startSecondPressMs;
     if (elapsed >= START_STYLE_DETECT_WINDOW_MS) {
       startWaitingForThirdTap = false;
-      gameStyle = STYLE_ENHANCED;
+      gameStyle = STYLE_ORIGINAL;
       startGameIfCredits();
       return;
     }
@@ -2290,27 +2291,36 @@ void updatePhaseBallInPlay() {
       handleBallDrain(drainType);
     } else {
       // ***** NON-DRAIN SCORING DISPATCH *****
-      // Slingshots
-      if (hitSwitch == SWITCH_IDX_SLINGSHOT_LEFT || hitSwitch == SWITCH_IDX_SLINGSHOT_RIGHT) {
-        handleSwitchSlingshot(hitSwitch);
+      // During an active mode, ALL non-drain switches are routed to the mode
+      // scoring handler. Only mode-specific targets score; everything else is
+      // silently ignored (per Overview Section 14.7.1 "Scoring During Modes").
+      if (modeState.active) {
+        handleModeScoringSwitch(hitSwitch);
       }
-      // Bumpers (S=10, C=11, R=12, E=13, A=14, M=15, O=16)
-      else if (hitSwitch >= SWITCH_IDX_BUMPER_S && hitSwitch <= SWITCH_IDX_BUMPER_O) {
-        handleSwitchBumper(hitSwitch);
-      }
-      // Side targets (left 2-5, right 1-5)
-      else if ((hitSwitch >= SWITCH_IDX_LEFT_SIDE_TARGET_2 && hitSwitch <= SWITCH_IDX_LEFT_SIDE_TARGET_5)
-        || (hitSwitch >= SWITCH_IDX_RIGHT_SIDE_TARGET_1 && hitSwitch <= SWITCH_IDX_RIGHT_SIDE_TARGET_5)) {
-        handleSwitchSideTarget(hitSwitch);
-      }
-      // Hat rollovers
-      else if (hitSwitch == SWITCH_IDX_HAT_LEFT_TOP || hitSwitch == SWITCH_IDX_HAT_LEFT_BOTTOM
-        || hitSwitch == SWITCH_IDX_HAT_RIGHT_TOP || hitSwitch == SWITCH_IDX_HAT_RIGHT_BOTTOM) {
-        handleSwitchHat(hitSwitch);
-      }
-      // Kickouts
-      else if (hitSwitch == SWITCH_IDX_KICKOUT_LEFT || hitSwitch == SWITCH_IDX_KICKOUT_RIGHT) {
-        handleSwitchKickout(hitSwitch);
+      // Normal (non-mode) scoring dispatch
+      else {
+        // Slingshots
+        if (hitSwitch == SWITCH_IDX_SLINGSHOT_LEFT || hitSwitch == SWITCH_IDX_SLINGSHOT_RIGHT) {
+          handleSwitchSlingshot(hitSwitch);
+        }
+        // Bumpers (S=10, C=11, R=12, E=13, A=14, M=15, O=16)
+        else if (hitSwitch >= SWITCH_IDX_BUMPER_S && hitSwitch <= SWITCH_IDX_BUMPER_O) {
+          handleSwitchBumper(hitSwitch);
+        }
+        // Side targets (left 2-5, right 1-5)
+        else if ((hitSwitch >= SWITCH_IDX_LEFT_SIDE_TARGET_2 && hitSwitch <= SWITCH_IDX_LEFT_SIDE_TARGET_5)
+          || (hitSwitch >= SWITCH_IDX_RIGHT_SIDE_TARGET_1 && hitSwitch <= SWITCH_IDX_RIGHT_SIDE_TARGET_5)) {
+          handleSwitchSideTarget(hitSwitch);
+        }
+        // Hat rollovers
+        else if (hitSwitch == SWITCH_IDX_HAT_LEFT_TOP || hitSwitch == SWITCH_IDX_HAT_LEFT_BOTTOM
+          || hitSwitch == SWITCH_IDX_HAT_RIGHT_TOP || hitSwitch == SWITCH_IDX_HAT_RIGHT_BOTTOM) {
+          handleSwitchHat(hitSwitch);
+        }
+        // Kickouts
+        else if (hitSwitch == SWITCH_IDX_KICKOUT_LEFT || hitSwitch == SWITCH_IDX_KICKOUT_RIGHT) {
+          handleSwitchKickout(hitSwitch);
+        }
       }
     }
   }
@@ -2333,26 +2343,13 @@ void updatePhaseBallInPlay() {
         Serial.print(ballsInPlay);
         Serial.print(F("->0 B"));
         Serial.println(gameState.currentBall);
-        ballsInPlay = 0;
 
-        // End multiball if still active (all balls are in the trough)
-        if (inMultiball) {
-          inMultiball = false;
-          multiballSaveEndMs = 0;
-          multiballSavesRemaining = 0;
-          multiballSaveDispensePending = false;
-          multiballSaveWaitingForLift = false;
-          audioStopMusic();
-          ensureMusicPlaying();
-        }
-
-        // Cancel any active mode (mode is single-ball; ball must have drained)
-        if (modeState.active) {
-          endMode(false);
-        }
-
-        // Fall through to normal single-ball drain processing
-        processBallLost(DRAIN_TYPE_NONE);  // Sanity fix: no specific drain type
+        // Route through handleBallDrain() so that multiball save, mode ball
+        // replacement, and single-ball drain logic all follow the same path.
+        // Set ballsInPlay to 1 so handleBallDrain()'s initial decrement
+        // brings it back to 0, matching the "all balls in trough" reality.
+        ballsInPlay = 1;
+        handleBallDrain(DRAIN_TYPE_NONE);
       }
       // Reset tracking whether or not we corrected (switch is still closed,
       // but we only need to fire the correction once)
@@ -2521,6 +2518,40 @@ void handleBallDrain(byte drainType) {
       saveBall();
       return;
     }
+  }
+
+  // ***** MODE BALL REPLACEMENT *****
+  // Per Overview Section 10.3.7: if the ball drains during an active mode and the
+  // mode timer has not expired, dispense a replacement ball instead of ending the
+  // turn. The mode timer continues to run while the replacement is in transit.
+  // If the timer has already expired, or the mode intro is still playing (timer
+  // not yet started), fall through to endMode + processBallLost below.
+  // If we are already waiting for a replacement (timerPaused), also fall through
+  // -- the ball is truly lost (e.g. trough sanity correction after a stuck ball).
+  if (gameStyle == STYLE_ENHANCED && modeState.active
+    && modeTimerStarted && !modeState.timerPaused) {
+    unsigned long elapsed = millis() - modeState.timerStartMs;
+    if (elapsed < modeState.timerDurationMs) {
+      // Mode timer still has time remaining -- dispense a replacement ball.
+      modeState.timerPaused = true;
+      modeState.pausedTimeRemainingMs = modeState.timerDurationMs - elapsed;
+
+      modeSaveDispensePending = true;
+
+      snprintf(lcdString, LCD_WIDTH + 1, "MODE SAVE %lums",
+        modeState.pausedTimeRemainingMs);
+      lcdPrintRow(3, lcdString);
+
+      return;
+    }
+  }
+
+  // End any active mode before advancing to the next ball. This handles the
+  // cases where mode replacement was NOT granted: timer expired, intro still
+  // playing, or timerPaused already true (replacement already in flight).
+  // Without this, the mode would leak into the next ball.
+  if (modeState.active) {
+    endMode(false);
   }
 
   // No ball save: normal drain processing
@@ -3128,6 +3159,124 @@ void processPeriodicScoreSave() {
 // ********************************************************************************************************************************
 // ************************************************** SCORING SWITCH HANDLERS *****************************************************
 // ********************************************************************************************************************************
+
+// ***** MODE SCORING SWITCH HANDLER *****
+// Called from updatePhaseBallInPlay() when modeState.active is true.
+// Routes ALL non-drain switch hits through mode-specific scoring rules.
+// Per Overview Section 14.7.1: Only mode-specific targets score. Near-miss targets
+// play a miss SFX. Everything else (slingshots, non-near-miss targets, kickouts) is
+// silent and scores nothing. Side targets do NOT advance the Selection Unit during modes.
+void handleModeScoringSwitch(byte hitSwitch) {
+
+  switch (modeState.currentMode) {
+
+    // ***** BUMPER CARS MODE SCORING *****
+    // Per Overview Section 14.7.2:
+    //   Objective: hit bumpers in S-C-R-E-A-M-O order.
+    //   Correct bumper (next in sequence, lamp lit): 100K, extinguish lamp, advance modeProgress.
+    //   Wrong bumper (out of sequence or already extinguished): car honk SFX, no points.
+    //   Near-miss side targets: car crash SFX, no points.
+    //   All others (slingshots, hats, other side targets, kickouts): silent, no points.
+  case MODE_BUMPER_CARS: {
+    // Bumper hit
+    if (hitSwitch >= SWITCH_IDX_BUMPER_S && hitSwitch <= SWITCH_IDX_BUMPER_O) {
+      // Fire the pop bumper coil for "E" (the only bumper with a solenoid)
+      if (hitSwitch == SWITCH_IDX_BUMPER_E) {
+        activateDevice(DEV_IDX_POP_BUMPER);
+      }
+
+      // Which bumper index? 0=S, 1=C, 2=R, 3=E, 4=A, 5=M, 6=O
+      byte bumperIdx = hitSwitch - SWITCH_IDX_BUMPER_S;
+
+      // Is this the next expected bumper in the sequence?
+      if (bumperIdx == modeState.modeProgress) {
+        // Correct hit! Award 100K, extinguish lamp, advance progress.
+        addScore(10);  // 10 x 10K = 100K
+
+        // Extinguish this bumper's lamp
+        byte lampIdx = LAMP_IDX_S + bumperIdx;
+        pShiftRegister->digitalWrite(lampParm[lampIdx].pinNum, HIGH);  // Lamp off
+
+        modeState.modeProgress++;
+
+        // Play achievement SFX: ding-ding-ding
+        if (pTsunami != nullptr) {
+          pTsunami->trackPlayPoly(TRACK_MODE_BUMPER_ACHIEVED, 0, false);
+          audioApplyTrackGain(TRACK_MODE_BUMPER_ACHIEVED, tsunamiSfxGainDb,
+            tsunamiGainDb, pTsunami);
+        }
+
+        // Completion check is handled by processModeTick() (modeProgress >= 7)
+      } else {
+        // Wrong bumper -- play random car honk SFX, no points
+        unsigned int track = TRACK_MODE_BUMPER_HIT_FIRST
+          + (unsigned int)random(0, TRACK_MODE_BUMPER_HIT_LAST
+            - TRACK_MODE_BUMPER_HIT_FIRST + 1);
+        if (pTsunami != nullptr) {
+          pTsunami->trackPlayPoly((int)track, 0, false);
+          audioApplyTrackGain(track, tsunamiSfxGainDb, tsunamiGainDb, pTsunami);
+        }
+      }
+    }
+    // Near-miss side targets: car crash SFX
+    else if (hitSwitch == SWITCH_IDX_LEFT_SIDE_TARGET_2
+      || hitSwitch == SWITCH_IDX_LEFT_SIDE_TARGET_3
+      || hitSwitch == SWITCH_IDX_RIGHT_SIDE_TARGET_1
+      || hitSwitch == SWITCH_IDX_RIGHT_SIDE_TARGET_2
+      || hitSwitch == SWITCH_IDX_RIGHT_SIDE_TARGET_3) {
+      unsigned int track = TRACK_MODE_BUMPER_MISS_FIRST
+        + (unsigned int)random(0, TRACK_MODE_BUMPER_MISS_LAST
+          - TRACK_MODE_BUMPER_MISS_FIRST + 1);
+      if (pTsunami != nullptr) {
+        pTsunami->trackPlayPoly((int)track, 0, false);
+        audioApplyTrackGain(track, tsunamiSfxGainDb, tsunamiGainDb, pTsunami);
+      }
+    }
+    // Kickouts: eject immediately, no points, no sound
+    else if (hitSwitch == SWITCH_IDX_KICKOUT_LEFT
+      || hitSwitch == SWITCH_IDX_KICKOUT_RIGHT) {
+      handleModeKickoutEject(hitSwitch);
+    }
+    // All others (slingshots, hats, other side targets): silent, no points
+    break;
+  }
+
+                       // ***** ROLL-A-BALL MODE SCORING ***** (placeholder)
+  case MODE_ROLL_A_BALL:
+    break;
+
+    // ***** GOBBLE HOLE MODE SCORING ***** (placeholder)
+  case MODE_GOBBLE_HOLE:
+    break;
+
+  default:
+    break;
+  }
+}
+
+// ***** MODE KICKOUT EJECT *****
+// Per Overview Section 14.7.1: Kickouts during modes eject immediately.
+// No points, no sound, no spotted number. Balls locked before the mode
+// started remain locked (handled by kickoutLockedMask).
+void handleModeKickoutEject(byte hitSwitch) {
+  // If this kickout has a locked ball, ignore the edge (it's the locked ball
+  // sitting on the switch, not a new ball entering).
+  if (hitSwitch == SWITCH_IDX_KICKOUT_LEFT
+    && (kickoutLockedMask & KICKOUT_LOCK_LEFT)) {
+    return;
+  }
+  if (hitSwitch == SWITCH_IDX_KICKOUT_RIGHT
+    && (kickoutLockedMask & KICKOUT_LOCK_RIGHT)) {
+    return;
+  }
+
+  // Eject immediately
+  if (hitSwitch == SWITCH_IDX_KICKOUT_LEFT) {
+    activateDevice(DEV_IDX_KICKOUT_LEFT);
+  } else {
+    activateDevice(DEV_IDX_KICKOUT_RIGHT);
+  }
+}
 
 // ***** SLINGSHOT HANDLER *****
 // Per Overview Section 13.4.1: 10K points, 10K Bell, fires 10K Unit.
@@ -5509,6 +5658,68 @@ void processMultiballSaveDispenseTick() {
     }
   }
 }
+
+// ***** MODE SAVE DISPENSE TICK PROCESSOR *****
+// Called every tick from loop(). Dispenses a replacement ball when the ball drains
+// during an active mode (set by handleBallDrain when modeState.active is true and
+// the mode timer has not expired). The game stays in PHASE_BALL_IN_PLAY so the mode
+// timer (paused) and mode state are preserved. Unlike multiball save, only one
+// replacement is ever in flight at a time (modes are single-ball).
+// State machine:
+//   1. modeSaveDispensePending: fire the trough release coil
+//   2. modeSaveWaitingForLift: wait for ball-in-lift switch, then set ballsInPlay = 1
+// Timer resume happens in Step 4 when the replacement ball hits its first playfield switch.
+void processModeSaveDispenseTick() {
+  if (!modeSaveDispensePending && !modeSaveWaitingForLift) {
+    return;
+  }
+
+  // STEP 1: Dispense the replacement ball
+  if (modeSaveDispensePending && !modeSaveWaitingForLift) {
+    // Only fire the trough release if the lift is empty. If a ball is already
+    // at the lift base, skip the dispense -- STEP 2 will detect it immediately.
+    if (!switchClosed(SWITCH_IDX_BALL_IN_LIFT)) {
+      activateDevice(DEV_IDX_BALL_TROUGH_RELEASE);
+    }
+    modeSaveDispenseMs = millis();
+    modeSaveDispensePending = false;
+    modeSaveWaitingForLift = true;
+    return;
+  }
+
+  // STEP 2: Wait for the replacement ball to reach the lift
+  if (modeSaveWaitingForLift) {
+    if (switchClosed(SWITCH_IDX_BALL_IN_LIFT)) {
+      // Ball arrived at the lift. The player will launch it by pushing the lift rod.
+      // Set ballsInPlay back to 1 so scoring and drain detection work normally.
+      // Clear timerPaused so the next drain during the mode gets a replacement too.
+      modeSaveWaitingForLift = false;
+      ballsInPlay = 1;
+      modeState.timerPaused = false;
+
+      snprintf(lcdString, LCD_WIDTH + 1, "MODE BALL READY");
+      lcdPrintRow(3, lcdString);
+      return;
+    }
+
+    // Timeout: if the ball does not reach the lift within 3 seconds, give up.
+    // End the mode and process the ball as lost.
+    if (millis() - modeSaveDispenseMs >= BALL_TROUGH_TO_LIFT_TIMEOUT_MS) {
+      modeSaveWaitingForLift = false;
+      modeSaveDispensePending = false;
+      modeState.timerPaused = false;
+      modeState.pausedTimeRemainingMs = 0;
+
+      snprintf(lcdString, LCD_WIDTH + 1, "MODE SAVE TIMEOUT");
+      lcdPrintRow(3, lcdString);
+
+      // End the mode, then process as a normal ball lost
+      endMode(false);
+      processBallLost(DRAIN_TYPE_NONE);
+    }
+  }
+}
+
 
 // ***** REPLAY AWARD FUNCTIONS *****
 

@@ -1,5 +1,5 @@
 # 1954 Williams Screamo - Modernized Control System Overview
-Rev: 03/13/26. Revised by RDP and Claude Opus 4.6.
+Rev: 03/15/26. Revised by RDP and Claude Opus 4.6.
 
 ## 1. Introduction
 
@@ -282,10 +282,11 @@ The Ball Tray holds balls that have drained via the three bottom rollovers (left
 | Attract                              | Closed           | Closed      |
 | Ball Recovery (waiting for 5 balls)  | Open (held)      | Open (held) |
 | Gameplay (before 1st p/f switch hit) | Open (held)      | Open (held) |
-| Gameplay (after 1st p/f switch hit)  | Closed           | Open (held) |
+| Gameplay (after 1st p/f switch hit)  | Open (held)      | Open (held) |
 | Tilt (waiting for drain)             | Open (held)      | Open (held) |
 | Game Over                            | Closed           | Closed      |
 
+**We hold the ball tray open even during Original/Impulse gameplay after the first playfield switch hit, which is a departure from the original EM behavior. This is because it's possible for a player to drain a ball to either side of the center bottom rollover if the flippers are raised, thus bypassing any drain detection. If this happens, with the tray open in Original/Impulse mode, at least we'll see the "five balls present in trough" switch, which will be our indicator that the ball drained. If we closed the ball tray during gameplay, balls drained through the bottom three rollovers (or to the sides of the center rollover) would end up in the tray and not reach the trough.**
 #### 3.6.3 Enhanced Style Ball Tray During Gameplay
 
 **Simplified Strategy:** In Enhanced Style, the Ball Tray remains OPEN for the entire game after startup. This provides several benefits:
@@ -350,22 +351,9 @@ The only physical difference relevant to software is that balls draining via the
 
 Screamo runs in several styles. Master is style authority and informs Slave via RS-485.
 
-### 4.1 Original Style
+### 4.1 Enhanced Style
 
-- Triggered by: Single press of Start button (no second or third press within detection windows).
-- Single-player only.
-- Rules and scoring match the original Screamo rules.
-- Modernized flippers (a slight departure from original):
-  - Independent control of each flipper.
-  - Flippers can be held up indefinitely while the button is held (power is reduced after initial pulse).
-- EM sound devices used:
-  - Bells, 10K Unit, Score Motor, Selection Unit, Relay Reset Bank, Knocker.
-- Goal: Make it feel like playing an unmodified original Screamo (except for the flipper operation).
-- Shaker motor and Tsunami audio are not used in this style.
-
-### 4.2 Enhanced Style
-
-- Triggered by: Double-tap of Start button (second press within 500ms of first, with NO third press within 500ms of second).
+- Triggered by: Single-tap of Start button (no second press within 500ms).
 - Single-player only.
 - A new rule set, uses:
   - Tsunami audio system.
@@ -383,6 +371,19 @@ Screamo runs in several styles. Master is style authority and informs Slave via 
   - Ball save for first N seconds after the first playfield switch hit on each ball (time defined in Settings) OR if we drain the ball before hitting any playfield switches.
   - Shaker motor triggered on certain events.
   - Extra voice prompts, music, jackpots, etc. See Sections 14.3 and 14.11 for audio details.
+
+### 4.2 Original Style
+
+- Triggered by: Double-tap of Start button (second press within 500ms, no third press within next 500ms).
+- Single-player only.
+- Rules and scoring match the original Screamo rules.
+- Modernized flippers (a slight departure from original):
+  - Independent control of each flipper.
+  - Flippers can be held up indefinitely while the button is held (power is reduced after initial pulse).
+- EM sound devices used:
+  - Bells, 10K Unit, Score Motor, Selection Unit, Relay Reset Bank, Knocker.
+- Goal: Make it feel like playing an unmodified original Screamo (except for the flipper operation).
+- Shaker motor and Tsunami audio are not used in this style.
 
 ### 4.3 Impulse Style
 
@@ -412,25 +413,25 @@ Screamo runs in several styles. Master is style authority and informs Slave via 
 
 | Pattern     | Timing                                                 | Result         |
 |-------------|--------------------------------------------------------|----------------|
-| Single tap  | No 2nd press within 500ms                              | Original Style |
-| Double tap  | 2nd press within 500ms, no 3rd press within next 500ms | Enhanced Style |
+| Single tap  | No 2nd press within 500ms                              | Enhanced Style |
+| Double tap  | 2nd press within 500ms, no 3rd press within next 500ms | Original Style |
 | Triple tap  | 2nd press within 500ms, 3rd press within next 500ms    | Impulse Style  |
 
 **Detailed Behavior Examples:**
 ```
-**Original Style (Single Tap):**
+**Enhanced Style (Single Tap):**
 
 T =   0ms: Start pressed (1st time) 
            Start 500ms timer
            DO NOT deduct credit yet
            Monitor for 2nd Start press
 T = 500ms: Timer expires, no 2nd press detected
-           gameStyle = ORIGINAL
+           gameStyle = ENHANCED
            Check credits:
              IF credits: Proceed to ball recovery
-             IF no credits: Stay in Attract mode (silent)
+             IF no credits: Play Aoooga + rejection announcement, stay in Attract
 
-**Enhanced Style (Double Tap):**
+**Original Style (Double Tap):**
 
 T =   0ms: Start pressed (1st time)
            Start 500ms timer
@@ -439,10 +440,10 @@ T = 200ms: Start pressed (2nd time, within 500ms)
            Start NEW 500ms timer for potential 3rd press
            Monitor for 3rd Start press
 T = 700ms: Timer expires, no 3rd press detected
-           gameStyle = ENHANCED
+           gameStyle = ORIGINAL
            Check credits:
              IF credits: Proceed to ball recovery
-             IF no credits: Play Aoooga + rejection announcement, stay in Attract
+             IF no credits: Stay in Attract mode (silent)
 
 **Impulse Style (Triple Tap):**
 
@@ -1498,8 +1499,8 @@ All switches currently use the global 'SWITCH_DEBOUNCE_TICKS' (5 ticks = 50ms). 
     - Enter Diagnostic mode.
   - If Start pressed with credits > 0:
     - Begin Start button tap detection (see Section 4.4):
-      - Single tap (no second press within 500ms): STYLE_ORIGINAL
-      - Double tap (second press within 500ms, no third within next 500ms): STYLE_ENHANCED
+      - Single tap (no second press within 500ms): STYLE_ENHANCED
+      - Double tap (second press within 500ms, no third within next 500ms): STYLE_ORIGINAL
       - Triple tap (third press within 500ms of second): STYLE_IMPULSE
     - Deduct credit and start game.
   - If Start pressed with credits = 0:
