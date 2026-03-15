@@ -1,5 +1,5 @@
 # 1954 Williams Screamo - Modernized Control System Overview
-Rev: 03/08/26. Revised by RDP and Claude Opus 4.6.
+Rev: 03/13/26. Revised by RDP and Claude Opus 4.6.
 
 ## 1. Introduction
 
@@ -1123,6 +1123,17 @@ Relays switch 6.3 VAC to the lamps; Centipede outputs control the relays.
 - All coils must include a software watchdog so they are not left turned on more than an expected maximum amount of time.
   - Exceptions would be the playfield Ball Tray Release Coil and Flipper Coils, which can be held open indefinitely AT LOW POWER.
 - Master calls `randomSeed(analogRead(A0))` in `setup()` to seed the pseudo-random number generator. Use Arduino's `random()` function for all random selections (track choices, compliment frequency, etc.) rather than `millis() %` arithmetic.
+
+**Note on 10ms ticks and "slow ticks":**
+- Occasional slow ticks (even 35ms) are essentially harmless.
+- All millis()-based timers — ball save, mode countdown, kickout eject delay, multiball save, Score Motor deadlines, shaker timing, shoot reminders, game timeout, etc. are unaffected. These compare millis() to stored deadlines and don't care how many ticks have elapsed. A 35ms tick just means the check happens 25ms later than ideal — but these timers have durations measured in seconds, so 25ms of jitter is invisible.
+- The scheduler self-corrects. The next tick is scheduled relative to when this tick started (now), not when the previous one was scheduled. So if tick N takes 35ms, tick N+1 starts immediately (because now is already 25ms past loopNextMillis), and the system catches up. You skip one tick's worth of polling, but all the millis()-based timers still fire at their correct absolute times.
+- Audio — processAudioTick() uses millis() deadlines for track end detection and deferred COM playback. A late tick might delay a music crossfade or announcement by ~25ms, which is imperceptible.
+- Lamp effects — processLampEffectTick() uses millis() for sweep timing. A late tick might cause a lamp to light one tick later, but at 10ms cadence the visual difference is invisible.
+- Switch debounce counts down in ticks (e.g., SWITCH_DEBOUNCE_TICKS = 5 = nominally 50ms). A 35ms tick means one of those 5 ticks represented 35ms instead of 10ms, so the total debounce window is ~75ms instead of 50ms. This makes the debounce more conservative, not less — it's actually safer, not a problem.
+- Coil on-time (deviceParm[].countdown) also counts in ticks. The pop bumper has timeOn = 5 (nominally 50ms). If one of those ticks is 35ms, the coil stays on for ~75ms instead of 50ms. For a brief solenoid pulse this is harmless — the ball doesn't notice 25ms of extra kick, and the coil's duty cycle is so low that thermal stress is negligible.
+- Coil rest period (COIL_REST_TICKS = -8 = nominally 80ms). A slow tick stretches this slightly, which means the coil rests longer. Safer, not a problem.
+- THE ONE THING TO WATCH OUT FOR is switch edge detection. Switches are only sampled once per tick. If a tick takes 35ms, there's a 35ms gap between snapshots instead of 10ms. A switch that opens and closes entirely within that 35ms gap would be missed. But pinball switches are mechanical — a ball hitting a bumper or target closes the switch for 5-20ms minimum, and the ball doesn't leave and return within 35ms. The only scenario where this matters is extremely rapid repeated hits (e.g., ball vibrating on a switch), and the debounce system already suppresses those. And switches are often "missed" anyway when they don't full make contact such as glancing past a bumper or target, and the "penalty" is simply that you don't extinguish that bumper or get that point - but can get it the next time you hit it.
 
 ### 10.2 Non-Blocking Architecture
 
