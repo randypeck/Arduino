@@ -1,4 +1,4 @@
-// PINBALL_LAMP_EFFECTS.H Rev: 03/13/26.
+// PINBALL_LAMP_EFFECTS.H Rev: 03/16/26.
 // All 47 lamps have X/Y coordinates (mm from left edge and top edge).
 // Effects are non-blocking: call processLampEffectTick() once per 10ms loop tick.
 // The engine saves/restores real lamp state so gameplay lamps are not corrupted.
@@ -83,5 +83,13 @@ bool isLampEffectActive();
 
 // Call once per 10ms tick from loop(). Drives the effect state machine.
 void processLampEffectTick(Pinball_Centipede* pShift, LampParmStruct* pLampParm);
+
+// Patch the saved port state so a lamp change made during an active effect
+// survives the effect's restore. Call this after a direct digitalWrite() when
+// isLampEffectActive() returns true.
+//   port: Centipede port index (0-3)
+//   bit:  bit position within the 16-bit port word (0-15)
+//   lampOn: true = lamp ON (clear bit, since LOW = on), false = lamp OFF (set bit)
+void patchLampEffectSavedState(byte port, byte bit, bool lampOn);
 
 #endif

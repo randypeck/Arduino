@@ -1,4 +1,4 @@
-// PINBALL_LAMP_EFFECTS.CPP Rev: 03/13/26.
+// PINBALL_LAMP_EFFECTS.CPP Rev: 03/16/26.
 // Position-based lamp effect engine for Screamo playfield lamps.
 // See Pinball_Lamp_Effects.h for API documentation.
 
@@ -524,8 +524,18 @@ void processLampEffectTick(Pinball_Centipede* pShift, LampParmStruct* pLampParm)
   // Uses portRead/portWrite (4 I2C transactions each) instead of 47 individual
   // digitalWrite calls (~9.4ms) to stay well within the 10ms tick budget.
   if (!effectSaveComplete) {
+    // Save current lamp state with read-twice-compare protection against
+    // I2C corruption from flipper PWM. A corrupted save would cause wrong
+    // lamp state to be restored when the effect ends.
     for (byte p = 0; p < 4; p++) {
-      savedPortState[p] = (unsigned int)pShift->portRead(p);
+      unsigned int read1 = (unsigned int)pShift->portRead(p);
+      unsigned int read2 = (unsigned int)pShift->portRead(p);
+      if (read1 == read2) {
+        savedPortState[p] = read1;
+      } else {
+        unsigned int read3 = (unsigned int)pShift->portRead(p);
+        savedPortState[p] = (read1 == read3) ? read1 : read2;
+      }
     }
     // Turn all lamps off by setting all output bits HIGH (HIGH = lamp OFF).
     // This affects ALL 64 pins on Centipede #1 (ports 0..3), not just the 47 lamp
@@ -660,5 +670,16 @@ void processLampEffectTick(Pinball_Centipede* pShift, LampParmStruct* pLampParm)
       effectPhase = 0;
       effectPhaseDrain = false;
     }
+  }
+}
+
+void patchLampEffectSavedState(byte port, byte bit, bool lampOn) {
+  if (port > 3 || bit > 15) {
+    return;
+  }
+  if (lampOn) {
+    savedPortState[port] &= ~((uint16_t)1 << bit);  // Clear bit = LOW = lamp ON
+  } else {
+    savedPortState[port] |= ((uint16_t)1 << bit);   // Set bit = HIGH = lamp OFF
   }
 }

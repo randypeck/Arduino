@@ -642,20 +642,20 @@ void loop() {
   // Update Centipede #2 switch snapshot once per tick.
   // READ EACH PORT TWICE and only accept the result if both reads agree.
   // Flipper hold-power PWM (~4-8 kHz) can corrupt individual I2C portRead()
-  // transactions, causing phantom switch closures on random pins. A single
-  // corrupted read can make drain switches, kickout switches, or slingshot
-  // switches appear momentarily closed, advancing the ball count or firing
-  // coils. Two consecutive reads returning the same value eliminates transient
-  // I2C corruption because the probability of identical corruption on back-to-
-  // back reads (~0.13ms apart) is negligible.
+  // transactions, causing phantom switch closures on random pins. If the two
+  // reads disagree, do a third read as a tiebreaker (majority vote). This
+  // avoids discarding the entire tick.
   for (int i = 0; i < 4; i++) {
     switchOldState[i] = switchNewState[i];
     unsigned int read1 = pShiftRegister->portRead(4 + i);
     unsigned int read2 = pShiftRegister->portRead(4 + i);
     if (read1 == read2) {
       switchNewState[i] = read1;
+    } else {
+      // Tiebreaker: third read, majority vote
+      unsigned int read3 = pShiftRegister->portRead(4 + i);
+      switchNewState[i] = (read1 == read3) ? read1 : read2;
     }
-    // else: reads disagree — keep previous switchNewState (ignore this tick)
   }
 
   // Compute all switch edge detection flags (MUST be called after portRead, before any switch processing)
@@ -719,8 +719,33 @@ void loop() {
     // Auto-eject any balls in side kickouts (cleanup after games)
     ejectKickoutsIfOccupied();
 
-    // Check for start button (single tap = Original/Impulse, double tap = Enhanced)
+    // Check for start button (single tap = Enhanced, double tap = Original)
     processStartButton();
+
+    // ***** DEBUG: Right flipper cycles next mode during Attract *******************************************************************************************
+    // Tap right flipper to rotate which mode will start next.
+    // Writes to EEPROM so startMode() picks it up. Remove when done testing.
+    if (switchJustClosedFlag[SWITCH_IDX_FLIPPER_RIGHT_BUTTON]) {
+      byte lastMode = EEPROM.read(EEPROM_ADDR_LAST_MODE_PLAYED);
+      if (lastMode < MODE_BUMPER_CARS || lastMode > MODE_GOBBLE_HOLE) {
+        lastMode = MODE_GOBBLE_HOLE;
+      }
+      // Advance: the "last played" determines next, so to get BUMPER_CARS next
+      // we store GOBBLE_HOLE, etc.
+      if (lastMode == MODE_BUMPER_CARS) {
+        lastMode = MODE_ROLL_A_BALL;
+      } else if (lastMode == MODE_ROLL_A_BALL) {
+        lastMode = MODE_GOBBLE_HOLE;
+      } else {
+        lastMode = MODE_BUMPER_CARS;
+      }
+      EEPROM.update(EEPROM_ADDR_LAST_MODE_PLAYED, lastMode);
+
+      // Show which mode is NEXT (one after what we just stored)
+      const char* nextNames[] = { "", "ROLL-A-BALL", "GOBBLE HOLE", "BUMPER CARS" };
+      snprintf(lcdString, LCD_WIDTH + 1, "Next: %s", nextNames[lastMode]);
+      lcdPrintRow(4, lcdString);
+    }
 
     if (diagButtonPressed(0)) {  // BACK - stop test music
       audioStopMusic();
@@ -778,9 +803,7 @@ void updateAllSwitchStates() {
       switchDebounceCounter[i]--;
       if (switchDebounceCounter[i] == 0) {
         // Debounce just expired: snap switchLastState to current physical state
-        // so edge detection resumes from a clean baseline. Without this, the
-        // stale value from before the suppression window could cause the first
-        // real closure (or opening) after a long suppression to be silently missed.
+        // so edge detection resumes from a clean baseline.
         switchLastState[i] = switchClosed(i) ? 1 : 0;
       }
       continue;  // Skip edge detection AND state update
@@ -2264,11 +2287,26 @@ void updatePhaseBallInPlay() {
     }
 
     if (wasDrain) {
-      // Score the drain event BEFORE handling ball-lost logic
-      if (hitSwitch == SWITCH_IDX_GOBBLE) {
-        handleGobbleHoleScoring();
+      // Score the drain event BEFORE handling ball-lost logic.
+      // During modes, drain scoring is suppressed: gobble hole drains do NOT
+      // call handleGobbleHoleScoring() (which would mutate gobbleCount and
+      // light GOBBLE lamps that get restored incorrectly at mode end), and
+      // drain rollovers do NOT call handleDrainRolloverScoring() (which would
+      // award points outside the mode's scoring rules).
+      // EXCEPTION: Gobble Hole Shooting Gallery mode has its own gobble scoring.
+      if (modeState.active) {
+        if (hitSwitch == SWITCH_IDX_GOBBLE && modeState.currentMode == MODE_GOBBLE_HOLE) {
+          handleGobbleHoleModeScoring();
+        }
+        // All other drains during any mode: no scoring, no lamp changes.
+        // handleBallDrain() below handles mode ball replacement.
       } else {
-        handleDrainRolloverScoring(hitSwitch);
+        // Normal (non-mode) drain scoring
+        if (hitSwitch == SWITCH_IDX_GOBBLE) {
+          handleGobbleHoleScoring();
+        } else {
+          handleDrainRolloverScoring(hitSwitch);
+        }
       }
 
       // CLEAR the triggering drain's edge flag BEFORE calling handleBallDrain().
@@ -2521,20 +2559,35 @@ void handleBallDrain(byte drainType) {
   }
 
   // ***** MODE BALL REPLACEMENT *****
-  // Per Overview Section 10.3.7: if the ball drains during an active mode and the
-  // mode timer has not expired, dispense a replacement ball instead of ending the
-  // turn. The mode timer continues to run while the replacement is in transit.
-  // If the timer has already expired, or the mode intro is still playing (timer
-  // not yet started), fall through to endMode + processBallLost below.
-  // If we are already waiting for a replacement (timerPaused), also fall through
+  // Per Overview Section 14.7.1: drained balls are ALWAYS replaced during modes.
+  // This applies whether the mode timer is running OR the intro is still playing.
+  // The timer does NOT pause during replacement -- it continues running (or has
+  // not yet started, if still in intro).
+  // If we are already waiting for a replacement (timerPaused), fall through
   // -- the ball is truly lost (e.g. trough sanity correction after a stuck ball).
-  if (gameStyle == STYLE_ENHANCED && modeState.active
-    && modeTimerStarted && !modeState.timerPaused) {
-    unsigned long elapsed = millis() - modeState.timerStartMs;
-    if (elapsed < modeState.timerDurationMs) {
-      // Mode timer still has time remaining -- dispense a replacement ball.
+  if (gameStyle == STYLE_ENHANCED && modeState.active && !modeState.timerPaused) {
+    // Check if the mode timer has time remaining, OR if the intro is still playing
+    bool introStillPlaying = !modeTimerStarted;
+    bool timerHasTime = false;
+    if (modeTimerStarted) {
+      unsigned long elapsed = millis() - modeState.timerStartMs;
+      timerHasTime = (elapsed < modeState.timerDurationMs);
+    }
+
+    if (introStillPlaying || timerHasTime) {
+      // Dispense a replacement ball. If the timer is running, pause it
+      // so the remaining time is preserved while the replacement is in transit.
+      // If the intro is still playing, timerPaused just marks that a replacement
+      // is in flight (the timer hasn't started yet, so nothing to pause).
       modeState.timerPaused = true;
-      modeState.pausedTimeRemainingMs = modeState.timerDurationMs - elapsed;
+      if (timerHasTime) {
+        unsigned long elapsed = millis() - modeState.timerStartMs;
+        modeState.pausedTimeRemainingMs = modeState.timerDurationMs - elapsed;
+      } else {
+        // Intro still playing: no timer to pause. Store 0; the timer will
+        // start fresh when the intro ends and the replacement ball arrives.
+        modeState.pausedTimeRemainingMs = 0;
+      }
 
       modeSaveDispensePending = true;
 
@@ -3168,15 +3221,20 @@ void processPeriodicScoreSave() {
 // silent and scores nothing. Side targets do NOT advance the Selection Unit during modes.
 void handleModeScoringSwitch(byte hitSwitch) {
 
+  // During the mode intro announcement, scoring and lamp changes work normally
+  // so the player can start working on the objective immediately. Only SFX is
+  // suppressed so the player can hear the intro instructions.
+  bool suppressSfx = !modeTimerStarted;
+
   switch (modeState.currentMode) {
 
-    // ***** BUMPER CARS MODE SCORING *****
-    // Per Overview Section 14.7.2:
-    //   Objective: hit bumpers in S-C-R-E-A-M-O order.
-    //   Correct bumper (next in sequence, lamp lit): 100K, extinguish lamp, advance modeProgress.
-    //   Wrong bumper (out of sequence or already extinguished): car honk SFX, no points.
-    //   Near-miss side targets: car crash SFX, no points.
-    //   All others (slingshots, hats, other side targets, kickouts): silent, no points.
+  // ***** BUMPER CARS MODE SCORING *****
+  // Per Overview Section 14.7.2:
+  //   Objective: hit bumpers in S-C-R-E-A-M-O order.
+  //   Correct bumper (next in sequence, lamp lit): 100K, extinguish lamp, advance modeProgress.
+  //   Wrong bumper (out of sequence or already extinguished): car honk SFX, no points.
+  //   Near-miss side targets: car crash SFX, no points.
+  //   All others (slingshots, hats, other side targets, kickouts): silent, no points.
   case MODE_BUMPER_CARS: {
     // Bumper hit
     if (hitSwitch >= SWITCH_IDX_BUMPER_S && hitSwitch <= SWITCH_IDX_BUMPER_O) {
@@ -3195,41 +3253,60 @@ void handleModeScoringSwitch(byte hitSwitch) {
 
         // Extinguish this bumper's lamp
         byte lampIdx = LAMP_IDX_S + bumperIdx;
-        pShiftRegister->digitalWrite(lampParm[lampIdx].pinNum, HIGH);  // Lamp off
+        byte pin = lampParm[lampIdx].pinNum;
+        pShiftRegister->digitalWrite(pin, HIGH);  // Lamp off
+
+        // If a lamp effect is active (e.g. hurry-up flash), also patch the saved
+        // state so the lamp stays OFF when the effect restores. Without this, the
+        // effect's restore would turn the lamp back on.
+        if (isLampEffectActive()) {
+          byte port = pin >> 4;
+          byte bit = pin & 0x0F;
+          patchLampEffectSavedState(port, bit, false);  // false = lamp OFF (set bit)
+        }
 
         modeState.modeProgress++;
 
-        // Play achievement SFX: ding-ding-ding
-        if (pTsunami != nullptr) {
+        // Play achievement SFX: ding-ding-ding (suppressed during intro)
+        if (!suppressSfx && pTsunami != nullptr) {
           pTsunami->trackPlayPoly(TRACK_MODE_BUMPER_ACHIEVED, 0, false);
           audioApplyTrackGain(TRACK_MODE_BUMPER_ACHIEVED, tsunamiSfxGainDb,
             tsunamiGainDb, pTsunami);
         }
 
-        // Completion check is handled by processModeTick() (modeProgress >= 7)
+        // If the sequence is complete (7th bumper), award 1,000,000 point jackpot.
+        // The 100K for this hit was already scored above; the jackpot is additional.
+        // processModeTick() will call endMode(true) on the next tick.
+        if (modeState.modeProgress >= 7) {
+          addScore(100);  // 100 x 10K = 1,000,000
+        }
       } else {
-        // Wrong bumper -- play random car honk SFX, no points
-        unsigned int track = TRACK_MODE_BUMPER_HIT_FIRST
-          + (unsigned int)random(0, TRACK_MODE_BUMPER_HIT_LAST
-            - TRACK_MODE_BUMPER_HIT_FIRST + 1);
-        if (pTsunami != nullptr) {
-          pTsunami->trackPlayPoly((int)track, 0, false);
-          audioApplyTrackGain(track, tsunamiSfxGainDb, tsunamiGainDb, pTsunami);
+        // Wrong bumper -- play random car honk SFX, no points (suppressed during intro)
+        if (!suppressSfx) {
+          unsigned int track = TRACK_MODE_BUMPER_HIT_FIRST
+            + (unsigned int)random(0, TRACK_MODE_BUMPER_HIT_LAST
+              - TRACK_MODE_BUMPER_HIT_FIRST + 1);
+          if (pTsunami != nullptr) {
+            pTsunami->trackPlayPoly((int)track, 0, false);
+            audioApplyTrackGain(track, tsunamiSfxGainDb, tsunamiGainDb, pTsunami);
+          }
         }
       }
     }
-    // Near-miss side targets: car crash SFX
+    // Near-miss side targets: car crash SFX (suppressed during intro)
     else if (hitSwitch == SWITCH_IDX_LEFT_SIDE_TARGET_2
       || hitSwitch == SWITCH_IDX_LEFT_SIDE_TARGET_3
       || hitSwitch == SWITCH_IDX_RIGHT_SIDE_TARGET_1
       || hitSwitch == SWITCH_IDX_RIGHT_SIDE_TARGET_2
       || hitSwitch == SWITCH_IDX_RIGHT_SIDE_TARGET_3) {
-      unsigned int track = TRACK_MODE_BUMPER_MISS_FIRST
-        + (unsigned int)random(0, TRACK_MODE_BUMPER_MISS_LAST
-          - TRACK_MODE_BUMPER_MISS_FIRST + 1);
-      if (pTsunami != nullptr) {
-        pTsunami->trackPlayPoly((int)track, 0, false);
-        audioApplyTrackGain(track, tsunamiSfxGainDb, tsunamiGainDb, pTsunami);
+      if (!suppressSfx) {
+        unsigned int track = TRACK_MODE_BUMPER_MISS_FIRST
+          + (unsigned int)random(0, TRACK_MODE_BUMPER_MISS_LAST
+            - TRACK_MODE_BUMPER_MISS_FIRST + 1);
+        if (pTsunami != nullptr) {
+          pTsunami->trackPlayPoly((int)track, 0, false);
+          audioApplyTrackGain(track, tsunamiSfxGainDb, tsunamiGainDb, pTsunami);
+        }
       }
     }
     // Kickouts: eject immediately, no points, no sound
@@ -3237,17 +3314,162 @@ void handleModeScoringSwitch(byte hitSwitch) {
       || hitSwitch == SWITCH_IDX_KICKOUT_RIGHT) {
       handleModeKickoutEject(hitSwitch);
     }
-    // All others (slingshots, hats, other side targets): silent, no points
+    // Slingshots: fire the coil (physical feedback) but no points, no sound
+    else if (hitSwitch == SWITCH_IDX_SLINGSHOT_LEFT
+      || hitSwitch == SWITCH_IDX_SLINGSHOT_RIGHT) {
+      if (hitSwitch == SWITCH_IDX_SLINGSHOT_LEFT) {
+        activateDevice(DEV_IDX_SLINGSHOT_LEFT);
+      } else {
+        activateDevice(DEV_IDX_SLINGSHOT_RIGHT);
+      }
+    }
+    // All others (hats, other side targets): silent, no points
     break;
   }
 
-                       // ***** ROLL-A-BALL MODE SCORING ***** (placeholder)
-  case MODE_ROLL_A_BALL:
-    break;
+  // ***** ROLL-A-BALL MODE SCORING *****
+  // Per Overview Section 14.7.3:
+  //   Objective: hit hat rollovers as many times as possible before time expires.
+  //   Any hat rollover: 50K + bowling strike SFX. No lamp changes (hats stay lit).
+  //   Near-miss targets: glass breaking SFX, no points.
+  //     Bumpers R, E, A, M, O (the 5 bumpers nearest the hats)
+  //     Left side targets 4 and 5 (flanking the left approach)
+  //     Right side targets 4 and 5 (flanking the right approach)
+  //   Pop bumper coil fires for "E" regardless.
+  //   All others (slingshots, other bumpers/targets, kickouts): silent/coil-only, no points.
+  //   No completion target -- this is a pure time-based scoring mode.
+  case MODE_ROLL_A_BALL: {
+    // Hat rollover hit
+    if (hitSwitch == SWITCH_IDX_HAT_LEFT_TOP || hitSwitch == SWITCH_IDX_HAT_LEFT_BOTTOM
+      || hitSwitch == SWITCH_IDX_HAT_RIGHT_TOP || hitSwitch == SWITCH_IDX_HAT_RIGHT_BOTTOM) {
+      addScore(5);  // 5 x 10K = 50K
+      modeState.modeProgress++;  // Track total hits for LCD/diagnostics
 
-    // ***** GOBBLE HOLE MODE SCORING ***** (placeholder)
-  case MODE_GOBBLE_HOLE:
+      // Play bowling strike SFX (suppressed during intro)
+      if (!suppressSfx && pTsunami != nullptr) {
+        unsigned int track = TRACK_MODE_RAB_HIT_FIRST
+          + (unsigned int)random(0, TRACK_MODE_RAB_HIT_LAST
+            - TRACK_MODE_RAB_HIT_FIRST + 1);
+        pTsunami->trackPlayPoly((int)track, 0, false);
+        audioApplyTrackGain(track, tsunamiSfxGainDb, tsunamiGainDb, pTsunami);
+      }
+    }
+    // Near-miss bumpers R, E, A, M, O: glass breaking SFX, no points
+    else if (hitSwitch >= SWITCH_IDX_BUMPER_R && hitSwitch <= SWITCH_IDX_BUMPER_O) {
+      if (hitSwitch == SWITCH_IDX_BUMPER_E) {
+        activateDevice(DEV_IDX_POP_BUMPER);
+      }
+      if (!suppressSfx) {
+        unsigned int track = TRACK_MODE_RAB_MISS_FIRST
+          + (unsigned int)random(0, TRACK_MODE_RAB_MISS_LAST
+            - TRACK_MODE_RAB_MISS_FIRST + 1);
+        if (pTsunami != nullptr) {
+          pTsunami->trackPlayPoly((int)track, 0, false);
+          audioApplyTrackGain(track, tsunamiSfxGainDb, tsunamiGainDb, pTsunami);
+        }
+      }
+    }
+    // Near-miss side targets: left 4-5 and right 4-5
+    else if (hitSwitch == SWITCH_IDX_LEFT_SIDE_TARGET_4
+      || hitSwitch == SWITCH_IDX_LEFT_SIDE_TARGET_5
+      || hitSwitch == SWITCH_IDX_RIGHT_SIDE_TARGET_4
+      || hitSwitch == SWITCH_IDX_RIGHT_SIDE_TARGET_5) {
+      if (!suppressSfx) {
+        unsigned int track = TRACK_MODE_RAB_MISS_FIRST
+          + (unsigned int)random(0, TRACK_MODE_RAB_MISS_LAST
+            - TRACK_MODE_RAB_MISS_FIRST + 1);
+        if (pTsunami != nullptr) {
+          pTsunami->trackPlayPoly((int)track, 0, false);
+          audioApplyTrackGain(track, tsunamiSfxGainDb, tsunamiGainDb, pTsunami);
+        }
+      }
+    }
+    // Bumpers S and C: not near the hats, no SFX, no points
+    else if (hitSwitch == SWITCH_IDX_BUMPER_S || hitSwitch == SWITCH_IDX_BUMPER_C) {
+      // Silent, no points
+    }
+    // Kickouts: eject immediately, no points, no sound
+    else if (hitSwitch == SWITCH_IDX_KICKOUT_LEFT
+      || hitSwitch == SWITCH_IDX_KICKOUT_RIGHT) {
+      handleModeKickoutEject(hitSwitch);
+    }
+    // Slingshots: fire the coil but no points, no sound
+    else if (hitSwitch == SWITCH_IDX_SLINGSHOT_LEFT
+      || hitSwitch == SWITCH_IDX_SLINGSHOT_RIGHT) {
+      if (hitSwitch == SWITCH_IDX_SLINGSHOT_LEFT) {
+        activateDevice(DEV_IDX_SLINGSHOT_LEFT);
+      } else {
+        activateDevice(DEV_IDX_SLINGSHOT_RIGHT);
+      }
+    }
+    // All others (other side targets): silent, no points
     break;
+  }
+
+  // ***** GOBBLE HOLE SHOOTING GALLERY MODE SCORING *****
+  // Per Overview Section 14.7.4:
+  //   Objective: sink 5 balls into the Gobble Hole before time expires.
+  //   Gobble Hole hits are scored via handleGobbleHoleModeScoring() in the
+  //   drain path (updatePhaseBallInPlay), NOT here -- because the gobble hole
+  //   is a drain event and handleBallDrain() must run for mode ball replacement.
+  //   Near-miss targets: ricochet SFX, no points.
+  //     Bumpers R, E, A, M, O (the 5 bumpers nearest the gobble hole)
+  //     Left side targets 4 and 5 (flanking the left approach)
+  //     Right side targets 4 and 5 (flanking the right approach)
+  //   Pop bumper coil fires for "E" regardless.
+  //   All others (slingshots, hats, other bumpers/targets, kickouts): silent/coil-only, no points.
+  case MODE_GOBBLE_HOLE: {
+    // Near-miss bumpers R, E, A, M, O: ricochet SFX, no points
+    if (hitSwitch >= SWITCH_IDX_BUMPER_R && hitSwitch <= SWITCH_IDX_BUMPER_O) {
+      if (hitSwitch == SWITCH_IDX_BUMPER_E) {
+        activateDevice(DEV_IDX_POP_BUMPER);
+      }
+      if (!suppressSfx) {
+        unsigned int track = TRACK_MODE_GOBBLE_MISS_FIRST
+          + (unsigned int)random(0, TRACK_MODE_GOBBLE_MISS_LAST
+            - TRACK_MODE_GOBBLE_MISS_FIRST + 1);
+        if (pTsunami != nullptr) {
+          pTsunami->trackPlayPoly((int)track, 0, false);
+          audioApplyTrackGain(track, tsunamiSfxGainDb, tsunamiGainDb, pTsunami);
+        }
+      }
+    }
+    // Near-miss side targets: left 4-5 and right 4-5
+    else if (hitSwitch == SWITCH_IDX_LEFT_SIDE_TARGET_4
+      || hitSwitch == SWITCH_IDX_LEFT_SIDE_TARGET_5
+      || hitSwitch == SWITCH_IDX_RIGHT_SIDE_TARGET_4
+      || hitSwitch == SWITCH_IDX_RIGHT_SIDE_TARGET_5) {
+      if (!suppressSfx) {
+        unsigned int track = TRACK_MODE_GOBBLE_MISS_FIRST
+          + (unsigned int)random(0, TRACK_MODE_GOBBLE_MISS_LAST
+            - TRACK_MODE_GOBBLE_MISS_FIRST + 1);
+        if (pTsunami != nullptr) {
+          pTsunami->trackPlayPoly((int)track, 0, false);
+          audioApplyTrackGain(track, tsunamiSfxGainDb, tsunamiGainDb, pTsunami);
+        }
+      }
+    }
+    // Bumpers S and C: not near the gobble hole, fire coil only for E (already handled above)
+    else if (hitSwitch == SWITCH_IDX_BUMPER_S || hitSwitch == SWITCH_IDX_BUMPER_C) {
+      // No SFX, no points. Pop bumper coil doesn't apply (S and C have no coil).
+    }
+    // Kickouts: eject immediately, no points, no sound
+    else if (hitSwitch == SWITCH_IDX_KICKOUT_LEFT
+      || hitSwitch == SWITCH_IDX_KICKOUT_RIGHT) {
+      handleModeKickoutEject(hitSwitch);
+    }
+    // Slingshots: fire the coil but no points, no sound
+    else if (hitSwitch == SWITCH_IDX_SLINGSHOT_LEFT
+      || hitSwitch == SWITCH_IDX_SLINGSHOT_RIGHT) {
+      if (hitSwitch == SWITCH_IDX_SLINGSHOT_LEFT) {
+        activateDevice(DEV_IDX_SLINGSHOT_LEFT);
+      } else {
+        activateDevice(DEV_IDX_SLINGSHOT_RIGHT);
+      }
+    }
+    // All others (hats, other side targets): silent, no points
+    break;
+  }
 
   default:
     break;
@@ -3869,6 +4091,51 @@ void handleGobbleHoleScoring() {
   }
 }
 
+// ***** GOBBLE HOLE MODE-SPECIFIC SCORING *****
+// Called from updatePhaseBallInPlay() when the gobble hole drains during
+// Gobble Hole Shooting Gallery mode. Replaces handleGobbleHoleScoring()
+// for mode-specific rules: 100K per hit, light GOBBLE lamp, track progress.
+// 5th hit awards 1,000,000 jackpot; processModeTick() calls endMode(true).
+void handleGobbleHoleModeScoring() {
+  // Award 100K per gobble hit
+  addScore(10);  // 10 x 10K = 100K
+
+  modeState.modeProgress++;
+
+  // Light the next GOBBLE lamp (1-based: hit 1 lights GOBBLE_1, etc.)
+  // Cap at 5 lamps even if somehow hit more times.
+  // IMPORTANT: If a lamp effect is running (e.g. hurry-up FLASH_ALL), the effect
+  // engine will overwrite our digitalWrite() when it restores savedPortState[].
+  // We must also patch savedPortState[] so the lamp survives the restore.
+  if (modeState.modeProgress <= 5) {
+    byte lampIdx = LAMP_IDX_GOBBLE_1 + (modeState.modeProgress - 1);
+    byte pin = lampParm[lampIdx].pinNum;
+    pShiftRegister->digitalWrite(pin, LOW);  // Lamp on (immediate)
+
+    // If a lamp effect is active, also clear this pin's bit in savedPortState
+    // so the lamp stays ON when the effect restores. Without this, the effect's
+    // restore overwrites this write, making the lamp appear to not light.
+    if (isLampEffectActive()) {
+      byte port = pin >> 4;
+      byte bit = pin & 0x0F;
+      patchLampEffectSavedState(port, bit, true);  // true = lamp ON (clear bit)
+    }
+  }
+
+  // Play slide whistle SFX (only one track for gobble hit)
+  bool suppressSfx = !modeTimerStarted;
+  if (!suppressSfx && pTsunami != nullptr) {
+    pTsunami->trackPlayPoly(TRACK_MODE_GOBBLE_HIT, 0, false);
+    audioApplyTrackGain(TRACK_MODE_GOBBLE_HIT, tsunamiSfxGainDb, tsunamiGainDb, pTsunami);
+  }
+
+  // 5th gobble: award 1,000,000 jackpot (processModeTick detects modeProgress >= 5
+  // and calls endMode(true) with applause SFX on the next tick)
+  if (modeState.modeProgress >= 5) {
+    addScore(100);  // 100 x 10K = 1,000,000
+  }
+}
+
 // ********************************************************************************************************************************
 // ************************************************* DEVICE & COIL CONTROL ********************************************************
 // ********************************************************************************************************************************
@@ -4240,10 +4507,21 @@ void setBumperLampsFromMask(byte t_mask) {
     }
   }
 
-  // Read-modify-write only the affected ports
+  // Read-modify-write only the affected ports.
+  // Use read-twice-compare to protect against I2C corruption from flipper PWM,
+  // matching the defense in WriteRegisterPin() and the switch input reads.
   for (byte p = 0; p < 4; p++) {
     if (!portTouched[p]) continue;
-    uint16_t val = (uint16_t)pShiftRegister->portRead(p);
+    uint16_t read1 = (uint16_t)pShiftRegister->portRead(p);
+    uint16_t read2 = (uint16_t)pShiftRegister->portRead(p);
+    uint16_t val;
+    if (read1 == read2) {
+      val = read1;
+    } else {
+      // Tiebreaker read
+      uint16_t read3 = (uint16_t)pShiftRegister->portRead(p);
+      val = (read1 == read3) ? read1 : read2;
+    }
     val &= ~onBits[p];   // Clear bits for lamps that should be ON (LOW = on)
     val |= offBits[p];   // Set bits for lamps that should be OFF (HIGH = off)
     pShiftRegister->portWrite(p, val);
@@ -4946,19 +5224,16 @@ void onEnterBallReady() {
   // Start shoot reminder timer (Enhanced only; checked in updatePhaseBallReady)
   shootReminderDeadlineMs = millis() + HILL_CLIMB_TIMEOUT_MS;
 
-  // Clear any residual drain switch debounce and snap baselines to current
-  // physical state so edge detection starts clean for the new ball.
-  switchDebounceCounter[SWITCH_IDX_DRAIN_LEFT] = 0;
-  switchDebounceCounter[SWITCH_IDX_DRAIN_CENTER] = 0;
-  switchDebounceCounter[SWITCH_IDX_DRAIN_RIGHT] = 0;
-  switchDebounceCounter[SWITCH_IDX_GOBBLE] = 0;
-  // Snap drain switch baselines to current physical state so edge detection starts clean.
-  // Without this, the stale switchLastState from before the suppression window could
-  // cause the first real drain closure to be missed (if the state happened to match).
-  switchLastState[SWITCH_IDX_DRAIN_LEFT] = switchClosed(SWITCH_IDX_DRAIN_LEFT) ? 1 : 0;
-  switchLastState[SWITCH_IDX_DRAIN_CENTER] = switchClosed(SWITCH_IDX_DRAIN_CENTER) ? 1 : 0;
-  switchLastState[SWITCH_IDX_DRAIN_RIGHT] = switchClosed(SWITCH_IDX_DRAIN_RIGHT) ? 1 : 0;
-  switchLastState[SWITCH_IDX_GOBBLE] = switchClosed(SWITCH_IDX_GOBBLE) ? 1 : 0;
+  // Clear any residual debounce and snap baselines to current physical state
+  // for ALL playfield switches, not just drains. Without this, a playfield
+  // switch whose switchLastState was stuck at "closed" (from a stale debounce
+  // snap during PHASE_STARTUP) would never fire a closing edge when the player
+  // actually hits it -- making the switch appear intermittently dead.
+  // This was the root cause of the "E" pop bumper intermittently not responding.
+  for (byte sw = SWITCH_IDX_BUMPER_S; sw <= SWITCH_IDX_DRAIN_RIGHT; sw++) {
+    switchDebounceCounter[sw] = 0;
+    switchLastState[sw] = switchClosed(sw) ? 1 : 0;
+  }
 
   // Reset trough sanity check tracking for new ball
   troughSanityWasStable = false;
@@ -5050,10 +5325,19 @@ void startMode() {
   // the true gameplay lamps, not mid-effect transient state.
   cancelLampEffect(pShiftRegister);
 
-  // Save current lamp state (4 fast portRead calls instead of 47 individual reads).
+  // Save current lamp state (4 port reads with read-twice-compare protection).
   // This captures all 64 Centipede #1 output pins including the 47 lamp pins.
+  // Read-twice-compare protects against I2C corruption from flipper PWM that
+  // could save wrong lamp state, causing incorrect restoration at mode end.
   for (byte p = 0; p < 4; p++) {
-    preModePortState[p] = (uint16_t)pShiftRegister->portRead(p);
+    uint16_t read1 = (uint16_t)pShiftRegister->portRead(p);
+    uint16_t read2 = (uint16_t)pShiftRegister->portRead(p);
+    if (read1 == read2) {
+      preModePortState[p] = read1;
+    } else {
+      uint16_t read3 = (uint16_t)pShiftRegister->portRead(p);
+      preModePortState[p] = (read1 == read3) ? read1 : read2;
+    }
   }
 
   // Save EM state that mode gameplay might mutate. The mode has its own scoring
@@ -5067,6 +5351,14 @@ void startMode() {
 
   // Set mode-specific lamp layout (turn off non-GI, light targets)
   setModeLamps(nextMode);
+
+  // Dramatic mode-start lamp effect: a wave fills from the bottom of the
+  // playfield to the top, pauses briefly with all lamps blazing, then drains
+  // back down -- revealing the mode target lamps underneath.
+  // The effect runs during the school bell stinger (~1s before intro voice).
+  // Per Section 14.7.1: cancel any running effect before starting a new one.
+  cancelLampEffect(pShiftRegister);
+  startLampEffect(LAMP_EFFECT_FILL_UP_DRAIN_DOWN, 400, 200);
 
   // ***** MODE START AUDIO SEQUENCE *****
   // Per Overview Section 14.7.1:
@@ -5260,15 +5552,28 @@ void endMode(bool t_completed) {
   modeSaveWaitingForLift = false;
   modeSaveDispenseMs = 0;
 
-  // Cancel any lamp effect that was started during the mode (e.g. mode-start
-  // celebration sweep) before restoring pre-mode lamps. Without this, the
-  // effect engine would overwrite the restored lamps on its next tick.
+  // Cancel any lamp effect that was started during the mode (e.g. hurry-up
+  // flash) before restoring pre-mode lamps. Without this, the effect engine
+  // would overwrite the restored lamps on its next tick.
   cancelLampEffect(pShiftRegister);
 
   // Restore the lamp state that was saved when the mode started.
   // This brings back bumper lit/unlit states, RED/WHITE/HAT/GOBBLE/SPECIAL
   // lamps, kickout lock lamps, and Spots Number lamps exactly as they were.
   restorePreModeLamps();
+
+  // Dramatic mode-end lamp effect. The effect engine saves the just-restored
+  // lamps, plays the animation, then restores them -- so the player sees the
+  // light show followed by their normal gameplay lamps reappearing.
+  if (t_completed) {
+    // Jackpot celebration: starburst radiating out from the gobble hole center
+    // then collapsing back in. Dramatic and rewarding. ~1.6s total.
+    startLampEffect(LAMP_EFFECT_STARBURST_GOBBLE, 600, 200);
+  } else {
+    // Time expired: sweep top-to-bottom then bottom-to-top (like the lights
+    // dimming and coming back on). Brisk and clear. ~1.2s total.
+    startLampEffect(LAMP_EFFECT_SWEEP_DOWN_UP, 500, 100);
+  }
 
   // Reset Spots Number lamp cache since bulk write changed those lamps directly
   spotsNumberLastTenKDigit = 0xFF;
@@ -5290,10 +5595,17 @@ void endMode(bool t_completed) {
   //   3. Play mode-end stinger (factory whistle SFX)
   //   4. Restart primary theme music
 
-  // Stop mode music and countdown SFX
+  // Stop mode music, all SFX, and any pending/current COM so the completion
+  // or time-up announcement is clearly audible without competing audio.
   audioStopMusic();
   if (pTsunami != nullptr) {
     pTsunami->trackStop(TRACK_MODE_COUNTDOWN);  // Stop countdown if still playing
+    // Stop any mode SFX still playing (e.g. slide whistle from final gobble hit,
+    // ding-ding-ding from final bumper hit). Without this, "Jackpot!" is buried.
+    if (audioCurrentSfxTrack != 0) {
+      pTsunami->trackStop(audioCurrentSfxTrack);
+      audioCurrentSfxTrack = 0;
+    }
   }
 
   // Cancel any pending COM and preempt current COM
@@ -5302,14 +5614,20 @@ void endMode(bool t_completed) {
 
   // Play completion or time-up announcement
   if (t_completed) {
-    // Jackpot! (for BUMPER_CARS and GOBBLE_HOLE) or achievement (for ROLL_A_BALL)
+    // Mode-specific completion audio per Overview Section 14.7.1
     if (pTsunami != nullptr) {
       if (endingMode == MODE_ROLL_A_BALL) {
         // Roll-A-Ball has no jackpot; play achievement SFX instead
         pTsunami->trackPlayPoly(TRACK_MODE_RAB_ACHIEVED, 0, false);
         audioApplyTrackGain(TRACK_MODE_RAB_ACHIEVED, tsunamiSfxGainDb, tsunamiGainDb, pTsunami);
+      } else if (endingMode == MODE_BUMPER_CARS) {
+        // Bumper Cars: play "Mission accomplished!" (track 706)
+        pTsunami->trackPlayPoly(706, 0, false);
+        audioApplyTrackGain(706, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+        audioCurrentComTrack = 706;
+        audioComEndMillis = millis() + 1500UL;  // ~1.5s per comTracksCompliment[5]
       } else {
-        // Bumper Cars or Gobble Hole: play "Jackpot!" COM
+        // Gobble Hole: play "Jackpot!" COM
         byte jackpotLenTenths = pgmReadComLengthTenths(&comTracksMode[0]);  // Index 0 = track 1002
         pTsunami->trackPlayPoly(TRACK_MODE_JACKPOT, 0, false);
         audioApplyTrackGain(TRACK_MODE_JACKPOT, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);

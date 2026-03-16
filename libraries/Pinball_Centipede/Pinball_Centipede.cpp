@@ -1,9 +1,10 @@
-// Rev: 10/30/25.
+// Rev: 03/16/26.
 // Pinball Centipede Shield Library
 // Controls MCP23017 16-bit digital I/O chips
 // This is the newer 8/28/12 version cleaned up by RDP on 10/14/17
 // RP changed .initialize to .begin for consistency on 10/8/20.
 // This newer version supports interrupts by adding portInterrupts(), portCaptureRead(), and portIntPinConfig()
+// 03/16/26: Added read-twice-compare with majority vote to WriteRegisterPin() to protect against I2C corruption from solenoid PWM.
 
 #include <Pinball_Centipede.h>
 
@@ -81,14 +82,58 @@ void Pinball_Centipede::ReadRegisters(int port, int startregister, int quantity)
 }
 
 void Pinball_Centipede::WriteRegisterPin(int port, int regpin, int subregister, int level) {
-  ReadRegisters(port, subregister, 1); 
+  // ***** WHY THIS PROTECTION EXISTS *****
+  // This function changes ONE bit in an 8-bit MCP23017 register. To do that,
+  // it must READ the current register value, MODIFY the target bit, then WRITE
+  // the result back. This is called a "read-modify-write" cycle.
+  //
+  // The problem: flipper hold-power PWM (~4-8 kHz) on the same I2C bus can
+  // corrupt individual I2C transactions. If the READ returns garbage, we modify
+  // one bit of that garbage and write it back -- silently turning on or off up
+  // to 7 OTHER lamps that share the same 8-bit register. For example, turning
+  // off bumper "M" could accidentally turn on bumper "E" if the read was wrong.
+  //
+  // ***** WHAT WE DO *****
+  // Read the register TWICE and compare. If both reads agree, we trust the
+  // result (the odds of identical corruption on back-to-back reads ~0.13ms
+  // apart are negligible). If they disagree, one of the reads was corrupted --
+  // do a third read and take the majority vote (2-out-of-3 wins).
+
+  // First read of the current register value
+  ReadRegisters(port, subregister, 1);
+  uint8_t read1 = CSDataArray[0];
+
+  // Second read -- should match if I2C bus was clean
+  ReadRegisters(port, subregister, 1);
+  uint8_t read2 = CSDataArray[0];
+
+  if (read1 != read2) {
+    // Reads disagree: at least one was corrupted. Tiebreaker read.
+    ReadRegisters(port, subregister, 1);
+    uint8_t read3 = CSDataArray[0];
+    // Use whichever value appeared at least twice
+    CSDataArray[0] = (read1 == read3) ? read1 : read2;
+  } else {
+    // Both reads agree -- trust this value
+    CSDataArray[0] = read1;
+  }
+
+  // ***** MODIFY the target bit *****
+  // Now CSDataArray[0] holds a verified copy of the register's current state.
+  // Set or clear the one bit we were asked to change.
   if (level == 0) {
-    CSDataArray[0] &= ~(1 << regpin);
+    CSDataArray[0] &= ~(1 << regpin);  // Clear bit (e.g. lamp ON for active-low)
+  } else {
+    CSDataArray[0] |= (1 << regpin);   // Set bit (e.g. lamp OFF for active-low)
   }
-  else {
-    CSDataArray[0] |= (1 << regpin);
-  }
+
+  // ***** WRITE the modified register back *****
   WriteRegisters(port, subregister, 1);
+
+  // NOTE: The write itself could theoretically be corrupted on the I2C bus,
+  // but corrupted writes are self-correcting -- the next portWrite() or
+  // writeLampsBulk() call will overwrite the entire register with correct data.
+  // Adding write-verify here would double I2C traffic for marginal benefit.
 }
 
 void Pinball_Centipede::pinMode(int pin, int mode) {
