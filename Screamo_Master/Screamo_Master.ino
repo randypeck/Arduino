@@ -1,4 +1,4 @@
-// Screamo_Master.INO Rev: 03/13/26
+// Screamo_Master.INO Rev: 03/17/26
 // 11/12/25: Moved Right Kickout from pin 13 to pin 44 to avoid MOSFET firing twice on power-up.  Don't use MOSFET on pin 13.
 // 12/28/25: Changed flipper inputs from direct Arduino inputs to Centipede inputs.
 // 01/07/26: Added "5 Balls in Trough" switch to Centipede inputs. All switches tested and working.
@@ -17,7 +17,7 @@
 #include <Pinball_Lamp_Effects.h>   // Position-based lamp effect engine
 
 const byte THIS_MODULE = ARDUINO_MAS;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "MASTER 03/13/26";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "MASTER 03/17/26";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which makes it a global.
 // And no need to pass lcdString[] to any functions that use it!
 
@@ -342,15 +342,24 @@ unsigned long troughSanityStableStartMs = 0;
 bool troughSanityWasStable = false;
 
 // ***** UNDETECTED DRAIN RECOVERY *****
-// If no scoring switch or flipper button has been pressed for this duration during
-// PHASE_BALL_IN_PLAY (and no flipper is held), the ball likely drained without
-// triggering any drain switch (e.g. slipped between flippers to the side of the
-// center drain rollover). Calls handleBallDrain(DRAIN_TYPE_NONE) so all drain
+// Safety net for the rare case where a ball drains behind a raised flipper without
+// triggering any drain switch. Only relevant when ballsLocked >= 1, because when
+// ballsLocked == 0, all 5 balls end up in the trough and the trough sanity check
+// (above) catches the missed drain within 1 second -- much faster than this timer.
+// When ballsLocked >= 1, the trough switch will NOT close (only 3 or 4 balls in
+// trough), so this timer is the only detection mechanism.
+//
+// The timer starts when PHASE_BALL_IN_PLAY is entered (first playfield switch hit).
+// It is reset by any playfield switch hit. Flipper button HOLDS pause the countdown
+// (player may be cradling a ball), but flipper TAPS do not reset the timer (player
+// may be pressing buttons in frustration after an undetected drain).
+//
+// When the timer expires, calls handleBallDrain(DRAIN_TYPE_NONE) so all drain
 // processing (ball save, mode replacement, extra ball, game over) is handled
-// through the normal pipeline. Works for all styles and all lock states -- does
-// not depend on the 5-balls-in-trough switch.
+// through the normal pipeline.
 const unsigned long UNDETECTED_DRAIN_TIMEOUT_MS = 15000;  // 15 seconds of inactivity
 unsigned long undetectedDrainDeadlineMs = 0;              // millis() deadline (0 = inactive)
+unsigned long undetectedDrainPausedRemainingMs = 0;       // Remaining ms when paused by flipper hold (0 = not paused)
 
 // ***** BALL SAVE *****
 // Ball save uses a simple timestamp: active when endMs > 0 and millis() < endMs.
@@ -406,15 +415,9 @@ unsigned long kickoutRightEjectMs = 0;  // millis() deadline for right kickout e
 // ModeStateStruct is defined in Pinball_Consts.h
 ModeStateStruct modeState;
 
-// Pre-mode lamp state: 4 x 16-bit words covering Centipede output ports 0..3.
-// Saved via portRead() before mode starts; restored via portWrite() when mode ends.
-// Separate from the lamp effect engine's own savedPortState[] to avoid conflicts.
-uint16_t preModePortState[4] = { 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF };
-
 // Pre-mode EM state snapshot: these variables can be mutated by normal scoring
-// handlers during the mode (since mode scoring dispatch is not yet implemented).
-// Even after Step 4, we save/restore these as a safety net so the mode cannot
-// permanently corrupt the EM tracking state.
+// handlers during the mode. Save/restore ensures the mode cannot permanently
+// corrupt the EM tracking state.
 byte preModeBumperLitMask = 0x7F;
 unsigned int preModeWhiteLitMask = 0;
 byte preModeSelectionUnitPosition = 0;
@@ -2053,6 +2056,7 @@ void updatePhaseBallReady() {
     gameState.hasHitSwitch = true;
     ballsInPlay++;
     resetGameTimeoutDeadline();
+    resetUndetectedDrainDeadline();
 
     // Only call handleFirstPointScored() for NON-drain hits.
     // Per Overview Section 12.7: a drain is not the right trigger for the hill drop.
@@ -2264,6 +2268,7 @@ void updatePhaseBallInPlay() {
 
   if (hitSwitch != 0xFF) {
     resetGameTimeoutDeadline();
+    resetUndetectedDrainDeadline();
 
     // Mark that the ball has hit a playfield switch. This is normally set by
     // updatePhaseBallReady() on the first hit, but when the stray-ball shortcut
@@ -3095,9 +3100,17 @@ void resetGameTimeoutDeadline() {
   if (gameTimeoutMs > 0) {
     gameTimeoutDeadlineMs = millis() + gameTimeoutMs;
   }
-  // Also reset undetected drain timer (any activity means ball is still on playfield)
-  if (undetectedDrainDeadlineMs != 0) {
+}
+
+// Resets the undetected drain timer to a full UNDETECTED_DRAIN_TIMEOUT_MS from now.
+// Called ONLY on playfield switch hits (not flipper presses). Flipper holds pause
+// the timer (handled in processUndetectedDrainCheck), but flipper taps are ignored
+// so a frustrated player pressing buttons after an undetected drain does not delay
+// detection indefinitely.
+void resetUndetectedDrainDeadline() {
+  if (undetectedDrainDeadlineMs != 0 || undetectedDrainPausedRemainingMs != 0) {
     undetectedDrainDeadlineMs = millis() + UNDETECTED_DRAIN_TIMEOUT_MS;
+    undetectedDrainPausedRemainingMs = 0;  // Clear any paused state; ball is clearly in play
   }
 }
 
@@ -3138,31 +3151,47 @@ void processGameTimeout() {
 }
 
 // ***** UNDETECTED DRAIN RECOVERY *****
-// If no scoring switch or flipper has been active for UNDETECTED_DRAIN_TIMEOUT_MS
-// during PHASE_BALL_IN_PLAY, the ball likely drained without triggering any drain
-// switch. For Original/Impulse with closed tray, also opens the tray so the
-// trapped ball can fall into the trough for the next ball's recovery.
+// If no playfield switch has been hit for UNDETECTED_DRAIN_TIMEOUT_MS during
+// PHASE_BALL_IN_PLAY, the ball likely drained without triggering any drain switch
+// (e.g. slipped behind a raised flipper). Only runs when ballsLocked >= 1, because
+// when ballsLocked == 0, the trough sanity check catches missed drains faster via
+// the 5-balls-in-trough switch.
+//
+// Flipper button HOLDS pause the countdown (player may be cradling a ball on a
+// raised flipper). Flipper TAPS are ignored -- they do not reset or pause the
+// timer. This prevents a frustrated player (pressing buttons after an undetected
+// drain) from delaying detection indefinitely.
 void processUndetectedDrainCheck() {
-  // Only relevant during active single-ball gameplay.
-  // During multiball, multiple balls are in play and inactivity on one ball
-  // does not mean all balls have drained. The trough sanity check handles
-  // the multiball case (if all balls somehow end up in the trough).
-  if (gamePhase != PHASE_BALL_IN_PLAY || inMultiball) {
+  // Only relevant during active gameplay, not multiball (trough sanity handles that),
+  // and only when at least one ball is locked (otherwise trough switch catches it).
+  if (gamePhase != PHASE_BALL_IN_PLAY || inMultiball || ballsLocked == 0) {
     return;
   }
 
   // Timer not yet started (set when entering PHASE_BALL_IN_PLAY)
-  if (undetectedDrainDeadlineMs == 0) {
+  if (undetectedDrainDeadlineMs == 0 && undetectedDrainPausedRemainingMs == 0) {
     return;
   }
 
-  // If either flipper button is HELD (not just edges), the player is actively
-  // playing -- possibly cradling a ball on a flipper while planning a shot or
-  // talking to a friend. Reset the timer so we don't phantom-drain their ball.
-  if (switchClosed(SWITCH_IDX_FLIPPER_LEFT_BUTTON)
-    || switchClosed(SWITCH_IDX_FLIPPER_RIGHT_BUTTON)) {
-    undetectedDrainDeadlineMs = millis() + UNDETECTED_DRAIN_TIMEOUT_MS;
+  bool flipperHeld = switchClosed(SWITCH_IDX_FLIPPER_LEFT_BUTTON)
+    || switchClosed(SWITCH_IDX_FLIPPER_RIGHT_BUTTON);
+
+  if (flipperHeld) {
+    // Flipper is held: PAUSE the timer (save remaining time, stop counting down).
+    // If already paused, do nothing (remaining time is already saved).
+    if (undetectedDrainDeadlineMs != 0) {
+      long remaining = (long)(undetectedDrainDeadlineMs - millis());
+      if (remaining < 0) remaining = 0;
+      undetectedDrainPausedRemainingMs = (unsigned long)remaining;
+      undetectedDrainDeadlineMs = 0;  // Stop the countdown
+    }
     return;
+  }
+
+  // Flipper is NOT held: if the timer was paused, RESUME it.
+  if (undetectedDrainDeadlineMs == 0 && undetectedDrainPausedRemainingMs > 0) {
+    undetectedDrainDeadlineMs = millis() + undetectedDrainPausedRemainingMs;
+    undetectedDrainPausedRemainingMs = 0;
   }
 
   // Check deadline
@@ -3181,6 +3210,7 @@ void processUndetectedDrainCheck() {
 
   // Disable the timer so it does not re-fire
   undetectedDrainDeadlineMs = 0;
+  undetectedDrainPausedRemainingMs = 0;
 
   // Process as a normal ball drain (ball save check, mode replacement, etc.)
   handleBallDrain(DRAIN_TYPE_NONE);
@@ -3253,17 +3283,7 @@ void handleModeScoringSwitch(byte hitSwitch) {
 
         // Extinguish this bumper's lamp
         byte lampIdx = LAMP_IDX_S + bumperIdx;
-        byte pin = lampParm[lampIdx].pinNum;
-        pShiftRegister->digitalWrite(pin, HIGH);  // Lamp off
-
-        // If a lamp effect is active (e.g. hurry-up flash), also patch the saved
-        // state so the lamp stays OFF when the effect restores. Without this, the
-        // effect's restore would turn the lamp back on.
-        if (isLampEffectActive()) {
-          byte port = pin >> 4;
-          byte bit = pin & 0x0F;
-          patchLampEffectSavedState(port, bit, false);  // false = lamp OFF (set bit)
-        }
+        setLampState(lampIdx, false);  // Lamp off (effect-safe)
 
         modeState.modeProgress++;
 
@@ -3546,7 +3566,7 @@ void handleSwitchBumper(byte t_switchIdx) {
   if (bumperLitMask & (1 << bumperBit)) {
     bumperLitMask &= ~(1 << bumperBit);
     byte lampIdx = LAMP_IDX_S + bumperBit;
-    pShiftRegister->digitalWrite(lampParm[lampIdx].pinNum, HIGH);  // Lamp off
+    setLampState(lampIdx, false);  // Lamp off (effect-safe)
 
     // Check if this was the LAST lit bumper
     if (bumperLitMask == 0) {
@@ -3651,7 +3671,7 @@ void awardSpottedNumber() {
   if (!wasAlreadyLit) {
     whiteLitMask |= whiteBit;
     byte whiteLampIdx = LAMP_IDX_WHITE_1 + (redNumber - 1);
-    pShiftRegister->digitalWrite(lampParm[whiteLampIdx].pinNum, LOW);  // Lamp on
+    setLampState(whiteLampIdx, true);  // Lamp on (effect-safe)
   }
 
   // Ring Selection Bell (Slave handles actual bell firing)
@@ -3673,7 +3693,7 @@ void awardSpottedNumberSilent() {
   if (!wasAlreadyLit) {
     whiteLitMask |= whiteBit;
     byte whiteLampIdx = LAMP_IDX_WHITE_1 + (redNumber - 1);
-    pShiftRegister->digitalWrite(lampParm[whiteLampIdx].pinNum, LOW);
+    setLampState(whiteLampIdx, true);  // Lamp on (effect-safe)
   }
   // No Selection Bell
   if (!wasAlreadyLit) {
@@ -3729,7 +3749,7 @@ void checkWhiteMatrixPatterns() {
       // Reset all WHITE insert lamps (matrix cleared for potential second Extra Ball)
       whiteLitMask = 0;
       for (byte i = LAMP_IDX_WHITE_1; i <= LAMP_IDX_WHITE_9; i++) {
-        pShiftRegister->digitalWrite(lampParm[i].pinNum, HIGH);  // All WHITE off
+        setLampState(i, false);  // WHITE off (effect-safe)
       }
 
       // Play Fanfare WAV, then schedule "EXTRA BALL!" after it finishes.
@@ -3757,7 +3777,7 @@ void checkWhiteMatrixPatterns() {
       // Reset all WHITE insert lamps.
       whiteLitMask = 0;
       for (byte i = LAMP_IDX_WHITE_1; i <= LAMP_IDX_WHITE_9; i++) {
-        pShiftRegister->digitalWrite(lampParm[i].pinNum, HIGH);  // All WHITE off
+        setLampState(i, false);  // WHITE off (effect-safe)
       }
     }
     // Reset pattern tracking since the matrix was cleared.
@@ -3837,9 +3857,9 @@ void handleSwitchSideTarget(byte t_switchIdx) {
   byte newRedNumber = SELECTION_UNIT_RED_INSERT[selectionUnitPosition % 10];
   if (oldRedNumber != newRedNumber) {
     byte oldRedLampIdx = LAMP_IDX_RED_1 + (oldRedNumber - 1);
-    pShiftRegister->digitalWrite(lampParm[oldRedLampIdx].pinNum, HIGH);  // Old RED off
+    setLampState(oldRedLampIdx, false);  // Old RED off (effect-safe)
     byte newRedLampIdx = LAMP_IDX_RED_1 + (newRedNumber - 1);
-    pShiftRegister->digitalWrite(lampParm[newRedLampIdx].pinNum, LOW);   // New RED on
+    setLampState(newRedLampIdx, true);   // New RED on (effect-safe)
   }
 
   // Update HAT lamps ONLY if the HAT state actually changed.
@@ -3851,11 +3871,10 @@ void handleSwitchSideTarget(byte t_switchIdx) {
   byte newCycleNum = selectionUnitPosition / 10;
   bool newHatsLit = (newStepInCycle == 0) && (newCycleNum == 0 || newCycleNum == 2 || newCycleNum == 4);
   if (newHatsLit != oldHatsLit) {
-    byte hatState = newHatsLit ? LOW : HIGH;
-    pShiftRegister->digitalWrite(lampParm[LAMP_IDX_HAT_LEFT_TOP].pinNum, hatState);
-    pShiftRegister->digitalWrite(lampParm[LAMP_IDX_HAT_LEFT_BOTTOM].pinNum, hatState);
-    pShiftRegister->digitalWrite(lampParm[LAMP_IDX_HAT_RIGHT_TOP].pinNum, hatState);
-    pShiftRegister->digitalWrite(lampParm[LAMP_IDX_HAT_RIGHT_BOTTOM].pinNum, hatState);
+    setLampState(LAMP_IDX_HAT_LEFT_TOP, newHatsLit);
+    setLampState(LAMP_IDX_HAT_LEFT_BOTTOM, newHatsLit);
+    setLampState(LAMP_IDX_HAT_RIGHT_TOP, newHatsLit);
+    setLampState(LAMP_IDX_HAT_RIGHT_BOTTOM, newHatsLit);
   }
 }
 
@@ -3957,9 +3976,9 @@ void handleSwitchKickout(byte t_switchIdx) {
 
     // Flash the kickout lamp to indicate a locked ball (turn it on solid)
     if (t_switchIdx == SWITCH_IDX_KICKOUT_LEFT) {
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_KICKOUT_LEFT].pinNum, LOW);
+      setLampState(LAMP_IDX_KICKOUT_LEFT, true);
     } else {
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_KICKOUT_RIGHT].pinNum, LOW);
+      setLampState(LAMP_IDX_KICKOUT_RIGHT, true);
     }
 
     if (ballsLocked == 2) {
@@ -4065,11 +4084,11 @@ void handleGobbleHoleScoring() {
   if (gobbleCount < 5) {
     gobbleCount++;
     byte gobbleLampIdx = LAMP_IDX_GOBBLE_1 + (gobbleCount - 1);
-    pShiftRegister->digitalWrite(lampParm[gobbleLampIdx].pinNum, LOW);  // Lamp on
+    setLampState(gobbleLampIdx, true);  // Lamp on (effect-safe)
 
     // 4th gobble: light SPECIAL WHEN LIT lamp and announce it
     if (gobbleCount == 4) {
-      pShiftRegister->digitalWrite(lampParm[LAMP_IDX_SPECIAL].pinNum, LOW);
+      setLampState(LAMP_IDX_SPECIAL, true);  // Lamp on (effect-safe)
 
       // Enhanced: announce "Special is lit!" after bells finish.
       if (gameStyle == STYLE_ENHANCED && pendingComTrack == 0) {
@@ -4109,17 +4128,7 @@ void handleGobbleHoleModeScoring() {
   // We must also patch savedPortState[] so the lamp survives the restore.
   if (modeState.modeProgress <= 5) {
     byte lampIdx = LAMP_IDX_GOBBLE_1 + (modeState.modeProgress - 1);
-    byte pin = lampParm[lampIdx].pinNum;
-    pShiftRegister->digitalWrite(pin, LOW);  // Lamp on (immediate)
-
-    // If a lamp effect is active, also clear this pin's bit in savedPortState
-    // so the lamp stays ON when the effect restores. Without this, the effect's
-    // restore overwrites this write, making the lamp appear to not light.
-    if (isLampEffectActive()) {
-      byte port = pin >> 4;
-      byte bit = pin & 0x0F;
-      patchLampEffectSavedState(port, bit, true);  // true = lamp ON (clear bit)
-    }
+    setLampState(lampIdx, true);  // Lamp on (effect-safe)
   }
 
   // Play slide whistle SFX (only one track for gobble hit)
@@ -4525,6 +4534,23 @@ void setBumperLampsFromMask(byte t_mask) {
     val &= ~onBits[p];   // Clear bits for lamps that should be ON (LOW = on)
     val |= offBits[p];   // Set bits for lamps that should be OFF (HIGH = off)
     pShiftRegister->portWrite(p, val);
+  }
+}
+
+// ***** EFFECT-SAFE LAMP WRITE *****
+// Writes a lamp state to the Centipede AND patches the lamp effect engine's
+// saved state if an effect is currently running. Without the patch, the effect
+// engine's restore would overwrite the lamp change on its next tick.
+// t_lampIdx: lamp index (0..NUM_LAMPS_MASTER-1)
+// t_on: true = lamp ON (pin LOW), false = lamp OFF (pin HIGH)
+void setLampState(byte t_lampIdx, bool t_on) {
+  byte pin = lampParm[t_lampIdx].pinNum;
+  pShiftRegister->digitalWrite(pin, t_on ? LOW : HIGH);
+
+  if (isLampEffectActive()) {
+    byte port = pin >> 4;
+    byte bit = pin & 0x0F;
+    patchLampEffectSavedState(port, bit, t_on);
   }
 }
 
@@ -5111,6 +5137,7 @@ void initGameState() {
 
   // Undetected drain recovery
   undetectedDrainDeadlineMs = 0;
+  undetectedDrainPausedRemainingMs = 0;
 
   // Ball save
   ballSave.endMs = 0;
@@ -5241,6 +5268,7 @@ void onEnterBallReady() {
 
   // Reset undetected drain timer (will be started when PHASE_BALL_IN_PLAY begins)
   undetectedDrainDeadlineMs = 0;
+  undetectedDrainPausedRemainingMs = 0;
 
   // Re-suppress locked kickout switches. When a ball is locked in a kickout for
   // multiball, the ball sits on the switch indefinitely. Any prior suppression from
@@ -5320,25 +5348,8 @@ void startMode() {
   // Persist which mode we are starting to EEPROM
   EEPROM.update(EEPROM_ADDR_LAST_MODE_PLAYED, nextMode);
 
-  // Cancel any running lamp effect before saving lamp state.
-  // This restores the pre-effect lamp state so our portRead() captures
-  // the true gameplay lamps, not mid-effect transient state.
+  // Cancel any running lamp effect before setting mode lamps.
   cancelLampEffect(pShiftRegister);
-
-  // Save current lamp state (4 port reads with read-twice-compare protection).
-  // This captures all 64 Centipede #1 output pins including the 47 lamp pins.
-  // Read-twice-compare protects against I2C corruption from flipper PWM that
-  // could save wrong lamp state, causing incorrect restoration at mode end.
-  for (byte p = 0; p < 4; p++) {
-    uint16_t read1 = (uint16_t)pShiftRegister->portRead(p);
-    uint16_t read2 = (uint16_t)pShiftRegister->portRead(p);
-    if (read1 == read2) {
-      preModePortState[p] = read1;
-    } else {
-      uint16_t read3 = (uint16_t)pShiftRegister->portRead(p);
-      preModePortState[p] = (read1 == read3) ? read1 : read2;
-    }
-  }
 
   // Save EM state that mode gameplay might mutate. The mode has its own scoring
   // rules, but until mode scoring dispatch is fully implemented (Step 4), normal
@@ -5557,10 +5568,19 @@ void endMode(bool t_completed) {
   // would overwrite the restored lamps on its next tick.
   cancelLampEffect(pShiftRegister);
 
-  // Restore the lamp state that was saved when the mode started.
-  // This brings back bumper lit/unlit states, RED/WHITE/HAT/GOBBLE/SPECIAL
-  // lamps, kickout lock lamps, and Spots Number lamps exactly as they were.
-  restorePreModeLamps();
+  // Restore EM tracking state that was saved when the mode started.
+  // This must happen BEFORE setInitialGameplayLamps() so the lamp rebuild
+  // uses the correct pre-mode values for bumperLitMask, whiteLitMask, etc.
+  bumperLitMask = preModeBumperLitMask;
+  whiteLitMask = preModeWhiteLitMask;
+  selectionUnitPosition = preModeSelectionUnitPosition;
+  gobbleCount = preModeGobbleCount;
+
+  // Rebuild all gameplay lamps from the authoritative in-memory EM variables.
+  // This is more reliable than the previous approach of reading back the
+  // Centipede output latches (portRead) at mode start and restoring them
+  // at mode end, which was vulnerable to I2C read errors and stale state.
+  setInitialGameplayLamps();
 
   // Dramatic mode-end lamp effect. The effect engine saves the just-restored
   // lamps, plays the animation, then restores them -- so the player sees the
@@ -5574,19 +5594,6 @@ void endMode(bool t_completed) {
     // dimming and coming back on). Brisk and clear. ~1.2s total.
     startLampEffect(LAMP_EFFECT_SWEEP_DOWN_UP, 500, 100);
   }
-
-  // Reset Spots Number lamp cache since bulk write changed those lamps directly
-  spotsNumberLastTenKDigit = 0xFF;
-  spotsNumberLastKickoutMask = 0xFF;
-
-  // Restore EM tracking state that may have been mutated during the mode.
-  // Without this, bumperLitMask could show bumpers as "off" even though the
-  // restored lamps show them as "on", causing handleSwitchBumper() to skip
-  // the lamp-off logic for bumpers that were hit during the mode.
-  bumperLitMask = preModeBumperLitMask;
-  whiteLitMask = preModeWhiteLitMask;
-  selectionUnitPosition = preModeSelectionUnitPosition;
-  gobbleCount = preModeGobbleCount;
 
   // ***** MODE END AUDIO SEQUENCE *****
   // Per Overview Section 14.7.1: Mode End Sequence.
@@ -5721,16 +5728,6 @@ void setModeLamps(byte t_mode) {
   }
 
   writeLampsBulk(desired);
-}
-
-// ***** RESTORE PRE-MODE LAMPS *****
-// Restores the lamp state that was saved by startMode() before the mode began.
-// Uses fast portWrite() (4 I2C transactions) instead of 47 individual digitalWrite
-// calls to stay within the 10ms tick budget.
-void restorePreModeLamps() {
-  for (byte p = 0; p < 4; p++) {
-    pShiftRegister->portWrite(p, preModePortState[p]);
-  }
 }
 
 // ********************************************************************************************************************************

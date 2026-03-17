@@ -1,5 +1,5 @@
 # 1954 Williams Screamo - Modernized Control System Overview
-Rev: 03/15/26. Revised by RDP and Claude Opus 4.6.
+Rev: 03/17/26. Revised by RDP and Claude Opus 4.6.
 
 ## 1. Introduction
 
@@ -2319,25 +2319,20 @@ Modes rotate in sequence: BUMPER CARS -> ROLL-A-BALL -> GOBBLE HOLE -> (repeat)
 - If Player 1 plays BUMPER CARS, the next mode (regardless of game) will be ROLL-A-BALL
 
 **Pre-Mode State Preservation:**
-- All lamp states are saved before mode starts (bumpers, hats, kickouts, white/red inserts, etc.)
-- Lamp states are restored when mode ends
+- EM tracking variables (`bumperLitMask`, `whiteLitMask`, `selectionUnitPosition`, `gobbleCount`) are saved before mode starts and restored when mode ends
+- Lamp state is NOT saved via hardware readback; instead, `setInitialGameplayLamps()` rebuilds all lamps from the authoritative in-memory EM variables when the mode ends. This avoids relying on Centipede `portRead()` (reading back output shift register latches), which is fragile and unnecessary since the software variables are the true source of truth for lamp state.
 - Pre-existing locked balls remain locked throughout the mode (not ejected when mode starts)
 - After mode ends, if `ballsLocked == 2`, next scoring switch triggers multiball
 
 **IMPORTANT - Lamp Effect Engine Interaction:**
 Any function that directly writes lamp state must call `cancelLampEffect(pShiftRegister)` as its FIRST lamp-related action. This cancels any running lamp sweep/fill effect and restores the pre-effect lamp state, giving the caller a clean baseline before writing new lamp state. Without this, the effect engine would overwrite the caller's lamp changes on its next tick, or the caller would save the effect's intermediate state instead of the real gameplay lamps.
 
-This rule applies to: mode start (before saving pre-mode lamp state), mode end (before restoring pre-mode lamp state), multiball start (if a celebratory effect is added), tilt (`handleFullTilt`), game over (`teardownGame`), and mid-game Start (`teardownGame`). The tilt and teardown paths already follow this rule. Mode and multiball code must do the same when implemented.
+This rule applies to: mode start (before setting mode lamps), mode end (before rebuilding gameplay lamps), multiball start (if a celebratory effect is added), tilt (`handleFullTilt`), game over (`teardownGame`), and mid-game Start (`teardownGame`). The tilt and teardown paths already follow this rule. Mode and multiball code must do the same when implemented.
 
 The lamp effect engine (`Pinball_Lamp_Effects`) saves and restores all 47 lamp states internally using Centipede portRead/portWrite. It operates on a 10ms tick via `processLampEffectTick()` called from the main loop. See `Pinball_Lamp_Effects.h` for the full API.
 
 **Mode Start Lamp Effect:**
-When a mode starts, play a lamp effect (e.g. `LAMP_EFFECT_FLASH_ALL`) to visually signal the transition. The effect runs during the mode intro announcement. Since the effect engine saves/restores lamp state, the sequence is:
-1. `cancelLampEffect()` - ensure clean baseline
-2. Save all lamp states into `preModePortState[]` via Centipede `portRead()`
-3. Start the mode-start lamp effect (it saves all current lamps, runs the effect, then restores)
-4. When effect completes, `processLampEffectTick()` restores the saved state - but we immediately overwrite with mode-specific lamps once the effect finishes
-5. Set mode-specific lamps (all off except mode targets)
+When a mode starts, play a lamp effect (e.g. `LAMP_EFFECT_FILL_UP_DRAIN_DOWN`) to visually signal the transition. The effect runs during the mode intro announcement. Since the effect engine saves/restores lamp state internally, the mode lamps (set by `setModeLamps()`) are what the effect captures and restores.
 
 **Mode Audio Sequence:**
 1. Stop regular play music
@@ -2368,7 +2363,7 @@ This order ensures that if a player achieves the jackpot on the exact tick the t
 3. If time expired: play "Time!" announcement (TRACK_MODE_TIME_UP = 1005)
 4. Play achievement SFX (mode-specific)
 5. Play mode-end stinger: factory whistle sound effect (TRACK_MODE_STINGER_END = 1006)
-6. Restore pre-mode lamp states from `preModePortState[]` via Centipede `portWrite()`
+6. Restore EM tracking variables (`bumperLitMask`, `whiteLitMask`, `selectionUnitPosition`, `gobbleCount`) from pre-mode snapshots, then rebuild all gameplay lamps via `setInitialGameplayLamps()`
 7. Start next regular play music track (primary theme)
 8. If `ballsLocked == 2`: set `multiballPending = true` so next scoring switch triggers multiball
 
