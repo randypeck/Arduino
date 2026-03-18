@@ -1,4 +1,4 @@
-// PINBALL_AUDIO_TRACKS.H Rev: 03/08/26
+// PINBALL_AUDIO_TRACKS.H Rev: 03/18/26
 // Audio track definitions for Screamo pinball
 // Defines COM (voice), SFX, and MUS (music) track arrays
 // All arrays stored in PROGMEM to save ~1KB of SRAM on AVR.
@@ -348,17 +348,21 @@ const AudioComTrackDef comTracksAward[] PROGMEM = {
   { 843, 45, AUDIO_PRIORITY_HIGH }   // Fanfare horns (Extra Ball earned)
 };
 const byte NUM_COM_AWARD = sizeof(comTracksAward) / sizeof(comTracksAward[0]);
-// MODE COM tracks (1002-1003, 1005, 1101, 1111, 1201, 1211, 1301, 1311)
+
+// MODE COM tracks (1002-1003, 1005, 1101, 1111, 1198, 1201, 1211, 1298, 1301, 1311, 1398)
 const AudioComTrackDef comTracksMode[] PROGMEM = {
-  { 1002,  8, AUDIO_PRIORITY_HIGH },  // Jackpot
+  { 1002, 75, AUDIO_PRIORITY_HIGH },  // Jackpot one million points + applause
   { 1003, 13, AUDIO_PRIORITY_HIGH },  // Ten seconds left
-  { 1005,  8, AUDIO_PRIORITY_HIGH },  // Time
+  { 1005, 34, AUDIO_PRIORITY_HIGH },  // Time + factory whistle
   { 1101, 93, AUDIO_PRIORITY_HIGH },  // Lets ride the Bumper Cars
   { 1111, 18, AUDIO_PRIORITY_MED },   // Keep smashing the bumpers
-  { 1201, 82, AUDIO_PRIORITY_HIGH },  // Lets play Roll-A-Ball
+  { 1198, 23, AUDIO_PRIORITY_HIGH },  // Time great job (Bumper Cars end)
+  { 1201, 83, AUDIO_PRIORITY_HIGH },  // Lets play Roll-A-Ball
   { 1211, 18, AUDIO_PRIORITY_MED },   // Keep rolling over the hats
-  { 1301, 71, AUDIO_PRIORITY_HIGH },  // Lets visit the Shooting Gallery
-  { 1311, 19, AUDIO_PRIORITY_MED }    // Keep shooting at the Gobble Hole
+  { 1298, 23, AUDIO_PRIORITY_HIGH },  // Time great work (Roll-A-Ball end)
+  { 1301, 98, AUDIO_PRIORITY_HIGH },  // Lets visit the Shooting Gallery
+  { 1311, 19, AUDIO_PRIORITY_MED },   // Keep shooting at the Gobble Hole
+  { 1398, 23, AUDIO_PRIORITY_HIGH }   // Time well done (Gobble Hole end)
 };
 const byte NUM_COM_MODE = sizeof(comTracksMode) / sizeof(comTracksMode[0]);
 

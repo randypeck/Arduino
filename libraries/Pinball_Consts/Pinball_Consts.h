@@ -1,4 +1,4 @@
-// PINBALL_CONSTS.H Rev: 03/08/26.
+// PINBALL_CONSTS.H Rev: 03/18/26.
 
 #ifndef PINBALL_CONSTS_H
 #define PINBALL_CONSTS_H
@@ -336,23 +336,26 @@ const unsigned int TRACK_EXTRA_BALL_HORNS       =  843;  // Fanfare horns played
 
 // Mode common
 const unsigned int TRACK_MODE_STINGER_START     = 1001;  // School bell ringing
-const unsigned int TRACK_MODE_JACKPOT           = 1002;  // Jackpot!
+const unsigned int TRACK_MODE_JACKPOT           = 1002;  // Jackpot! One million points! + applause
 const unsigned int TRACK_MODE_HURRY             = 1003;  // Ten seconds left!
 const unsigned int TRACK_MODE_COUNTDOWN         = 1004;  // SFX 10-second ticking timer
-const unsigned int TRACK_MODE_TIME_UP           = 1005;  // Time's up!
-const unsigned int TRACK_MODE_STINGER_END       = 1006;  // Factory whistle
+const unsigned int TRACK_MODE_TIME_UP           = 1005;  // Time! + factory whistle
+const unsigned int TRACK_MODE_STINGER_END       = 1006;  // Factory whistle (standalone)
 
 // Mode intros
 const unsigned int TRACK_MODE_BUMPER_INTRO      = 1101;  // Let's ride the Bumper Cars
 const unsigned int TRACK_MODE_BUMPER_REMIND     = 1111;  // Keep smashing the bumpers
 const unsigned int TRACK_MODE_BUMPER_ACHIEVED   = 1197;  // Bell ding-ding-ding!
+const unsigned int TRACK_MODE_BUMPER_TIME_UP    = 1198;  // Time! Great job!
 const unsigned int TRACK_MODE_RAB_INTRO         = 1201;  // Let's play Roll-A-Ball
 const unsigned int TRACK_MODE_RAB_REMIND        = 1211;  // Keep rolling over the hats
 const unsigned int TRACK_MODE_RAB_ACHIEVED      = 1297;  // Ta da
+const unsigned int TRACK_MODE_RAB_TIME_UP       = 1298;  // Time! Great work!
 const unsigned int TRACK_MODE_GOBBLE_INTRO      = 1301;  // Let's visit the Shooting Gallery
 const unsigned int TRACK_MODE_GOBBLE_REMIND     = 1311;  // Keep shooting at the Gobble Hole
 const unsigned int TRACK_MODE_GOBBLE_HIT        = 1321;  // Slide whistle down (only one SFX track for Gobble Hole hit since it's very rare)
 const unsigned int TRACK_MODE_GOBBLE_ACHIEVED   = 1397;  // Applause
+const unsigned int TRACK_MODE_GOBBLE_TIME_UP    = 1398;  // Time! Well done!
 
 // *** TRACK RANGES (for random selection) ***
 const unsigned int TRACK_TILT_WARNING_FIRST     =  201;  // First of several tilt warning announcements

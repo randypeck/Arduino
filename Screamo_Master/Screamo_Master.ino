@@ -1,4 +1,4 @@
-// Screamo_Master.INO Rev: 03/17/26
+// Screamo_Master.INO Rev: 03/18/26
 // 11/12/25: Moved Right Kickout from pin 13 to pin 44 to avoid MOSFET firing twice on power-up.  Don't use MOSFET on pin 13.
 // 12/28/25: Changed flipper inputs from direct Arduino inputs to Centipede inputs.
 // 01/07/26: Added "5 Balls in Trough" switch to Centipede inputs. All switches tested and working.
@@ -17,7 +17,7 @@
 #include <Pinball_Lamp_Effects.h>   // Position-based lamp effect engine
 
 const byte THIS_MODULE = ARDUINO_MAS;  // Global needed by Pinball_Functions.cpp and Message.cpp functions.
-char lcdString[LCD_WIDTH + 1] = "MASTER 03/17/26";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
+char lcdString[LCD_WIDTH + 1] = "MASTER 03/18/26";  // Global array holds 20-char string + null, sent to Digole 2004 LCD.
 // The above "#include <Pinball_Functions.h>" includes the line "extern char lcdString[];" which makes it a global.
 // And no need to pass lcdString[] to any functions that use it!
 
@@ -428,6 +428,7 @@ byte preModeGobbleCount = 0;
 // processModeTick() waits for this deadline before starting the gameplay timer.
 unsigned long modeIntroEndMs = 0;
 bool modeTimerStarted = false;
+bool modeStartFlashPending = false;  // True while flash-all is running; processModeTick() starts fill-drain when it finishes
 
 // Mode ball replacement: uses background dispense (same mechanism as multiball save).
 // These are separate from the multiball save variables to avoid cross-contamination.
@@ -454,11 +455,15 @@ unsigned long shootReminderDeadlineMs = 0;          // millis() deadline for nex
 // ***** SHAKER MOTOR *****
 const byte SHAKER_POWER_HILL_CLIMB = 80;            // Low rumble during hill climb
 const byte SHAKER_POWER_HILL_DROP = 110;            // Medium intensity during first drop
+const byte SHAKER_POWER_ATTENTION = 100;            // Higher intensity for "pay attention" COMs during modes
 const unsigned long SHAKER_HILL_DROP_MS = 11000;    // Hill drop duration (matches track 404)
 const unsigned long SHAKER_GOBBLE_MS = 1000;        // Gobble Hole Shooting Gallery hit
 const unsigned long SHAKER_BUMPER_MS = 500;         // Bumper Cars hit
 const unsigned long SHAKER_HAT_MS = 800;            // Roll-A-Ball hat rollover
 const unsigned long SHAKER_DRAIN_MS = 2000;         // Ball drain (non-mode)
+const unsigned long SHAKER_MODE_START_MS = 1000;    // Mode start school bell "ding" (~matches track 1001)
+const unsigned long SHAKER_JACKPOT_MS = 2000;       // Jackpot celebration burst (matches starburst lamp effect)
+const unsigned long SHAKER_TIME_UP_MS = 800;         // Subtle "time's up" nudge
 unsigned long shakerDropStartMs = 0;                // When hill drop shaker started (0 = not running)
 
 // ***** TILT *****
@@ -3357,7 +3362,7 @@ void handleModeScoringSwitch(byte hitSwitch) {
   //     Right side targets 4 and 5 (flanking the right approach)
   //   Pop bumper coil fires for "E" regardless.
   //   All others (slingshots, other bumpers/targets, kickouts): silent/coil-only, no points.
-  //   No completion target -- this is a pure time-based scoring mode.
+  //   Jackpot: 10th hat awards 1,000,000 bonus; processModeTick() ends the mode.
   case MODE_ROLL_A_BALL: {
     // Hat rollover hit
     if (hitSwitch == SWITCH_IDX_HAT_LEFT_TOP || hitSwitch == SWITCH_IDX_HAT_LEFT_BOTTOM
@@ -3372,6 +3377,13 @@ void handleModeScoringSwitch(byte hitSwitch) {
             - TRACK_MODE_RAB_HIT_FIRST + 1);
         pTsunami->trackPlayPoly((int)track, 0, false);
         audioApplyTrackGain(track, tsunamiSfxGainDb, tsunamiGainDb, pTsunami);
+      }
+
+      // If 10th hat is hit, award 1,000,000 point jackpot.
+      // The 50K for this hit was already scored above; the jackpot is additional.
+      // processModeTick() will call endMode(true) on the next tick.
+      if (modeState.modeProgress >= 10) {
+        addScore(100);  // 100 x 10K = 1,000,000
       }
     }
     // Near-miss bumpers R, E, A, M, O: glass breaking SFX, no points
@@ -5363,13 +5375,14 @@ void startMode() {
   // Set mode-specific lamp layout (turn off non-GI, light targets)
   setModeLamps(nextMode);
 
-  // Dramatic mode-start lamp effect: a wave fills from the bottom of the
-  // playfield to the top, pauses briefly with all lamps blazing, then drains
-  // back down -- revealing the mode target lamps underneath.
-  // The effect runs during the school bell stinger (~1s before intro voice).
+  // Dramatic mode-start lamp effect: first flash all lamps a few times for dramatic
+  // impact, then fill-up/drain-down reveals the mode target lamps underneath.
+  // Phase 1 (flash-all) starts here; processModeTick() chains phase 2 (fill-drain)
+  // when the flash completes and isLampEffectActive() returns false.
   // Per Section 14.7.1: cancel any running effect before starting a new one.
   cancelLampEffect(pShiftRegister);
-  startLampEffect(LAMP_EFFECT_FILL_UP_DRAIN_DOWN, 400, 200);
+  startLampEffect(LAMP_EFFECT_FLASH_ALL, 120, 0);
+  modeStartFlashPending = true;
 
   // ***** MODE START AUDIO SEQUENCE *****
   // Per Overview Section 14.7.1:
@@ -5388,6 +5401,14 @@ void startMode() {
   if (pTsunami != nullptr) {
     pTsunami->trackPlayPoly(TRACK_MODE_STINGER_START, 0, false);
     audioApplyTrackGain(TRACK_MODE_STINGER_START, tsunamiSfxGainDb, tsunamiGainDb, pTsunami);
+  }
+
+  // Tactile "ding" shaker pulse to match the school bell stinger.
+  // Uses the back-dated shakerDropStartMs trick so the existing shaker management
+  // in updatePhaseBallInPlay() auto-stops after SHAKER_MODE_START_MS.
+  if (gameStyle == STYLE_ENHANCED) {
+    analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, SHAKER_POWER_ATTENTION);
+    shakerDropStartMs = millis() - (SHAKER_HILL_DROP_MS - SHAKER_MODE_START_MS);
   }
 
   // Schedule mode intro COM track after a 1-second delay so the school bell
@@ -5436,6 +5457,14 @@ void processModeTick() {
     return;
   }
 
+  // Chain the fill-drain lamp effect after the flash-all completes.
+  // The flash-all was started by startMode(); once it finishes, we kick off
+  // the fill-up/drain-down that reveals the mode target lamps underneath.
+  if (modeStartFlashPending && !isLampEffectActive()) {
+    modeStartFlashPending = false;
+    startLampEffect(LAMP_EFFECT_FILL_UP_DRAIN_DOWN, 400, 200);
+  }
+
   // Wait for intro to finish before starting the gameplay timer
   if (!modeTimerStarted) {
     if ((long)(millis() - modeIntroEndMs) >= 0) {
@@ -5460,12 +5489,16 @@ void processModeTick() {
   // Check for mode completion (jackpot achieved)
   // BUMPER_CARS: modeProgress == 7 means all 7 bumpers hit in sequence
   // GOBBLE_HOLE: modeProgress == 5 means 5 balls sunk
-  // ROLL_A_BALL: no completion (time-based only)
+  // ROLL_A_BALL: modeProgress == 10 means 10 hat rollovers
   if (modeState.currentMode == MODE_BUMPER_CARS && modeState.modeProgress >= 7) {
     endMode(true);
     return;
   }
   if (modeState.currentMode == MODE_GOBBLE_HOLE && modeState.modeProgress >= 5) {
+    endMode(true);
+    return;
+  }
+  if (modeState.currentMode == MODE_ROLL_A_BALL && modeState.modeProgress >= 10) {
     endMode(true);
     return;
   }
@@ -5587,8 +5620,8 @@ void endMode(bool t_completed) {
   // light show followed by their normal gameplay lamps reappearing.
   if (t_completed) {
     // Jackpot celebration: starburst radiating out from the gobble hole center
-    // then collapsing back in. Dramatic and rewarding. ~1.6s total.
-    startLampEffect(LAMP_EFFECT_STARBURST_GOBBLE, 600, 200);
+    // then collapsing back in. Extended sweep time for dramatic impact. ~2.2s total.
+    startLampEffect(LAMP_EFFECT_STARBURST_GOBBLE, 800, 300);
   } else {
     // Time expired: sweep top-to-bottom then bottom-to-top (like the lights
     // dimming and coming back on). Brisk and clear. ~1.2s total.
@@ -5599,7 +5632,7 @@ void endMode(bool t_completed) {
   // Per Overview Section 14.7.1: Mode End Sequence.
   //   1. Stop mode music
   //   2. Play completion or time-up announcement
-  //   3. Play mode-end stinger (factory whistle SFX)
+  //   3. Play mode-end stinger SFX (factory whistle)
   //   4. Restart primary theme music
 
   // Stop mode music, all SFX, and any pending/current COM so the completion
@@ -5619,50 +5652,87 @@ void endMode(bool t_completed) {
   pendingComTrack = 0;
   audioPreemptComTrack();
 
-  // Play completion or time-up announcement
+  // Play completion or time-up announcement + stinger + schedule music restart
   if (t_completed) {
-    // Mode-specific completion audio per Overview Section 14.7.1
+    // ***** UNIFIED JACKPOT CELEBRATION (all three modes) *****
+    // 1. "Jackpot! One million points!" COM (track 1002, ~9.0s with applause)
+    // 2. Shaker burst for tactile impact
+    // 3. Extended starburst lamp effect (started above)
+    // 4. No factory whistle -- the applause baked into track 1002 IS the stinger
+    // 5. Music restarts after the full jackpot track plays out
     if (pTsunami != nullptr) {
-      if (endingMode == MODE_ROLL_A_BALL) {
-        // Roll-A-Ball has no jackpot; play achievement SFX instead
-        pTsunami->trackPlayPoly(TRACK_MODE_RAB_ACHIEVED, 0, false);
-        audioApplyTrackGain(TRACK_MODE_RAB_ACHIEVED, tsunamiSfxGainDb, tsunamiGainDb, pTsunami);
-      } else if (endingMode == MODE_BUMPER_CARS) {
-        // Bumper Cars: play "Mission accomplished!" (track 706)
-        pTsunami->trackPlayPoly(706, 0, false);
-        audioApplyTrackGain(706, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
-        audioCurrentComTrack = 706;
-        audioComEndMillis = millis() + 1500UL;  // ~1.5s per comTracksCompliment[5]
-      } else {
-        // Gobble Hole: play "Jackpot!" COM
-        byte jackpotLenTenths = pgmReadComLengthTenths(&comTracksMode[0]);  // Index 0 = track 1002
-        pTsunami->trackPlayPoly(TRACK_MODE_JACKPOT, 0, false);
-        audioApplyTrackGain(TRACK_MODE_JACKPOT, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
-        audioCurrentComTrack = TRACK_MODE_JACKPOT;
-        audioComEndMillis = millis() + ((unsigned long)jackpotLenTenths * 100UL);
-      }
+      audioDuckMusicForVoice(true);
+      byte jackpotLenTenths = pgmReadComLengthTenths(&comTracksMode[0]);  // Index 0 = track 1002
+      pTsunami->trackPlayPoly(TRACK_MODE_JACKPOT, 0, false);
+      audioApplyTrackGain(TRACK_MODE_JACKPOT, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+      audioCurrentComTrack = TRACK_MODE_JACKPOT;
+      audioComEndMillis = millis() + ((unsigned long)jackpotLenTenths * 100UL);
     }
+
+    // Shaker burst for jackpot celebration
+    if (gameStyle == STYLE_ENHANCED) {
+      analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, SHAKER_POWER_HILL_DROP);
+      shakerDropStartMs = millis() - (SHAKER_HILL_DROP_MS - SHAKER_JACKPOT_MS);
+    }
+
+    // Defer music restart until after the full jackpot track (applause included).
+    // Track 1002 is 9.0s; add a small gap so the last note fades cleanly.
+    byte jackpotLenTenths = pgmReadComLengthTenths(&comTracksMode[0]);
+    modeEndMusicRestartMs = millis() + ((unsigned long)jackpotLenTenths * 100UL) + 500UL;
+
   } else {
-    // Time expired: play "Time's up!" COM
+    // ***** TIME EXPIRED *****
+    // Play mode-specific time-up COM (includes factory whistle baked in) + subtle shaker.
+    // Each mode has its own encouraging sign-off: "Time! Great job!" (Bumper Cars),
+    // "Time! Great work!" (Roll-A-Ball), "Time! Well done!" (Gobble Hole).
+    // These replace the generic TRACK_MODE_TIME_UP (1005) and the separate
+    // TRACK_MODE_STINGER_END (1006) -- the whistle is already in each track.
     if (pTsunami != nullptr) {
-      byte timeUpLenTenths = pgmReadComLengthTenths(&comTracksMode[2]);  // Index 2 = track 1005
-      pTsunami->trackPlayPoly(TRACK_MODE_TIME_UP, 0, false);
-      audioApplyTrackGain(TRACK_MODE_TIME_UP, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
-      audioCurrentComTrack = TRACK_MODE_TIME_UP;
+      audioDuckMusicForVoice(true);
+      unsigned int timeUpTrack = TRACK_MODE_TIME_UP;  // Fallback (should never be needed)
+      byte timeUpLenTenths = pgmReadComLengthTenths(&comTracksMode[2]);  // Index 2 = generic 1005
+      switch (endingMode) {
+      case MODE_BUMPER_CARS:
+        timeUpTrack = TRACK_MODE_BUMPER_TIME_UP;
+        timeUpLenTenths = pgmReadComLengthTenths(&comTracksMode[5]);   // Index 5 = track 1198
+        break;
+      case MODE_ROLL_A_BALL:
+        timeUpTrack = TRACK_MODE_RAB_TIME_UP;
+        timeUpLenTenths = pgmReadComLengthTenths(&comTracksMode[8]);   // Index 8 = track 1298
+        break;
+      case MODE_GOBBLE_HOLE:
+        timeUpTrack = TRACK_MODE_GOBBLE_TIME_UP;
+        timeUpLenTenths = pgmReadComLengthTenths(&comTracksMode[11]);  // Index 11 = track 1398
+        break;
+      }
+      pTsunami->trackPlayPoly((int)timeUpTrack, 0, false);
+      audioApplyTrackGain(timeUpTrack, tsunamiVoiceGainDb, tsunamiGainDb, pTsunami);
+      audioCurrentComTrack = timeUpTrack;
       audioComEndMillis = millis() + ((unsigned long)timeUpLenTenths * 100UL);
     }
-  }
 
-  // Play mode-end stinger SFX (factory whistle -- plays alongside COM)
-  if (pTsunami != nullptr) {
-    pTsunami->trackPlayPoly(TRACK_MODE_STINGER_END, 0, false);
-    audioApplyTrackGain(TRACK_MODE_STINGER_END, tsunamiSfxGainDb, tsunamiGainDb, pTsunami);
-  }
+    // Subtle shaker pulse — a gentle "time's up" nudge, softer than the jackpot burst.
+    if (gameStyle == STYLE_ENHANCED) {
+      analogWrite(deviceParm[DEV_IDX_MOTOR_SHAKER].pinNum, SHAKER_POWER_ATTENTION);
+      shakerDropStartMs = millis() - (SHAKER_HILL_DROP_MS - SHAKER_TIME_UP_MS);
+    }
 
-  // Defer primary theme music restart so the end-of-mode COM and stinger SFX
-  // are audible without being buried under music. processAudioTick() will
-  // start the music when this deadline is reached.
-  modeEndMusicRestartMs = millis() + 2000UL;
+    // Defer primary theme music restart until the mode-specific time-up track finishes.
+    // The tracks are ~3.3s each; add a small gap so the last word fades cleanly.
+    byte deferLenTenths = pgmReadComLengthTenths(&comTracksMode[2]);  // Fallback length
+    switch (endingMode) {
+    case MODE_BUMPER_CARS:
+      deferLenTenths = pgmReadComLengthTenths(&comTracksMode[5]);
+      break;
+    case MODE_ROLL_A_BALL:
+      deferLenTenths = pgmReadComLengthTenths(&comTracksMode[8]);
+      break;
+    case MODE_GOBBLE_HOLE:
+      deferLenTenths = pgmReadComLengthTenths(&comTracksMode[11]);
+      break;
+    }
+    modeEndMusicRestartMs = millis() + ((unsigned long)deferLenTenths * 100UL) + 500UL;
+  }
 
   // If 2 balls are locked, set multiball pending so the next scoring switch
   // triggers multiball (per Overview Section 14.7.1 Mode End Sequence step 8).
