@@ -2471,6 +2471,31 @@ void handleBallDrain(byte drainType) {
     }
   }
 
+  // ***** GOBBLE HOLE SCREAM (Enhanced only) *****
+  // Play the girl screaming SFX on EVERY gobble hole drain — ball save, mode
+  // replacement, multiball save, or normal ball-lost.  The scream uses the SFX
+  // channel so it does not block the "Ball saved!" COM announcement that may
+  // follow.  Previously this lived in processBallLost() which is never reached
+  // when a save or replacement fires.
+  if (gameStyle == STYLE_ENHANCED && drainType == DRAIN_TYPE_GOBBLE
+    && pTsunami != nullptr) {
+    // Stop any SFX currently playing (e.g. mode hit sound) so the scream is clean
+    if (audioCurrentSfxTrack != 0) {
+      pTsunami->trackStop(audioCurrentSfxTrack);
+    }
+    audioDuckMusicForVoice(true);
+    pTsunami->trackPlayPoly((int)TRACK_START_SCREAM, 0, false);
+    audioApplyTrackGain(TRACK_START_SCREAM, tsunamiSfxGainDb, tsunamiGainDb, pTsunami);
+    audioCurrentSfxTrack = TRACK_START_SCREAM;
+    // Set a fake COM end time so processAudioTick() un-ducks music after ~2s.
+    // Only set if no real COM track is playing; otherwise let the real COM
+    // handle its own un-duck timing.
+    if (audioCurrentComTrack == 0) {
+      audioCurrentComTrack = TRACK_START_SCREAM;
+      audioComEndMillis = millis() + 2000UL;
+    }
+  }
+
   // ***** MULTIBALL DRAIN *****
   if (inMultiball && ballsInPlay >= 1) {
 
@@ -2729,19 +2754,27 @@ void processBallLost(byte drainType) {
   // another ball!" announcement in the extra ball handler below.
   if (gameStyle == STYLE_ENHANCED) {
     if (audioCurrentSfxTrack != 0) {
-      pTsunami->trackStop(audioCurrentSfxTrack);
-      audioCurrentSfxTrack = 0;
+      // Don't stop the gobble scream -- it was just started by handleBallDrain()
+      // and is the intended drain audio for gobble hole drains.
+      if (audioCurrentSfxTrack != TRACK_START_SCREAM) {
+        pTsunami->trackStop(audioCurrentSfxTrack);
+        audioCurrentSfxTrack = 0;
+      }
     }
     bool keepComTrack = extraBallAwarded
       && (audioCurrentComTrack == TRACK_EXTRA_BALL_AWARDED
         || pendingComTrack == TRACK_EXTRA_BALL_AWARDED);
     if (audioCurrentComTrack != 0 && !keepComTrack) {
-      pTsunami->trackStop(audioCurrentComTrack);
-      audioCurrentComTrack = 0;
-      audioComEndMillis = 0;
+      // Don't stop the gobble scream's fake COM entry -- it controls music un-ducking.
+      if (audioCurrentComTrack != TRACK_START_SCREAM) {
+        pTsunami->trackStop(audioCurrentComTrack);
+        audioCurrentComTrack = 0;
+        audioComEndMillis = 0;
+      }
     }
-    // Un-duck music in case it was ducked for a voice line (unless keeping Extra Ball announcement)
-    if (!keepComTrack) {
+    // Un-duck music in case it was ducked for a voice line (unless keeping Extra Ball
+    // announcement or gobble scream is playing with its own duck timer)
+    if (!keepComTrack && audioCurrentComTrack != TRACK_START_SCREAM) {
       audioDuckMusicForVoice(false);
     }
 
@@ -2765,17 +2798,8 @@ void processBallLost(byte drainType) {
       && !extraBallAwarded && !preservePendingAward) {
 
       if (drainType == DRAIN_TYPE_GOBBLE) {
-        // Gobble Hole drain: play the scream SFX (same as game start).
-        // This plays as an SFX track so it does not interfere with COM scheduling.
-        // Duck music so the scream is prominent.
-        audioDuckMusicForVoice(true);
-        pTsunami->trackPlayPoly((int)TRACK_START_SCREAM, 0, false);
-        audioApplyTrackGain(TRACK_START_SCREAM, tsunamiSfxGainDb, tsunamiGainDb, pTsunami);
-        audioCurrentSfxTrack = TRACK_START_SCREAM;
-        // Un-duck after ~2 seconds (processAudioTick handles COM un-duck, but SFX
-        // does not auto-un-duck. Set a fake COM end time so processAudioTick un-ducks.)
-        audioCurrentComTrack = TRACK_START_SCREAM;
-        audioComEndMillis = millis() + 2000UL;
+        // Gobble Hole drain: scream SFX already played in handleBallDrain().
+        // No snarky comment needed -- the scream IS the drain audio.
       } else {
         // Bottom three drains: snarky comment logic (unchanged)
         bool playSnarky = false;
@@ -3976,10 +4000,12 @@ void handleSwitchKickout(byte t_switchIdx) {
     kickoutLockedMask |= lockBit;
 
     // Schedule lock announcement AFTER bells finish (500K = 882ms of 100K bells).
-    // If awardSpottedNumber() already scheduled an Extra Ball announcement, it has
-    // higher importance and overwrites are fine -- but we skip scheduling here to
-    // preserve it. The kickout lamp provides visual lock feedback either way.
-    if (pendingComTrack == 0) {
+    // Lock announcements take priority over pattern awards (3-in-a-row, four-corners,
+    // replay) that may have been scheduled by awardSpottedNumber() earlier in this
+    // function. The lock is actionable (tells the player multiball is building) while
+    // pattern awards are informational (the knocker and credit already fired). The
+    // only announcement we yield to is Extra Ball, which is a once-per-game event.
+    if (pendingComTrack != TRACK_EXTRA_BALL_AWARDED) {
       unsigned int lockTrack = (ballsLocked == 1) ? TRACK_LOCK_1 : TRACK_LOCK_2;
       byte lockIdx = ballsLocked - 1;  // 0 = first lock, 1 = second lock
       byte lockLenTenths = pgmReadComLengthTenths(&comTracksMultiball[lockIdx]);
@@ -5423,11 +5449,11 @@ void startMode() {
     break;
   case MODE_ROLL_A_BALL:
     introTrack = TRACK_MODE_RAB_INTRO;
-    introLenTenths = pgmReadComLengthTenths(&comTracksMode[5]);  // Index 5 = track 1201
+    introLenTenths = pgmReadComLengthTenths(&comTracksMode[6]);  // Index 6 = track 1201
     break;
   case MODE_GOBBLE_HOLE:
     introTrack = TRACK_MODE_GOBBLE_INTRO;
-    introLenTenths = pgmReadComLengthTenths(&comTracksMode[7]);  // Index 7 = track 1301
+    introLenTenths = pgmReadComLengthTenths(&comTracksMode[9]);  // Index 9 = track 1301
     break;
   }
   if (introTrack != 0) {
@@ -5523,11 +5549,11 @@ void processModeTick() {
         break;
       case MODE_ROLL_A_BALL:
         reminderTrack = TRACK_MODE_RAB_REMIND;
-        reminderLenTenths = pgmReadComLengthTenths(&comTracksMode[6]);  // Index 6 = track 1211
+        reminderLenTenths = pgmReadComLengthTenths(&comTracksMode[7]);  // Index 7 = track 1211
         break;
       case MODE_GOBBLE_HOLE:
         reminderTrack = TRACK_MODE_GOBBLE_REMIND;
-        reminderLenTenths = pgmReadComLengthTenths(&comTracksMode[8]);  // Index 8 = track 1311
+        reminderLenTenths = pgmReadComLengthTenths(&comTracksMode[10]); // Index 10 = track 1311
         break;
       }
       if (reminderTrack != 0 && pTsunami != nullptr) {
